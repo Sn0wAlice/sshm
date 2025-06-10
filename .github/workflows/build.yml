@@ -70,31 +70,31 @@ jobs:
           SHA256=$(curl -Ls "$URL" | shasum -a 256 | awk '{print $1}')
 
           cat <<EOF > Formula/sshm.rb
-  class Sshm < Formula
-  desc "sshm client for managing SSH connections"
-  homepage "https://github.com/Sn0wAlice/sshm"
-  url "$URL"
-  sha256 "$SHA256"
-  license "MIT"
+            class Sshm < Formula
+            desc "sshm client for managing SSH connections"
+            homepage "https://github.com/Sn0wAlice/sshm"
+            url "$URL"
+            sha256 "$SHA256"
+            license "MIT"
+          
+            livecheck do
+            url :stable
+            strategy :github_latest
+            end
+          
+            def install
+            bin.install "sshm"
+            end
+          
+            test do
+            system "#{bin}/sshm", "help"
+            end
+            end
+          EOF
 
-  livecheck do
-  url :stable
-  strategy :github_latest
-  end
-
-  def install
-  bin.install "sshm"
-  end
-
-  test do
-  system "#{bin}/sshm", "help"
-  end
-  end
-  EOF
-
-- name: Upload Homebrew Formula
-  if: startsWith(matrix.platform.os-name, 'macOS')
-  uses: actions/upload-artifact@v4
-  with:
-    name: homebrew-formula-${{ matrix.platform.os-name }}
-    path: Formula/sshm.rb
+      - name: Upload Homebrew Formula
+        if: startsWith(matrix.platform.os-name, 'macOS')
+        uses: actions/upload-artifact@v4
+        with:
+          name: homebrew-formula-${{ matrix.platform.os-name }}
+          path: Formula/sshm.rb
