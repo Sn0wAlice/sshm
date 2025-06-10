@@ -2,7 +2,13 @@
 
 **sshm** est un outil en ligne de commande écrit en Rust pour gérer facilement une liste d’hôtes SSH stockée dans un fichier JSON local. Il permet de lister, créer, modifier, supprimer et se connecter à des hôtes SSH depuis une interface interactive en terminal grâce à la bibliothèque [`inquire`](https://github.com/mikaelmello/inquire).
 
-## 📦 Installation
+## Fast install (macos)
+
+```bash
+brew install --formula=https://raw.githubusercontent.com/Sn0wAlice/sshm/main/Formula/sshm.rb
+```
+
+## Normal Installation
 
 ### Prérequis
 
