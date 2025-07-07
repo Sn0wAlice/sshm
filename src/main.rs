@@ -6,6 +6,7 @@ use std::fs::{self, create_dir_all, File};
 use std::io::{Read, Write};
 use std::path::PathBuf;
 use std::process::Command;
+use prettytable::{Table, row};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct Host {
@@ -43,13 +44,26 @@ fn save_hosts(hosts: &HashMap<String, Host>) {
 }
 
 fn list_hosts(hosts: &HashMap<String, Host>) {
-    if hosts.is_empty()  {
+    use prettytable::{Table, row, cell};
+
+    if hosts.is_empty() {
         println!("No hosts available.");
         return;
     }
+
+    let mut table = Table::new();
+    table.add_row(row!["Name", "Username", "IP", "Port"]);
+
     for (name, host) in hosts {
-        println!("{} => {}@{}:{}", name, host.username, host.ip, host.port);
+        table.add_row(row![
+            name,
+            host.username,
+            host.ip,
+            host.port.to_string()
+        ]);
     }
+
+    table.printstd();
 }
 
 fn connect_host(hosts: &HashMap<String, Host>, name: Option<String>) {
@@ -142,8 +156,7 @@ fn main() {
         Some("help") => {
             println!("Usage:");
             println!("  sshm list");
-            println!("  sshm connect <name>");
-            println!("  sshm c <name>");
+            println!("  sshm connect (c) <name>");
             println!("  sshm create");
             println!("  sshm edit");
             println!("  sshm delete");
