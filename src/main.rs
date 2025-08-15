@@ -2,12 +2,12 @@ use inquire::{Select, Text};
 use prettytable::{row, Table};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::{env, process};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
+use std::{env, process};
 
 // TUI
 use crossterm::{
@@ -15,12 +15,15 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use ratatui::text::{Line, Span};
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{
+        Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
+        ScrollbarState,
+    },
     Terminal,
 };
-use ratatui::text::{Line, Span};
 use std::io;
 use std::time::Duration;
 
@@ -74,6 +77,7 @@ fn ensure_config_file(path: &PathBuf) -> std::io::Result<()> {
 
 fn load_hosts() -> HashMap<String, Host> {
     let path = config_path();
+    println!("Loading hosts from {}", path.display());
     if let Err(e) = ensure_config_file(&path) {
         eprintln!("Cannot init config file {}: {e}", path.display());
         return HashMap::new();
@@ -508,6 +512,12 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
     let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
     let mut terminal = Terminal::new(backend).unwrap();
 
+    let mut list_state = ListState::default();
+    list_state.select(Some(selected));
+
+    // Will be updated each draw; used by handlers outside the draw closure
+    let mut viewport_h: usize = 10; // valeur par défaut raisonnable au premier tour
+
     loop {
         terminal.draw(|f| {
             let size = f.size();
@@ -527,6 +537,21 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                 .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
                 .split(vchunks[0]);
 
+            // Compute visible area height (minus borders) for paging/scrollbar
+            let list_area = hchunks[0];
+            let vh = list_area.height.saturating_sub(2) as usize; // borders
+            viewport_h = vh; // update outer variable for PgUp/PgDn handlers
+            let total = filtered.len().max(1);
+
+            // Ensure selected is within bounds (local copy for rendering only)
+            let selected = selected.min(filtered.len().saturating_sub(1));
+
+            // Optional: compute a start offset (top row) centered on selection
+            let start = selected
+                .saturating_sub(vh / 2)
+                .min(total.saturating_sub(vh));
+
+
             // Liste (gauche)
             let list_items: Vec<ListItem> = filtered.iter()
                 .map(|h| {
@@ -538,11 +563,17 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                 })
                 .collect();
             let list = List::new(list_items)
-                .block(Block::default().title("Hosts (↑/↓, / filter)").borders(Borders::ALL))
+                .block(Block::default().title("Hosts (↑/↓ / filter)").borders(Borders::ALL))
                 .highlight_symbol("➜ ")
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+
+
             list_state.select(if filtered.is_empty() { None } else { Some(selected) });
             f.render_stateful_widget(list, hchunks[0], &mut list_state);
+
+            let mut sb_state = ScrollbarState::new(total).position(start);
+            let sb = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
+            f.render_stateful_widget(sb, list_area, &mut sb_state);
 
             // Détails (droite)
             if let Some(h) = filtered.get(selected) {
@@ -560,7 +591,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
 
             // Footer aide (largeur totale)
             let help = Paragraph::new(
-                "Shortcuts:  ↑/↓ move • Enter connect • a add • e edit • r rename • i add identity • q quit\n\
+                "Shortcuts:  ↑/↓ move • Enter connect • a add • e edit • r rename • i add identity • d delete • q quit\n\
                  Tips: use list --filter \"tag:prod host:10.*\" • connect supports overrides (-i, -J, -L/-R/-D)"
             ).block(Block::default().title("Help").borders(Borders::ALL));
             f.render_widget(help, vchunks[1]);
@@ -570,15 +601,47 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
             if let Ok(Event::Key(k)) = event::read() {
                 if k.kind == KeyEventKind::Press {
                     match k.code {
+                        KeyCode::Up => {
+                            if !filtered.is_empty() {
+                                // Move one row up without wrapping; viewport will follow the selection
+                                if selected > 0 {
+                                    selected -= 1;
+                                    list_state.select(Some(selected));
+                                }
+                            }
+                        }
                         KeyCode::Down => {
                             if !filtered.is_empty() {
-                                selected = (selected + 1) % filtered.len();
+                                // Move one row down without wrapping; viewport will follow the selection
+                                if selected + 1 < filtered.len() {
+                                    selected += 1;
+                                    list_state.select(Some(selected));
+                                }
+                            }
+                        }
+                        KeyCode::PageDown => {
+                            if !filtered.is_empty() {
+                                let page = viewport_h.max(1);
+                                selected = (selected + page).min(filtered.len().saturating_sub(1));
                                 list_state.select(Some(selected));
                             }
                         }
-                        KeyCode::Up => {
+                        KeyCode::PageUp => {
                             if !filtered.is_empty() {
-                                selected = (selected + filtered.len() - 1) % filtered.len();
+                                let page = viewport_h.max(1);
+                                selected = selected.saturating_sub(page);
+                                list_state.select(Some(selected));
+                            }
+                        }
+                        KeyCode::Home => {
+                            if !filtered.is_empty() {
+                                selected = 0;
+                                list_state.select(Some(0));
+                            }
+                        }
+                        KeyCode::End => {
+                            if !filtered.is_empty() {
+                                selected = filtered.len() - 1;
                                 list_state.select(Some(selected));
                             }
                         }
@@ -605,14 +668,14 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                             }
                         }
                         KeyCode::Char(c) => {
-                            if filter.is_empty() {
+                            if filter == String::from("") && selected == 0 {
                                 match c {
                                     'q' | 'Q' => {
                                         // quit the process
                                         disable_raw_mode().ok();
                                         execute!(io::stdout(), LeaveAlternateScreen).ok();
                                         process::exit(0);
-                                    },
+                                    }
                                     'e' => {
                                         if let Some(h) = filtered.get(selected) {
                                             let current = h.name.clone();
@@ -653,19 +716,22 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                     }
                                     'd' => {
                                         if let Some(h) = filtered.get(selected) {
+                                            let to_remove = h.name.clone();
                                             disable_raw_mode().ok();
                                             execute!(io::stdout(), LeaveAlternateScreen).ok();
-                                            delete_host(hosts);
+                                            // delete without prompt
+                                            hosts.remove(&to_remove);
+                                            save_hosts(hosts);
                                             enable_raw_mode().ok();
                                             execute!(io::stdout(), EnterAlternateScreen).ok();
                                             items = hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
-                                            if filtered.is_empty() {
-                                                list_state.select(None);
+                                            list_state.select(if filtered.is_empty() {
+                                                None
                                             } else {
-                                                list_state.select(Some(0));
-                                            }
+                                                Some(0)
+                                            });
                                         }
                                         return;
                                     }
@@ -697,7 +763,6 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                         items = hosts.values().collect();
                                         items.sort_by(|a, b| a.name.cmp(&b.name));
                                         filtered = apply_filter(&filter, &items);
-                                        selected = 0;
                                         list_state.select(if filtered.is_empty() {
                                             None
                                         } else {
@@ -707,12 +772,11 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                     }
                                     _ => filter.clear(),
                                 }
-                            } else {
-                                filter.push(c);
-                                filtered = apply_filter(&filter, &items);
-                                selected = 0;
-                                list_state.select(if filtered.is_empty() { None } else { Some(0) });
                             }
+                            filter.push(c);
+                            filtered = apply_filter(&filter, &items);
+                            selected = 0;
+                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
                         }
                         _ => {}
                     }
@@ -720,9 +784,6 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
             }
         }
     }
-
-    disable_raw_mode().ok();
-    execute!(io::stdout(), LeaveAlternateScreen).ok();
 }
 
 fn create_host(hosts: &mut HashMap<String, Host>) {
