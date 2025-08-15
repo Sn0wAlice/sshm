@@ -20,6 +20,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Terminal,
 };
+use ratatui::text::{Line, Span};
 use std::io;
 use std::time::Duration;
 
@@ -528,10 +529,16 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
 
             // Liste (gauche)
             let list_items: Vec<ListItem> = filtered.iter()
-                .map(|h| ListItem::new(format!("{}  {}", h.name, h.host)))
+                .map(|h| {
+                    let line = Line::from(vec![
+                        Span::styled(h.name.clone(), Style::default().add_modifier(Modifier::BOLD)),
+                        Span::raw(format!("  {}", h.host)),
+                    ]);
+                    ListItem::new(line)
+                })
                 .collect();
             let list = List::new(list_items)
-                .block(Block::default().title("Hosts (↑/↓, / filtre, Enter connect, q)").borders(Borders::ALL))
+                .block(Block::default().title("Hosts (↑/↓, / filter)").borders(Borders::ALL))
                 .highlight_symbol("➜ ")
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
             list_state.select(if filtered.is_empty() { None } else { Some(selected) });
