@@ -2,9 +2,10 @@ use inquire::{Select, Text};
 use prettytable::{row, Table};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use std::env;
+use std::{env, process};
 use std::fs::{self, File};
 use std::io::{Read, Write};
+use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -509,11 +510,23 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
     loop {
         terminal.draw(|f| {
             let size = f.size();
-            let chunks = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+
+            // Layout général : zone principale + footer aide
+            let vchunks = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([
+                    Constraint::Percentage(85),
+                    Constraint::Percentage(15),
+                ].as_ref())
                 .split(size);
 
+            // Dans la zone principale : colonne gauche (liste) + droite (détails)
+            let hchunks = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(40), Constraint::Percentage(60)].as_ref())
+                .split(vchunks[0]);
+
+            // Liste (gauche)
             let list_items: Vec<ListItem> = filtered.iter()
                 .map(|h| ListItem::new(format!("{}  {}", h.name, h.host)))
                 .collect();
@@ -521,10 +534,10 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                 .block(Block::default().title("Hosts (↑/↓, / filtre, Enter connect, q)").borders(Borders::ALL))
                 .highlight_symbol("➜ ")
                 .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
-            // ensure state points to current selection
             list_state.select(if filtered.is_empty() { None } else { Some(selected) });
-            f.render_stateful_widget(list, chunks[0], &mut list_state);
+            f.render_stateful_widget(list, hchunks[0], &mut list_state);
 
+            // Détails (droite)
             if let Some(h) = filtered.get(selected) {
                 let detail = format!(
                     "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}",
@@ -535,8 +548,15 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                 );
                 let p = Paragraph::new(detail)
                     .block(Block::default().title("Details").borders(Borders::ALL));
-                f.render_widget(p, chunks[1]);
+                f.render_widget(p, hchunks[1]);
             }
+
+            // Footer aide (largeur totale)
+            let help = Paragraph::new(
+                "Shortcuts:  ↑/↓ move • Enter connect • a add • e edit • r rename • i add identity • q quit\n\
+                 Tips: use list --filter \"tag:prod host:10.*\" • connect supports overrides (-i, -J, -L/-R/-D)"
+            ).block(Block::default().title("Help").borders(Borders::ALL));
+            f.render_widget(help, vchunks[1]);
         }).ok();
 
         if event::poll(Duration::from_millis(150)).unwrap_or(false) {
@@ -574,12 +594,18 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                 launch_ssh(h, None);
                                 enable_raw_mode().ok();
                                 execute!(io::stdout(), EnterAlternateScreen).ok();
+                                return;
                             }
                         }
                         KeyCode::Char(c) => {
                             if filter.is_empty() {
                                 match c {
-                                    'q' | 'Q' => break,
+                                    'q' | 'Q' => {
+                                        // quit the process
+                                        disable_raw_mode().ok();
+                                        execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                        process::exit(0);
+                                    },
                                     'e' => {
                                         if let Some(h) = filtered.get(selected) {
                                             let current = h.name.clone();
@@ -597,6 +623,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                                 list_state.select(Some(0));
                                             }
                                         }
+                                        return;
                                     }
                                     'r' => {
                                         if let Some(h) = filtered.get(selected) {
@@ -615,6 +642,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                                 list_state.select(Some(0));
                                             }
                                         }
+                                        return;
                                     }
                                     'd' => {
                                         if let Some(h) = filtered.get(selected) {
@@ -632,6 +660,43 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                                 list_state.select(Some(0));
                                             }
                                         }
+                                        return;
+                                    }
+                                    'i' => {
+                                        if let Some(h) = filtered.get(selected) {
+                                            let current = h.name.clone();
+                                            disable_raw_mode().ok();
+                                            execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                            // on réutilise la commande CLI interne pour pousser la clé
+                                            // ici, pas d’option --pub => ça prendra identity_file.pub ou ~/.ssh/id_*.pub
+                                            cmd_add_identity(&*hosts, Some(current), &[]);
+                                            enable_raw_mode().ok();
+                                            execute!(io::stdout(), EnterAlternateScreen).ok();
+                                            // pas besoin de reconstruire items/filtered si rien n'a changé localement
+                                            list_state.select(if filtered.is_empty() {
+                                                None
+                                            } else {
+                                                Some(selected.min(filtered.len().saturating_sub(1)))
+                                            });
+                                        }
+                                        return;
+                                    }
+                                    'a' => {
+                                        disable_raw_mode().ok();
+                                        execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                        create_host(hosts);
+                                        enable_raw_mode().ok();
+                                        execute!(io::stdout(), EnterAlternateScreen).ok();
+                                        items = hosts.values().collect();
+                                        items.sort_by(|a, b| a.name.cmp(&b.name));
+                                        filtered = apply_filter(&filter, &items);
+                                        selected = 0;
+                                        list_state.select(if filtered.is_empty() {
+                                            None
+                                        } else {
+                                            Some(0)
+                                        });
+                                        return;
                                     }
                                     _ => filter.clear(),
                                 }
@@ -891,16 +956,191 @@ fn tag_del(hosts: &mut HashMap<String, Host>, name: String, tags: Vec<String>) {
     }
 }
 
+// Tente de déduire la clé publique à partir d'un chemin de clé privée
+fn pub_from_identity(identity: &str) -> Option<PathBuf> {
+    let p = shellexpand::tilde(identity).to_string();
+    let pubp = format!("{p}.pub");
+    let pb = PathBuf::from(pubp);
+    if pb.exists() {
+        Some(pb)
+    } else {
+        None
+    }
+}
+
+// Retourne une clé publique par défaut (~/.ssh/id_ed25519.pub puis id_rsa.pub)
+fn default_pubkey_path() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    let p1 = home.join(".ssh/id_ed25519.pub");
+    if p1.exists() {
+        return Some(p1);
+    }
+    let p2 = home.join(".ssh/id_rsa.pub");
+    if p2.exists() {
+        return Some(p2);
+    }
+    None
+}
+
+// Essaie d'utiliser ssh-copy-id, sinon fallback en append direct avec ssh
+fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<()> {
+    use std::process::Stdio;
+
+    // 1) Essai avec ssh-copy-id si présent
+    let mut try_copy_id = Command::new("ssh-copy-id");
+    try_copy_id
+        .arg("-p")
+        .arg(h.port.to_string())
+        .arg("-f") // force add (évite doubles si tool gère le check)
+        .arg(format!("{}@{}", h.username, h.host))
+        .arg("-i")
+        .arg(pubkey_path);
+
+    // Si ProxyJump est défini, on le passe (ssh-copy-id relaie les options à ssh)
+    if let Some(j) = &h.proxy_jump {
+        try_copy_id.arg("-o").arg(format!("ProxyJump={}", j));
+    }
+    // Si identity_file est défini, on l’utilise pour l’auth de la copie
+    if let Some(id) = &h.identity_file {
+        try_copy_id
+            .arg("-o")
+            .arg(format!("IdentityFile={}", shellexpand::tilde(id)));
+    }
+
+    match try_copy_id.status() {
+        Ok(st) if st.success() => return Ok(()),
+        _ => {
+            eprintln!("`ssh-copy-id` indisponible ou a échoué, fallback sur méthode manuelle…");
+        }
+    }
+
+    // 2) Fallback manuel: on pipe la clé publique dans authorized_keys avec les bons chmod
+    let key_content = std::fs::read_to_string(pubkey_path)?;
+    // On va éviter d'échapper la clé dans la ligne de commande : on l'envoie sur stdin.
+    let mut ssh = Command::new("ssh");
+    ssh.arg(format!("{}@{}", h.username, h.host))
+        .arg("-p")
+        .arg(h.port.to_string())
+        .stdin(Stdio::piped());
+
+    if let Some(j) = &h.proxy_jump {
+        ssh.arg("-J").arg(j);
+    }
+    if let Some(id) = &h.identity_file {
+        ssh.arg("-i").arg(shellexpand::tilde(id).to_string());
+    }
+
+    // Script distant idempotent
+    ssh.arg("bash").arg("-lc").arg(
+        "set -e; \
+         umask 077; \
+         mkdir -p ~/.ssh; \
+         touch ~/.ssh/authorized_keys; \
+         chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys; \
+         TMP=$(mktemp); cat >> \"$TMP\"; \
+         if ! grep -qxF \"$(cat \"$TMP\")\" ~/.ssh/authorized_keys; then \
+            cat \"$TMP\" >> ~/.ssh/authorized_keys; \
+         fi; rm -f \"$TMP\"",
+    );
+
+    let mut child = ssh.spawn()?;
+    {
+        use std::io::Write;
+        let mut stdin = child.stdin.take().expect("failed to open ssh stdin");
+        stdin.write_all(key_content.as_bytes())?;
+    }
+    let status = child.wait()?;
+    if !status.success() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::Other,
+            format!("ssh exited with status {status}"),
+        ));
+    }
+    Ok(())
+}
+
+// Commande: ajoute une clé publique à authorized_keys du host
+fn cmd_add_identity(hosts: &HashMap<String, Host>, name: Option<String>, args: &[String]) {
+    // parse --pub /path/to/key.pub (optionnel)
+    let mut pub_override: Option<PathBuf> = None;
+    let mut i = 0;
+    while i < args.len() {
+        if args[i] == "--pub" {
+            if let Some(p) = args.get(i + 1) {
+                pub_override = Some(PathBuf::from(shellexpand::tilde(p).to_string()));
+                i += 2;
+                continue;
+            }
+        }
+        i += 1;
+    }
+
+    // choix du host
+    let name = match name {
+        Some(n) => n,
+        None => {
+            let mut choices: Vec<&String> = hosts.keys().collect();
+            choices.sort();
+            match Select::new("Choose a host:", choices).prompt() {
+                Ok(choice) => choice.to_string(),
+                Err(_) => return,
+            }
+        }
+    };
+
+    let Some(h) = hosts.get(&name) else {
+        eprintln!("Host '{}' not found.", name);
+        return;
+    };
+
+    // Déterminer la clé publique à utiliser
+    let pubkey_path = if let Some(p) = pub_override {
+        p
+    } else if let Some(id) = &h.identity_file {
+        match pub_from_identity(id) {
+            Some(pb) => pb,
+            None => {
+                eprintln!(
+                    "No .pub found next to identity_file; falling back to default ~/.ssh/id_*.pub"
+                );
+                match default_pubkey_path() {
+                    Some(pb) => pb,
+                    None => {
+                        eprintln!("No default public key found (~/.ssh/id_ed25519.pub or id_rsa.pub). Use --pub <path>.");
+                        return;
+                    }
+                }
+            }
+        }
+    } else {
+        match default_pubkey_path() {
+            Some(pb) => pb,
+            None => {
+                eprintln!("No default public key found (~/.ssh/id_ed25519.pub or id_rsa.pub). Use --pub <path>.");
+                return;
+            }
+        }
+    };
+
+    println!(
+        "Installing public key '{}' on {}@{}:{} …",
+        pubkey_path.display(),
+        h.username,
+        h.host,
+        h.port
+    );
+
+    match install_pubkey_on_host(h, &pubkey_path) {
+        Ok(_) => {
+            println!("✅ Public key installed. You should be able to connect without password.")
+        }
+        Err(e) => eprintln!("❌ Failed to install key: {e}"),
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let mut hosts = load_hosts();
-
-    // Auto-import from ~/.ssh/config on startup (non-destructive)
-    let before = hosts.len();
-    import_ssh_config(&mut hosts);
-    if hosts.len() > before {
-        save_hosts(&hosts);
-    }
 
     match args.get(1).map(String::as_str) {
         Some("list") => {
@@ -946,15 +1186,41 @@ fn main() {
                 println!("Usage: sshm tag [add|del] <name> <tag1,tag2,...>");
             }
         },
-        Some("tui") => run_tui(&mut hosts),
+        Some("load_local_conf") => {
+            let before = hosts.len();
+            import_ssh_config(&mut hosts);
+            if hosts.len() > before {
+                save_hosts(&hosts);
+                println!(
+                    "Imported {} new hosts from ~/.ssh/config.",
+                    hosts.len() - before
+                );
+            } else {
+                println!("No new hosts imported from ~/.ssh/config.");
+            }
+        }
+        Some("add-identity") => {
+            let name = args.get(2).cloned(); // alias optionnel en position 2
+                                             // args restants pour options comme --pub
+            let extras: Vec<String> = if name.is_some() {
+                args[3..].to_vec()
+            } else {
+                args[2..].to_vec()
+            };
+            cmd_add_identity(&hosts, name, &extras);
+        }
         Some("help") => {
             println!("Usage:");
             println!("  sshm list [--filter \"expr\"]");
             println!("  sshm connect (c) <name> [overrides...]   # pass -i, -J, -L/-R/-D etc.");
             println!("  sshm create | edit | delete");
             println!("  sshm tag add <name> <tag1,tag2> | tag del <name> <tag1,tag2>");
+            println!("  sshm load_local_conf   # import from ~/.ssh/config once");
+            println!("  sshm add-identity <name?> [--pub ~/.ssh/id_ed25519.pub]   # push pubkey to authorized_keys");
             println!("  sshm tui");
         }
-        _ => println!("Usage: sshm [list|connect|c|create|edit|delete|tag|tui]"),
+        _ => loop {
+            run_tui(&mut hosts)
+        },
     }
 }

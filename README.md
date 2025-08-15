@@ -100,6 +100,13 @@ $ sshm c dev-server -i ~/.ssh/custom_key -J jump-host -L 8080:localhost:80
 
 $ sshm tui
 # opens the TUI interface for interactive host management
+
+# Avec l’alias
+$ sshm add-identity web-1
+# Ou avec une clé précise
+$ sshm add-identity web-1 --pub ~/.ssh/id_ed25519.pub
+# Sans alias (menu)
+$ sshm add-identity --pub ~/.ssh/id_rsa.pub
 ```
 
 ## 🛠️ Main Dependencies
