@@ -9,3 +9,7 @@ dirs = "6.0.0"
 serde_json = "1.0.140"
 inquire = { version = "0.7.5", default-features = true }
 prettytable = "0.10.0"
+ssh_config = "0.1.0"
+ratatui = "0.29.0"
+crossterm = "0.29.0"
+regex = "1.11.1"
