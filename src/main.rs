@@ -64,6 +64,12 @@ fn config_path() -> PathBuf {
     base.join("sshm/host.json")
 }
 
+fn clear_console() {
+    if let Err(e) = execute!(io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All)) {
+        eprintln!("Failed to clear console: {e}");
+    }
+}
+
 fn ensure_config_file(path: &PathBuf) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -664,6 +670,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                 launch_ssh(h, None);
                                 enable_raw_mode().ok();
                                 execute!(io::stdout(), EnterAlternateScreen).ok();
+                                clear_console();
                                 return;
                             }
                         }
@@ -693,6 +700,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                                 list_state.select(Some(0));
                                             }
                                         }
+                                        clear_console();
                                         return;
                                     }
                                     'r' => {
@@ -712,6 +720,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                                 list_state.select(Some(0));
                                             }
                                         }
+                                        clear_console();
                                         return;
                                     }
                                     'd' => {
@@ -733,6 +742,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                                 Some(0)
                                             });
                                         }
+                                        clear_console();
                                         return;
                                     }
                                     'i' => {
@@ -752,6 +762,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                                 Some(selected.min(filtered.len().saturating_sub(1)))
                                             });
                                         }
+                                        clear_console();
                                         return;
                                     }
                                     'a' => {
@@ -768,6 +779,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                         } else {
                                             Some(0)
                                         });
+                                        clear_console();
                                         return;
                                     }
                                     _ => filter.clear(),
