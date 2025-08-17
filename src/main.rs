@@ -9,7 +9,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
-
 use std::collections::BTreeMap;
 
 // TUI
@@ -70,14 +69,14 @@ fn config_path() -> PathBuf {
 
 fn clear_console() {
     if let Err(e) = execute!(
-        io::stdout(),
+        stdout(),
         crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
     ) {
         eprintln!("Failed to clear console: {e}");
     }
 }
 
-fn ensure_config_file(path: &PathBuf) -> std::io::Result<()> {
+fn ensure_config_file(path: &PathBuf) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -164,7 +163,7 @@ fn load_hosts() -> HashMap<String, Host> {
                 }
             }
         }
-        Err(e) => {
+        Err(_) => {
             // Backup invalid JSON and return empty
             let bak = path.with_extension("json.bak");
             if let Err(be) = fs::write(&bak, content) {
@@ -413,7 +412,6 @@ fn filter_hosts<'a>(hosts: &'a HashMap<String, Host>, filter: &str) -> Vec<&'a H
 }
 
 fn list_hosts_with_filter(hosts: &HashMap<String, Host>, filter: Option<String>) {
-    use prettytable::{cell, row, Table};
 
     let mut rows: Vec<&Host> = match filter {
         Some(f) => filter_hosts(hosts, &f),
@@ -532,8 +530,8 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
     list_state.select(Some(selected));
 
     enable_raw_mode().ok();
-    execute!(io::stdout(), EnterAlternateScreen).ok();
-    let backend = ratatui::backend::CrosstermBackend::new(io::stdout());
+    execute!(stdout(), EnterAlternateScreen).ok();
+    let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend).unwrap();
 
     let mut list_state = ListState::default();
@@ -684,10 +682,10 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                         KeyCode::Enter => {
                             if let Some(h) = filtered.get(selected) {
                                 disable_raw_mode().ok();
-                                execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                execute!(stdout(), LeaveAlternateScreen).ok();
                                 launch_ssh(h, None);
                                 enable_raw_mode().ok();
-                                execute!(io::stdout(), EnterAlternateScreen).ok();
+                                execute!(stdout(), EnterAlternateScreen).ok();
                                 clear_console();
                                 return;
                             }
@@ -698,7 +696,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                     'q' | 'Q' => {
                                         // quit the process
                                         disable_raw_mode().ok();
-                                        execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                        execute!(stdout(), LeaveAlternateScreen).ok();
                                         disable_raw_mode().ok();
                                         execute!(stdout(), Show).ok();
                                         process::exit(0);
@@ -707,10 +705,10 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                         if let Some(h) = filtered.get(selected) {
                                             let current = h.name.clone();
                                             disable_raw_mode().ok();
-                                            execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                            execute!(stdout(), LeaveAlternateScreen).ok();
                                             edit_host_by_name(hosts, &current);
                                             enable_raw_mode().ok();
-                                            execute!(io::stdout(), EnterAlternateScreen).ok();
+                                            execute!(stdout(), EnterAlternateScreen).ok();
                                             items = hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
@@ -727,10 +725,10 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                         if let Some(h) = filtered.get(selected) {
                                             let current = h.name.clone();
                                             disable_raw_mode().ok();
-                                            execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                            execute!(stdout(), LeaveAlternateScreen).ok();
                                             rename_host(hosts, &current);
                                             enable_raw_mode().ok();
-                                            execute!(io::stdout(), EnterAlternateScreen).ok();
+                                            execute!(stdout(), EnterAlternateScreen).ok();
                                             items = hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
@@ -747,12 +745,12 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                         if let Some(h) = filtered.get(selected) {
                                             let to_remove = h.name.clone();
                                             disable_raw_mode().ok();
-                                            execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                            execute!(stdout(), LeaveAlternateScreen).ok();
                                             // delete without prompt
                                             hosts.remove(&to_remove);
                                             save_hosts(hosts);
                                             enable_raw_mode().ok();
-                                            execute!(io::stdout(), EnterAlternateScreen).ok();
+                                            execute!(stdout(), EnterAlternateScreen).ok();
                                             items = hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
@@ -787,10 +785,10 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                     }
                                     'a' => {
                                         disable_raw_mode().ok();
-                                        execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                        execute!(stdout(), LeaveAlternateScreen).ok();
                                         create_host(hosts);
                                         enable_raw_mode().ok();
-                                        execute!(io::stdout(), EnterAlternateScreen).ok();
+                                        execute!(stdout(), EnterAlternateScreen).ok();
                                         items = hosts.values().collect();
                                         items.sort_by(|a, b| a.name.cmp(&b.name));
                                         filtered = apply_filter(&filter, &items);
