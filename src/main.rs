@@ -3,19 +3,19 @@ use prettytable::{row, Table};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs::{self, File};
+use std::io::stdout;
 use std::io::{Read, Write};
 use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
-use std::io::{stdout};
 
 // TUI
 use crossterm::{
+    cursor::Show,
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-    cursor::Show
 };
 use ratatui::text::{Line, Span};
 use ratatui::{
@@ -67,7 +67,10 @@ fn config_path() -> PathBuf {
 }
 
 fn clear_console() {
-    if let Err(e) = execute!(io::stdout(), crossterm::terminal::Clear(crossterm::terminal::ClearType::All)) {
+    if let Err(e) = execute!(
+        io::stdout(),
+        crossterm::terminal::Clear(crossterm::terminal::ClearType::All)
+    ) {
         eprintln!("Failed to clear console: {e}");
     }
 }
@@ -430,7 +433,6 @@ fn list_hosts_with_filter(hosts: &HashMap<String, Host>, filter: Option<String>)
 /// Build and execute the ssh command based on Host settings
 /// Construit et exécute la commande ssh en combinant Host + overrides CLI.
 fn launch_ssh(h: &Host, overrides: Option<&[String]>) {
-
     disable_raw_mode().ok();
     execute!(stdout(), Show).ok();
 
@@ -687,6 +689,8 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                         // quit the process
                                         disable_raw_mode().ok();
                                         execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                        disable_raw_mode().ok();
+                                        execute!(stdout(), Show).ok();
                                         process::exit(0);
                                     }
                                     'e' => {
