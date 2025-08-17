@@ -10,6 +10,8 @@ use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
 
+use std::collections::BTreeMap;
+
 // TUI
 use crossterm::{
     cursor::Show,
@@ -265,13 +267,21 @@ fn import_ssh_config(hosts: &mut HashMap<String, Host>) {
 
 fn save_hosts(hosts: &HashMap<String, Host>) {
     let path = config_path();
-    let json = match serde_json::to_string_pretty(hosts) {
+
+    // On trie les hosts par clé (BTreeMap ordonne automatiquement)
+    let ordered: BTreeMap<_, _> = hosts.into_iter().collect();
+
+    let json = match serde_json::to_string_pretty(&ordered) {
         Ok(s) => s,
         Err(e) => {
             eprintln!("Failed to serialize hosts: {e}");
             return;
         }
     };
+
+    if let Err(e) = fs::write(&path, json.clone()) {
+        eprintln!("Failed to write hosts to {}: {e}", path.display());
+    }
 
     // Write to a temp file then rename
     let tmp = path.with_extension("json.tmp");
@@ -683,7 +693,7 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                             }
                         }
                         KeyCode::Char(c) => {
-                            if filter == String::from("") && selected == 0 {
+                            if !filtered.is_empty() {
                                 match c {
                                     'q' | 'Q' => {
                                         // quit the process
@@ -759,12 +769,12 @@ fn run_tui(hosts: &mut HashMap<String, Host>) {
                                         if let Some(h) = filtered.get(selected) {
                                             let current = h.name.clone();
                                             disable_raw_mode().ok();
-                                            execute!(io::stdout(), LeaveAlternateScreen).ok();
+                                            execute!(stdout(), LeaveAlternateScreen).ok();
                                             // on réutilise la commande CLI interne pour pousser la clé
                                             // ici, pas d’option --pub => ça prendra identity_file.pub ou ~/.ssh/id_*.pub
                                             cmd_add_identity(&*hosts, Some(current), &[]);
                                             enable_raw_mode().ok();
-                                            execute!(io::stdout(), EnterAlternateScreen).ok();
+                                            execute!(stdout(), EnterAlternateScreen).ok();
                                             // pas besoin de reconstruire items/filtered si rien n'a changé localement
                                             list_state.select(if filtered.is_empty() {
                                                 None
