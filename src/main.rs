@@ -8,12 +8,14 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::process::Command;
 use std::{env, process};
+use std::io::{stdout};
 
 // TUI
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    cursor::Show
 };
 use ratatui::text::{Line, Span};
 use ratatui::{
@@ -428,6 +430,10 @@ fn list_hosts_with_filter(hosts: &HashMap<String, Host>, filter: Option<String>)
 /// Build and execute the ssh command based on Host settings
 /// Construit et exécute la commande ssh en combinant Host + overrides CLI.
 fn launch_ssh(h: &Host, overrides: Option<&[String]>) {
+
+    disable_raw_mode().ok();
+    execute!(stdout(), Show).ok();
+
     let mut cmd = Command::new("ssh");
     cmd.arg(format!("{}@{}", h.username, h.host))
         .arg("-p")
