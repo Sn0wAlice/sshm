@@ -107,23 +107,24 @@ pub fn run_tui(db: &mut Database) {
                     folders.sort();
                     folders.dedup();
 
-                    // All + each folder
-                    rows.push(Row::Folder("All".to_string()));
-                    for f_name in &folders {
-                        rows.push(Row::Folder(f_name.clone()));
-                    }
-
-                    // Hosts for the current folder
-                    let host_iter: Vec<&Host> = match &current_folder {
-                        None => items.iter().copied().collect(),
-                        Some(fold) => items
-                            .iter()
-                            .copied()
-                            .filter(|h| h.folder.as_deref() == Some(fold.as_str()))
-                            .collect(),
-                    };
-                    for h in host_iter {
-                        rows.push(Row::Host(h));
+                    match &current_folder {
+                        None => {
+                            // At root: show folders + hosts without folder
+                            for f_name in &folders {
+                                rows.push(Row::Folder(f_name.clone()));
+                            }
+                            for h in items.iter().copied().filter(|h| h.folder.is_none()) {
+                                rows.push(Row::Host(h));
+                            }
+                        }
+                        Some(fold) => {
+                            // Inside a folder: show breadcrumb + hosts
+                            rows.push(Row::Folder(format!("<{}>", fold))); //disable to see where we are
+                            rows.push(Row::Folder("..".to_string()));      // go parent
+                            for h in items.iter().copied().filter(|h| h.folder.as_deref() == Some(fold.as_str())) {
+                                rows.push(Row::Host(h));
+                            }
+                        }
                     }
                 } else {
                     // Filtered view ignores folders
@@ -149,9 +150,9 @@ pub fn run_tui(db: &mut Database) {
                     .map(|r| match r {
                         Row::Folder(name) => {
                             let label = if name == "All" {
-                                "📁 All".to_string()
+                                "➤ All".to_string()
                             } else {
-                                format!("📁 {}", name)
+                                format!("➤ {}", name)
                             };
                             ListItem::new(Line::from(vec![Span::raw(label)]))
                         }
@@ -283,51 +284,62 @@ pub fn run_tui(db: &mut Database) {
                                     }
                                     folders.sort();
                                     folders.dedup();
-                                    // rows: All + folders => None, then hosts => Some
-                                    rows_hosts.push(None); // All
-                                    for _ in &folders {
-                                        rows_hosts.push(None);
-                                    }
-                                    // hosts according to current folder
-                                    let host_iter: Vec<&Host> = match &current_folder {
-                                        None => items.iter().copied().collect(),
-                                        Some(f) => items
-                                            .iter()
-                                            .copied()
-                                            .filter(|h| h.folder.as_deref() == Some(f.as_str()))
-                                            .collect(),
-                                    };
-                                    for h in host_iter {
-                                        rows_hosts.push(Some(h));
-                                    }
-                                    // Act based on selection
-                                    if let Some(row) = rows_hosts.get(selected).cloned() {
-                                        match row {
-                                            None => {
-                                                // Navigating folders
-                                                if selected == 0 {
-                                                    current_folder = None; // All
-                                                } else {
-                                                    let idx = selected - 1; // 0 = All
-                                                    if let Some(folder_name) = folders.get(idx) {
-                                                        current_folder = Some(folder_name.clone());
-                                                    }
-                                                }
-                                                selected = 0;
-                                                list_state.select(Some(0));
+                                    match &current_folder {
+                                        None => {
+                                            // At root: rows = folders (None), then hosts without folder (Some)
+                                            for _ in &folders {
+                                                rows_hosts.push(None);
                                             }
-                                            Some(h) => {
-                                                // Connect to host
-                                                let _ = disable_raw_mode();
-                                                let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                crate::ssh::client::launch_ssh(h, None);
-                                                let _ = enable_raw_mode();
-                                                let _ = execute!(stdout(), EnterAlternateScreen);
-                                                clear_console();
-                                                return;
+                                            for h in items.iter().copied().filter(|h| h.folder.is_none()) {
+                                                rows_hosts.push(Some(h));
+                                            }
+                                        }
+                                        Some(fold) => {
+                                            // In folder: first row is breadcrumb, second is "..", then hosts in folder
+                                            rows_hosts.push(None); // breadcrumb
+                                            rows_hosts.push(None); // ".."
+                                            for h in items.iter().copied().filter(|h| h.folder.as_deref() == Some(fold.as_str())) {
+                                                rows_hosts.push(Some(h));
                                             }
                                         }
                                     }
+                                    // Act based on selection
+                                    if let Some(row) = rows_hosts.get(selected).cloned() {
+        match row {
+            None => {
+                // A non-host row was selected (folder/nav)
+                match &current_folder {
+                    // At root: selecting a folder opens it
+                    None => {
+                        if let Some(folder_name) = folders.get(selected) {
+                            current_folder = Some(folder_name.clone());
+                            selected = 0;
+                            list_state.select(Some(0));
+                        }
+                    }
+                    // Inside a folder: 0 = breadcrumb (noop), 1 = ".." (go parent)
+                    Some(_) => {
+                        if selected == 1 {
+                            current_folder = None; // go parent
+                            selected = 0;
+                            list_state.select(Some(0));
+                        }
+                        // selected == 0 -> breadcrumb: do nothing
+                    }
+                }
+            }
+            Some(h) => {
+                // Connect to host
+                let _ = disable_raw_mode();
+                let _ = execute!(stdout(), LeaveAlternateScreen);
+                crate::ssh::client::launch_ssh(h, None);
+                let _ = enable_raw_mode();
+                let _ = execute!(stdout(), EnterAlternateScreen);
+                clear_console();
+                return;
+            }
+        }
+    }
                                 } else {
                                     for h in &filtered {
                                         rows_hosts.push(Some(h));
@@ -367,24 +379,24 @@ pub fn run_tui(db: &mut Database) {
                                         let mut current_host: Option<String> = None;
                                         if filter.is_empty() {
                                             // Determine if selection is a host row
-                                            let mut folders: Vec<String> = db.folders.clone();
-                                            for h in db.hosts.values() {
-                                                if let Some(ref folder) = h.folder {
-                                                    if !folders.iter().any(|f| f == folder) {
-                                                        folders.push(folder.clone());
-                                                    }
+                                        let mut folders: Vec<String> = db.folders.clone();
+                                        for h in db.hosts.values() {
+                                            if let Some(ref folder) = h.folder {
+                                                if !folders.iter().any(|f| f == folder) {
+                                                    folders.push(folder.clone());
                                                 }
                                             }
-                                            folders.sort(); folders.dedup();
-                                            let hosts_start = 1 + folders.len();
-                                            if selected >= hosts_start {
-                                                let idx = selected - hosts_start;
-                                                let host_iter: Vec<&Host> = match &current_folder {
-                                                    None => items.iter().copied().collect(),
-                                                    Some(f) => items.iter().copied().filter(|h| h.folder.as_deref() == Some(f.as_str())).collect(),
-                                                };
-                                                if let Some(h) = host_iter.get(idx) { current_host = Some(h.name.clone()); }
-                                            }
+                                        }
+                                        folders.sort(); folders.dedup();
+                                        let hosts_start = folders.len();
+                                        if selected >= hosts_start {
+                                            let idx = selected - hosts_start;
+                                            let host_iter: Vec<&Host> = match &current_folder {
+                                                None => items.iter().copied().filter(|h| h.folder.is_none()).collect(),
+                                                Some(f) => items.iter().copied().filter(|h| h.folder.as_deref() == Some(f.as_str())).collect(),
+                                            };
+                                            if let Some(h) = host_iter.get(idx) { current_host = Some(h.name.clone()); }
+                                        }
                                         } else {
                                             if let Some(h) = filtered.get(selected) { current_host = Some(h.name.clone()); }
                                         }
@@ -416,11 +428,11 @@ pub fn run_tui(db: &mut Database) {
                                                 }
                                             }
                                             folders.sort(); folders.dedup();
-                                            let hosts_start = 1 + folders.len();
+                                            let hosts_start = folders.len();
                                             if selected >= hosts_start {
                                                 let idx = selected - hosts_start;
                                                 let host_iter: Vec<&Host> = match &current_folder {
-                                                    None => items.iter().copied().collect(),
+                                                    None => items.iter().copied().filter(|h| h.folder.is_none()).collect(),
                                                     Some(f) => items.iter().copied().filter(|h| h.folder.as_deref() == Some(f.as_str())).collect(),
                                                 };
                                                 if let Some(h) = host_iter.get(idx) { current_host = Some(h.name.clone()); }
@@ -465,11 +477,11 @@ pub fn run_tui(db: &mut Database) {
                                                 }
                                             }
                                             folders.sort(); folders.dedup();
-                                            let hosts_start = 1 + folders.len();
+                                            let hosts_start = folders.len();
                                             if selected >= hosts_start {
                                                 let idx = selected - hosts_start;
                                                 let host_iter: Vec<&Host> = match &current_folder {
-                                                    None => items.iter().copied().collect(),
+                                                    None => items.iter().copied().filter(|h| h.folder.is_none()).collect(),
                                                     Some(f) => items.iter().copied().filter(|h| h.folder.as_deref() == Some(f.as_str())).collect(),
                                                 };
                                                 if let Some(h) = host_iter.get(idx) { current_host = Some(h.name.clone()); }
