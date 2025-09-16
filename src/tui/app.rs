@@ -360,8 +360,7 @@ pub fn run_tui(db: &mut Database) {
                                         return;
                                     }
                                 }
-                                // reload ui
-                                run_tui(&mut db.clone());
+
                             }
                         }
 
