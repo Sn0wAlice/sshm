@@ -34,20 +34,27 @@ The file is automatically created at the following location if it doesn't exist:
 $HOME/.config/sshm/host.json
 ```
 
-It contains a JSON dictionary of SSH hosts with the following structure:
+It contains a JSON object with all hosts and folders:
 ```json
 {
-  "my-server": {
-    "name": "my-server",
-    "ip": "192.168.1.10",
-    "port": 22,
-    "username": "alice",
-    "tags": ["production", "web"],
-    "identity_file": "~/.ssh/id_rsa",
-    "proxy_jump": "jump-host"
-  }
+  "hosts": {
+    "my-server": {
+      "name": "my-server",
+      "host": "192.168.1.10",
+      "port": 22,
+      "username": "alice",
+      "tags": ["production", "web"],
+      "identity_file": "~/.ssh/id_rsa",
+      "proxy_jump": "jump-host",
+      "folder": null
+    }
+  },
+  "folders": ["projetA", "projetB"]
 }
 ```
+
+- `folder: null` means the host is in the root.
+- The top-level `folders` array lists available folders (no subfolders supported).
 
 Entries from your `~/.ssh/config` file are automatically imported unless this behavior is disabled in the configuration.
 

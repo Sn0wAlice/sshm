@@ -1,1 +1,1 @@
-// (Placeholder module if you want to further split widgets later)
+// (Placeholder module for further split widgets later)

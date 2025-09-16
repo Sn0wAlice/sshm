@@ -1,4 +1,3 @@
-
 use crate::filter::apply_filter;
 use crate::models::{tags_to_string, Database, Host};
 use crate::util::clear_console;
@@ -290,7 +289,9 @@ pub fn run_tui(db: &mut Database) {
                                             for _ in &folders {
                                                 rows_hosts.push(None);
                                             }
-                                            for h in items.iter().copied().filter(|h| h.folder.is_none()) {
+                                            for h in
+                                                items.iter().copied().filter(|h| h.folder.is_none())
+                                            {
                                                 rows_hosts.push(Some(h));
                                             }
                                         }
@@ -298,48 +299,53 @@ pub fn run_tui(db: &mut Database) {
                                             // In folder: first row is breadcrumb, second is "..", then hosts in folder
                                             rows_hosts.push(None); // breadcrumb
                                             rows_hosts.push(None); // ".."
-                                            for h in items.iter().copied().filter(|h| h.folder.as_deref() == Some(fold.as_str())) {
+                                            for h in items.iter().copied().filter(|h| {
+                                                h.folder.as_deref() == Some(fold.as_str())
+                                            }) {
                                                 rows_hosts.push(Some(h));
                                             }
                                         }
                                     }
                                     // Act based on selection
                                     if let Some(row) = rows_hosts.get(selected).cloned() {
-        match row {
-            None => {
-                // A non-host row was selected (folder/nav)
-                match &current_folder {
-                    // At root: selecting a folder opens it
-                    None => {
-                        if let Some(folder_name) = folders.get(selected) {
-                            current_folder = Some(folder_name.clone());
-                            selected = 0;
-                            list_state.select(Some(0));
-                        }
-                    }
-                    // Inside a folder: 0 = breadcrumb (noop), 1 = ".." (go parent)
-                    Some(_) => {
-                        if selected == 1 {
-                            current_folder = None; // go parent
-                            selected = 0;
-                            list_state.select(Some(0));
-                        }
-                        // selected == 0 -> breadcrumb: do nothing
-                    }
-                }
-            }
-            Some(h) => {
-                // Connect to host
-                let _ = disable_raw_mode();
-                let _ = execute!(stdout(), LeaveAlternateScreen);
-                crate::ssh::client::launch_ssh(h, None);
-                let _ = enable_raw_mode();
-                let _ = execute!(stdout(), EnterAlternateScreen);
-                clear_console();
-                return;
-            }
-        }
-    }
+                                        match row {
+                                            None => {
+                                                // A non-host row was selected (folder/nav)
+                                                match &current_folder {
+                                                    // At root: selecting a folder opens it
+                                                    None => {
+                                                        if let Some(folder_name) =
+                                                            folders.get(selected)
+                                                        {
+                                                            current_folder =
+                                                                Some(folder_name.clone());
+                                                            selected = 0;
+                                                            list_state.select(Some(0));
+                                                        }
+                                                    }
+                                                    // Inside a folder: 0 = breadcrumb (noop), 1 = ".." (go parent)
+                                                    Some(_) => {
+                                                        if selected == 1 {
+                                                            current_folder = None; // go parent
+                                                            selected = 0;
+                                                            list_state.select(Some(0));
+                                                        }
+                                                        // selected == 0 -> breadcrumb: do nothing
+                                                    }
+                                                }
+                                            }
+                                            Some(h) => {
+                                                // Connect to host
+                                                let _ = disable_raw_mode();
+                                                let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                crate::ssh::client::launch_ssh(h, None);
+                                                let _ = enable_raw_mode();
+                                                let _ = execute!(stdout(), EnterAlternateScreen);
+                                                clear_console();
+                                                return;
+                                            }
+                                        }
+                                    }
                                 } else {
                                     for h in &filtered {
                                         rows_hosts.push(Some(h));
@@ -354,6 +360,8 @@ pub fn run_tui(db: &mut Database) {
                                         return;
                                     }
                                 }
+                                // reload ui
+                                run_tui(&mut db.clone());
                             }
                         }
 
@@ -379,32 +387,50 @@ pub fn run_tui(db: &mut Database) {
                                         let mut current_host: Option<String> = None;
                                         if filter.is_empty() {
                                             // Determine if selection is a host row
-                                        let mut folders: Vec<String> = db.folders.clone();
-                                        for h in db.hosts.values() {
-                                            if let Some(ref folder) = h.folder {
-                                                if !folders.iter().any(|f| f == folder) {
-                                                    folders.push(folder.clone());
+                                            let mut folders: Vec<String> = db.folders.clone();
+                                            for h in db.hosts.values() {
+                                                if let Some(ref folder) = h.folder {
+                                                    if !folders.iter().any(|f| f == folder) {
+                                                        folders.push(folder.clone());
+                                                    }
                                                 }
                                             }
-                                        }
-                                        folders.sort(); folders.dedup();
-                                        let hosts_start = folders.len();
-                                        if selected >= hosts_start {
-                                            let idx = selected - hosts_start;
-                                            let host_iter: Vec<&Host> = match &current_folder {
-                                                None => items.iter().copied().filter(|h| h.folder.is_none()).collect(),
-                                                Some(f) => items.iter().copied().filter(|h| h.folder.as_deref() == Some(f.as_str())).collect(),
-                                            };
-                                            if let Some(h) = host_iter.get(idx) { current_host = Some(h.name.clone()); }
-                                        }
+                                            folders.sort();
+                                            folders.dedup();
+                                            let hosts_start = folders.len();
+                                            if selected >= hosts_start {
+                                                let idx = selected - hosts_start;
+                                                let host_iter: Vec<&Host> = match &current_folder {
+                                                    None => items
+                                                        .iter()
+                                                        .copied()
+                                                        .filter(|h| h.folder.is_none())
+                                                        .collect(),
+                                                    Some(f) => items
+                                                        .iter()
+                                                        .copied()
+                                                        .filter(|h| {
+                                                            h.folder.as_deref() == Some(f.as_str())
+                                                        })
+                                                        .collect(),
+                                                };
+                                                if let Some(h) = host_iter.get(idx) {
+                                                    current_host = Some(h.name.clone());
+                                                }
+                                            }
                                         } else {
-                                            if let Some(h) = filtered.get(selected) { current_host = Some(h.name.clone()); }
+                                            if let Some(h) = filtered.get(selected) {
+                                                current_host = Some(h.name.clone());
+                                            }
                                         }
 
                                         if let Some(name) = current_host {
                                             let _ = disable_raw_mode();
                                             let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            crate::commands::crud::edit_host_by_name(&mut db.hosts, &name);
+                                            crate::commands::crud::edit_host_by_name(
+                                                &mut db.hosts,
+                                                &name,
+                                            );
                                             save_db(db);
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
@@ -412,8 +438,15 @@ pub fn run_tui(db: &mut Database) {
                                             items = db.hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
-                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                            list_state.select(if filtered.is_empty() {
+                                                None
+                                            } else {
+                                                Some(0)
+                                            });
                                         }
+
+                                        // reload ui
+                                        run_tui(&mut db.clone());
                                     }
                                     'r' => {
                                         // Rename selected host, if any
@@ -427,30 +460,55 @@ pub fn run_tui(db: &mut Database) {
                                                     }
                                                 }
                                             }
-                                            folders.sort(); folders.dedup();
+                                            folders.sort();
+                                            folders.dedup();
                                             let hosts_start = folders.len();
                                             if selected >= hosts_start {
                                                 let idx = selected - hosts_start;
                                                 let host_iter: Vec<&Host> = match &current_folder {
-                                                    None => items.iter().copied().filter(|h| h.folder.is_none()).collect(),
-                                                    Some(f) => items.iter().copied().filter(|h| h.folder.as_deref() == Some(f.as_str())).collect(),
+                                                    None => items
+                                                        .iter()
+                                                        .copied()
+                                                        .filter(|h| h.folder.is_none())
+                                                        .collect(),
+                                                    Some(f) => items
+                                                        .iter()
+                                                        .copied()
+                                                        .filter(|h| {
+                                                            h.folder.as_deref() == Some(f.as_str())
+                                                        })
+                                                        .collect(),
                                                 };
-                                                if let Some(h) = host_iter.get(idx) { current_host = Some(h.name.clone()); }
+                                                if let Some(h) = host_iter.get(idx) {
+                                                    current_host = Some(h.name.clone());
+                                                }
                                             }
-                                        } else if let Some(h) = filtered.get(selected) { current_host = Some(h.name.clone()); }
+                                        } else if let Some(h) = filtered.get(selected) {
+                                            current_host = Some(h.name.clone());
+                                        }
 
                                         if let Some(name) = current_host {
                                             let _ = disable_raw_mode();
                                             let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            crate::commands::crud::rename_host(&mut db.hosts, &name);
+                                            crate::commands::crud::rename_host(
+                                                &mut db.hosts,
+                                                &name,
+                                            );
                                             save_db(db);
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
                                             items = db.hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
-                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                            list_state.select(if filtered.is_empty() {
+                                                None
+                                            } else {
+                                                Some(0)
+                                            });
                                         }
+
+                                        // reload ui
+                                        run_tui(&mut db.clone());
                                     }
                                     'd' => {
                                         // Open delete menu (Host or Folder) as requested
@@ -462,7 +520,13 @@ pub fn run_tui(db: &mut Database) {
                                         items = db.hosts.values().collect();
                                         items.sort_by(|a, b| a.name.cmp(&b.name));
                                         filtered = apply_filter(&filter, &items);
-                                        list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                        list_state.select(if filtered.is_empty() {
+                                            None
+                                        } else {
+                                            Some(0)
+                                        });
+                                        // reload ui
+                                        run_tui(&mut db.clone());
                                     }
                                     'i' => {
                                         // Add identity to selected host, if any
@@ -476,25 +540,46 @@ pub fn run_tui(db: &mut Database) {
                                                     }
                                                 }
                                             }
-                                            folders.sort(); folders.dedup();
+                                            folders.sort();
+                                            folders.dedup();
                                             let hosts_start = folders.len();
                                             if selected >= hosts_start {
                                                 let idx = selected - hosts_start;
                                                 let host_iter: Vec<&Host> = match &current_folder {
-                                                    None => items.iter().copied().filter(|h| h.folder.is_none()).collect(),
-                                                    Some(f) => items.iter().copied().filter(|h| h.folder.as_deref() == Some(f.as_str())).collect(),
+                                                    None => items
+                                                        .iter()
+                                                        .copied()
+                                                        .filter(|h| h.folder.is_none())
+                                                        .collect(),
+                                                    Some(f) => items
+                                                        .iter()
+                                                        .copied()
+                                                        .filter(|h| {
+                                                            h.folder.as_deref() == Some(f.as_str())
+                                                        })
+                                                        .collect(),
                                                 };
-                                                if let Some(h) = host_iter.get(idx) { current_host = Some(h.name.clone()); }
+                                                if let Some(h) = host_iter.get(idx) {
+                                                    current_host = Some(h.name.clone());
+                                                }
                                             }
-                                        } else if let Some(h) = filtered.get(selected) { current_host = Some(h.name.clone()); }
+                                        } else if let Some(h) = filtered.get(selected) {
+                                            current_host = Some(h.name.clone());
+                                        }
 
                                         if let Some(name) = current_host {
                                             let _ = disable_raw_mode();
                                             let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            crate::ssh::add_identity::cmd_add_identity(&db.hosts, Some(name), &[]);
+                                            crate::ssh::add_identity::cmd_add_identity(
+                                                &db.hosts,
+                                                Some(name),
+                                                &[],
+                                            );
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
                                         }
+                                        // reload ui
+                                        run_tui(&mut db.clone());
                                     }
                                     'a' => {
                                         // Create Host or Folder; host goes into current folder
@@ -506,7 +591,13 @@ pub fn run_tui(db: &mut Database) {
                                         items = db.hosts.values().collect();
                                         items.sort_by(|a, b| a.name.cmp(&b.name));
                                         filtered = apply_filter(&filter, &items);
-                                        list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                        list_state.select(if filtered.is_empty() {
+                                            None
+                                        } else {
+                                            Some(0)
+                                        });
+                                        // reload ui
+                                        run_tui(&mut db.clone());
                                     }
                                     _ => {
                                         // Start implicit filter mode with this first char
@@ -515,7 +606,11 @@ pub fn run_tui(db: &mut Database) {
                                         filter.push(c);
                                         filtered = apply_filter(&filter, &items);
                                         selected = 0;
-                                        list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                        list_state.select(if filtered.is_empty() {
+                                            None
+                                        } else {
+                                            Some(0)
+                                        });
                                     }
                                 }
                             }
