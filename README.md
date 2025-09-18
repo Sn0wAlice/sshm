@@ -28,7 +28,7 @@ cp ./target/release/sshm /usr/local/bin/
 
 ## Configuration File
 
-The file is automatically created at the following location if it doesn't exist:
+The file is **automatically created** at the following location if it doesn't exist:
 
 ```
 $HOME/.config/sshm/host.json
