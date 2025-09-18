@@ -13,7 +13,7 @@
 ### Build
 
 ```bash
-git clone https://github.com/tonrepo/sshm.git
+git clone https://github.com/Sn0wAlice/sshm.git
 cd sshm
 cargo build --release
 ```
@@ -69,6 +69,8 @@ sshm tag add <name> <tag1,tag2,...>
 sshm tag del <name> <tag1,tag2,...>
 sshm tui
 sshm help
+
+-> only "sshm" without arg launch the interactive TUI system
 ```
 - `connect [overrides...]` accepts SSH options like `-i key`, `-J jump`, `-L local:remote`, etc., to override host settings for the session.
 - `list --filter` supports filtering hosts by matching name, IP, username, or tags using wildcards.

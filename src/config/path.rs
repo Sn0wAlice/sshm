@@ -11,7 +11,7 @@ pub fn config_path() -> PathBuf {
 
     let dir = base.join("sshm");
     if let Err(e) = fs::create_dir_all(&dir) {
-        eprintln!("Impossible de créer le dossier {:?}: {}", dir, e);
+        eprintln!("Cannot create folder {:?}: {}", dir, e);
     }
 
     dir.join("host.json")
