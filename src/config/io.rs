@@ -11,6 +11,7 @@ pub fn load_db() -> Database {
     println!("Loading DB from {}", path.display());
     if let Err(e) = ensure_config_file(&path) {
         eprintln!("Cannot init config file {}: {e}", path.display());
+        save_empty_database();
         return Database { hosts: Default::default(), folders: vec![] };
     }
 
@@ -19,11 +20,13 @@ pub fn load_db() -> Database {
         Ok(mut file) => {
             if let Err(e) = file.read_to_string(&mut content) {
                 eprintln!("Error reading {}: {e}", path.display());
+                save_empty_database();
                 return Database { hosts: Default::default(), folders: vec![] };
             }
         }
         Err(e) => {
             eprintln!("Cannot open {}: {e}", path.display());
+            save_empty_database();
             return Database { hosts: Default::default(), folders: vec![] };
         }
     }
@@ -124,6 +127,8 @@ pub fn save_db(db: &Database) {
         return;
     }
     let _ = fs::remove_file(&path);
+    // create the directory: $HOME/.config/sshm/
+
     if let Err(e) = fs::rename(&tmp, &path) {
         eprintln!("Failed to move temp file into place: {e}");
         // fallback direct write
@@ -146,4 +151,12 @@ pub fn save_hosts(hosts: &HashMap<String, Host>) {
     folders.sort(); folders.dedup();
     let db = Database { hosts: hosts.clone(), folders };
     save_db(&db);
+}
+
+// Create files
+pub fn save_empty_database() {
+    let path = config_path();
+    let db = Database { hosts: Default::default(), folders: vec![] };
+    save_db(&db);
+    println!("Created empty database at {}", path.display());
 }
