@@ -55,13 +55,15 @@ fn main() {
         }
         Some("help") => {
             println!("Usage:");
+            println!("  sshm");
+
+            println!("\nAdvanced commands:");
             println!("  sshm list [--filter \"expr\"]");
             println!("  sshm connect (c) <name> [overrides...]   # pass -i, -J, -L/-R/-D etc.");
             println!("  sshm create | edit | delete");
             println!("  sshm tag add <name> <tag1,tag2> | tag del <name> <tag1,tag2>");
             println!("  sshm load_local_conf   # import from ~/.ssh/config once");
             println!("  sshm add-identity <name?> [--pub ~/.ssh/id_ed25519.pub]   # push pubkey to authorized_keys");
-            println!("  sshm tui");
         }
         _ => loop { run_tui(&mut db) },
     }
