@@ -18,10 +18,10 @@ pub fn config_path() -> PathBuf {
 }
 pub fn ensure_config_file(path: &PathBuf) -> io::Result<()> {
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
+        fs::create_dir_all(parent)?;
     }
     if !path.exists() {
-        std::fs::write(path, "{}\n")?;
+        fs::write(path, "{}\n")?;
     }
     Ok(())
 }

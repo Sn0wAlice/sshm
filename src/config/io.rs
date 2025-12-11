@@ -1,6 +1,6 @@
 use std::{collections::{HashMap, BTreeMap}, fs::File, io::Read};
 use std::fs;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json;
 use crate::models::{Host, Database};
 use super::path::{config_path, ensure_config_file};

@@ -23,7 +23,7 @@ pub struct Host {
     /// Tags pour filtrage/organisation
     #[serde(default)]
     pub tags: Option<Vec<String>>,
-    /// Folder logique (ex: "Production", "Staging", etc.)
+    /// Folder logique (ex : "Production", "Staging", etc.)
     /// Peut être None (pas de dossier)
     #[serde(default)]
     pub folder: Option<String>,
