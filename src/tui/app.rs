@@ -1,5 +1,5 @@
 use crate::filter::apply_filter;
-use crate::models::{tags_to_string, Database, Host};
+use crate::models::{Database, Host};
 use crate::util::clear_console;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
@@ -498,9 +498,9 @@ pub fn run_tui(db: &mut Database) {
                                                 let _ = execute!(stdout(), LeaveAlternateScreen);
 
                                                 match row {
-                                                    Row::Host(h) => {
-                                                        let name = h.name.clone();
-                                                        crate::commands::crud::rename_host(&mut db.hosts, &name);
+                                                    Row::Host(_h) => {
+                                                        // ignore
+                                                        continue;
                                                     }
                                                     Row::Folder(folder_name) => {
                                                         if folder_name != "All" {
@@ -806,7 +806,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 fn draw_host_form(
     f: &mut Frame,
-    db: &Database,
+    _db: &Database,
     state: &HostFormState,
 ) {
     let size = f.area();
@@ -1013,7 +1013,7 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
 
     if state.is_edit {
         if let Some(orig_name) = &state.original_name {
-            if let Some(existing) = db.hosts.remove(orig_name) {
+            if let Some(_existing) = db.hosts.remove(orig_name) {
                 let new_host = Host {
                     name: name.to_string(),
                     host: host.to_string(),

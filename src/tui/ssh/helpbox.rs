@@ -8,7 +8,7 @@ pub fn get_help_box_content(list_state: &ListState, rows_help: &Vec<Row>, theme:
     let help_text = if let Some(sel) = list_state.selected() {
         match rows_help.get(sel) {
             Some(Row::Host(_)) => {
-                "Shortcuts:  ↑/↓ move • Enter open/connect • a add • e edit • r rename • i add identity • d delete • q quit\n\
+                "Shortcuts:  ↑/↓ move • Enter open/connect • a add • e edit • i add identity • d delete • q quit\n\
                              Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."
             }
             Some(Row::Folder(_)) => {
