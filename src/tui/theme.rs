@@ -38,7 +38,7 @@ pub fn load() -> Theme {
 
     if let Ok(content) = fs::read_to_string(&config_path) {
         if let Ok(cfg) = toml::from_str::<Config>(&content) {
-            let fallback = zenburn();
+            let fallback = get_global_theme();
             return Theme {
                 bg: cfg.bg.as_ref()
                     .and_then(|v| hex_to_color(v))
@@ -56,10 +56,10 @@ pub fn load() -> Theme {
         }
     }
 
-    zenburn()
+    get_global_theme()
 }
 
-pub fn zenburn() -> Theme {
+pub fn get_global_theme() -> Theme {
     Theme {
         bg: Color::Rgb(40, 40, 40),
         fg: Color::Rgb(220, 220, 204),

@@ -1,5 +1,3 @@
-
-
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -55,34 +53,6 @@ impl PanelState {
     fn selected_entry(&self) -> Option<&FileEntry> {
         self.entries.get(self.selected)
     }
-}
-
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(r);
-
-    let horizontal = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(popup_layout[1]);
-
-    horizontal[1]
 }
 
 fn read_local_dir(path: &Path) -> io::Result<Vec<FileEntry>> {
@@ -342,44 +312,6 @@ fn upload_local_file(
     Ok(())
 }
 
-fn upload_local_folder(
-    user: &str,
-    host: &str,
-    port: u16,
-    identity: Option<&str>,
-    local_root: &Path,
-    remote_root: &str,
-) -> io::Result<()> {
-    // Ensure the root directory exists on remote
-    ssh_mkdir_remote(user, host, port, identity, remote_root)?;
-
-    // Stack-based DFS over local directories
-    let mut stack: Vec<(PathBuf, String)> = Vec::new();
-    stack.push((local_root.to_path_buf(), remote_root.to_string()));
-
-    while let Some((local_dir, remote_dir)) = stack.pop() {
-        for entry in fs::read_dir(&local_dir)? {
-            let entry = entry?;
-            let path = entry.path();
-            let name = entry
-                .file_name()
-                .to_string_lossy()
-                .to_string();
-            let remote_path = join_remote_path(&remote_dir, &name);
-
-            if path.is_dir() {
-                // Create remote subdir and recurse
-                ssh_mkdir_remote(user, host, port, identity, &remote_path)?;
-                stack.push((path, remote_path));
-            } else {
-                // Upload single file
-                upload_local_file(user, host, port, identity, &path, &remote_path)?;
-            }
-        }
-    }
-
-    Ok(())
-}
 
 fn unique_local_path(dir: &Path, file_name: &str) -> PathBuf {
     // Split into base and suffix (keep multi-part extensions like .tar.gz as suffix)

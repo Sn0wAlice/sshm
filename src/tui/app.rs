@@ -1044,7 +1044,7 @@ fn draw_host_form(
 ) {
     let size = f.size();
     let area = centered_rect(70, 80, size);
-    let theme = theme::zenburn();
+    let theme = theme::get_global_theme();
     let bg = theme.bg;
     let fg = theme.fg;
     let accent = theme.accent;
