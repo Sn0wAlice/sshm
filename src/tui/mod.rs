@@ -5,3 +5,4 @@ pub mod help;
 pub mod functions;
 pub mod char;
 pub mod theme;
+pub mod app_sftp;

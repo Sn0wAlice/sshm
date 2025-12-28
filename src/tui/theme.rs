@@ -4,6 +4,7 @@ use serde::Deserialize;
 use toml;
 use ratatui::style::Color;
 
+#[derive(Clone, Debug)]
 pub struct Theme {
     pub bg: Color,
     pub fg: Color,

@@ -739,6 +739,32 @@ pub fn run_tui(db: &mut Database) {
                                         'q' | 'Q' => {
                                             q::press();
                                         }
+                                        'f' => {
+                                            // Launch SFTP UI for selected host
+                                            let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
+                                            if let Some(Row::Host(h)) = rows.get(selected) {
+                                                let username = h.username.clone();
+                                                let host_addr = h.host.clone();
+                                                let port = h.port;
+                                                let identity = h.identity_file.clone();
+
+                                                let _ = disable_raw_mode();
+                                                let _ = execute!(stdout(), LeaveAlternateScreen);
+
+                                                let _ = crate::tui::app_sftp::run_sftp_ui(
+                                                    &username,
+                                                    &host_addr,
+                                                    port,
+                                                    identity.as_deref(),
+                                                );
+
+                                                let _ = enable_raw_mode();
+                                                let _ = execute!(stdout(), EnterAlternateScreen);
+
+                                                // Refresh state after returning from SFTP
+                                                run_tui(&mut db.clone());
+                                            }
+                                        }
                                         'e' => {
                                             // Edit currently selected host (if a host is selected) using TUI form
                                             let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
