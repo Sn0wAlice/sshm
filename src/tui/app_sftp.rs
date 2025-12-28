@@ -11,16 +11,18 @@ use crossterm::event::{self, Event, KeyCode, KeyEventKind};
 use crossterm::execute;
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
 use ratatui::backend::CrosstermBackend;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::{Constraint, Direction, Layout};
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, Paragraph, ListState};
+
+use crate::sftp::fs::{read_local_dir, unique_local_path};
 
 use crate::tui::theme;
 
 #[derive(Clone, Debug)]
-struct FileEntry {
-    name: String,
-    is_dir: bool,
+pub struct FileEntry {
+    pub name: String,
+    pub is_dir: bool,
 }
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
@@ -55,31 +57,6 @@ impl PanelState {
     }
 }
 
-fn read_local_dir(path: &Path) -> io::Result<Vec<FileEntry>> {
-    let mut entries = Vec::new();
-    for entry in fs::read_dir(path)? {
-        let entry = entry?;
-        let meta = entry.metadata()?;
-        let file_name = entry
-            .file_name()
-            .to_string_lossy()
-            .to_string();
-        let is_dir = meta.is_dir();
-        entries.push(FileEntry {
-            name: file_name,
-            is_dir,
-        });
-    }
-    // Sort directories first, then files, both alphabetically
-    entries.sort_by(|a, b| {
-        match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.to_lowercase().cmp(&b.name.to_lowercase()),
-        }
-    });
-    Ok(entries)
-}
 
 fn ssh_list_remote_dir(
     user: &str,
@@ -312,31 +289,6 @@ fn upload_local_file(
     Ok(())
 }
 
-
-fn unique_local_path(dir: &Path, file_name: &str) -> PathBuf {
-    // Split into base and suffix (keep multi-part extensions like .tar.gz as suffix)
-    let (base, suffix) = if let Some(pos) = file_name.find('.') {
-        let (b, s) = file_name.split_at(pos);
-        (b.to_string(), s.to_string())
-    } else {
-        (file_name.to_string(), String::new())
-    };
-
-    let mut candidate = dir.join(format!("{}{}", base, suffix));
-    if !candidate.exists() {
-        return candidate;
-    }
-
-    let mut n = 1;
-    loop {
-        let name = format!("{} ({}){}", base, n, suffix);
-        candidate = dir.join(name);
-        if !candidate.exists() {
-            return candidate;
-        }
-        n += 1;
-    }
-}
 
 #[derive(Clone, Debug)]
 struct DownloadJob {
