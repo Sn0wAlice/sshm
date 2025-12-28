@@ -34,7 +34,7 @@ pub fn build_rows<'a>(
             }
             Some(fold) => {
                 // Inside a folder: show breadcrumb + hosts
-                rows.push(Row::Folder(format!("<{}>", fold))); // breadcrumb
+                //rows.push(Row::Folder(format!("<{}>", fold))); // breadcrumb
                 rows.push(Row::Folder("..".to_string()));      // go parent
                 for h in items
                     .iter()

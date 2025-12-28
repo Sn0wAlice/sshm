@@ -59,6 +59,7 @@ pub fn run_tui(db: &mut Database) {
         terminal
             .draw(|f| {
                 let size = f.size();
+                let theme = theme::load();
                 let vchunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
@@ -93,7 +94,13 @@ pub fn run_tui(db: &mut Database) {
                     Span::styled("Filter ", Style::default().add_modifier(Modifier::BOLD)),
                     Span::raw(filter_label),
                 ]))
-                .block(Block::default().title("Filter").borders(Borders::ALL));
+                .block(
+                    Block::default()
+                        .title("Filter")
+                        .borders(Borders::ALL)
+                        .border_style(Style::default().fg(theme.accent))
+                        .style(Style::default().bg(theme.bg).fg(theme.fg))
+                );
                 f.render_widget(filter_para, left_chunks[0]);
 
                 // ----- Build rows (folders + hosts) -----
@@ -132,10 +139,27 @@ pub fn run_tui(db: &mut Database) {
                     })
                     .collect();
 
+                // Dynamic list title based on current folder
+                let list_title = if let Some(folder) = &current_folder {
+                    format!("Folder: {} (↑/↓ / filter)", folder)
+                } else {
+                    "Hosts (↑/↓ / filter)".to_string()
+                };
                 let list = List::new(list_items)
-                    .block(Block::default().title("Hosts (↑/↓ / filter)").borders(Borders::ALL))
+                    .block(
+                        Block::default()
+                            .title(list_title)
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(theme.accent))
+                            .style(Style::default().bg(theme.bg).fg(theme.fg))
+                    )
                     .highlight_symbol("➜ ")
-                    .highlight_style(Style::default().add_modifier(Modifier::REVERSED));
+                    .highlight_style(
+                        Style::default()
+                            .bg(theme.accent)
+                            .fg(theme.bg)
+                            .add_modifier(Modifier::BOLD)
+                    );
 
                 f.render_stateful_widget(list, list_area, &mut list_state);
 
@@ -145,26 +169,61 @@ pub fn run_tui(db: &mut Database) {
                 let sb = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
                 f.render_stateful_widget(sb, list_area, &mut sb_state);
 
-                // ----- Details (only for Host rows) -----
+                // ----- Details (Host or Folder) -----
                 if let Some(sel) = (last_rows_len > 0).then(|| selected) {
-                    // Determine selected row again
-                    let mut idx = sel;
-                    let selected_row = rows.get_mut(idx);
-                    if let Some(Row::Host(h)) = selected_row {
-                        let detail = format!(
-                            "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}",
-                            h.name,
-                            h.username,
-                            h.host,
-                            h.port,
-                            tags_to_string(&h.tags),
-                            h.identity_file.clone().unwrap_or_default(),
-                            h.proxy_jump.clone().unwrap_or_default(),
-                            h.folder.clone().unwrap_or_else(|| "-".to_string())
-                        );
-                        let p = Paragraph::new(detail)
-                            .block(Block::default().title("Details").borders(Borders::ALL));
-                        f.render_widget(p, hchunks[1]);
+                    if let Some(row) = rows.get(sel) {
+                        match row {
+                            Row::Host(h) => {
+                                let detail = format!(
+                                    "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}",
+                                    h.name,
+                                    h.username,
+                                    h.host,
+                                    h.port,
+                                    tags_to_string(&h.tags),
+                                    h.identity_file.clone().unwrap_or_default(),
+                                    h.proxy_jump.clone().unwrap_or_default(),
+                                    h.folder.clone().unwrap_or_else(|| "-".to_string())
+                                );
+                                let p = Paragraph::new(detail)
+                                    .block(
+                                        Block::default()
+                                            .title("Details")
+                                            .borders(Borders::ALL)
+                                            .border_style(Style::default().fg(theme.accent))
+                                            .style(Style::default().bg(theme.bg).fg(theme.fg))
+                                    );
+                                f.render_widget(p, hchunks[1]);
+                            }
+                            Row::Folder(folder) => {
+                                let count = db.hosts.values()
+                                    .filter(|h| h.folder.as_deref() == Some(folder.as_str()))
+                                    .count();
+
+                                let detail = if folder == "All" {
+                                    format!(
+                                        "Folder: All\nHosts: {}\n\nSelect a folder item or press Enter to open.",
+                                        db.hosts.len()
+                                    )
+                                } else {
+                                    format!(
+                                        "Folder: {}\nHosts inside: {}\n\nPress Enter to view its hosts.",
+                                        folder,
+                                        count
+                                    )
+                                };
+
+                                let p = Paragraph::new(detail)
+                                    .block(
+                                        Block::default()
+                                            .title("Folder Details")
+                                            .borders(Borders::ALL)
+                                            .border_style(Style::default().fg(theme.accent))
+                                            .style(Style::default().bg(theme.bg).fg(theme.muted))
+                                    );
+                                f.render_widget(p, hchunks[1]);
+                            }
+                        }
                     }
                 }
 
@@ -189,7 +248,13 @@ pub fn run_tui(db: &mut Database) {
                 };
 
                 let help = Paragraph::new(help_text)
-                    .block(Block::default().title("Help").borders(Borders::ALL));
+                    .block(
+                        Block::default()
+                            .title("Help")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(theme.accent))
+                            .style(Style::default().bg(theme.bg).fg(theme.muted))
+                    );
                 f.render_widget(help, vchunks[1]);
             })
             .ok();
@@ -279,8 +344,7 @@ pub fn run_tui(db: &mut Database) {
                                             }
                                         }
                                         Some(fold) => {
-                                            // In folder: first row is breadcrumb, second is "..", then hosts in folder
-                                            rows_hosts.push(None); // breadcrumb
+                                            // In folder: first row is "..", then hosts in folder
                                             rows_hosts.push(None); // ".."
                                             for h in items.iter().copied().filter(|h| {
                                                 h.folder.as_deref() == Some(fold.as_str())
