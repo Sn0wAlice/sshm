@@ -3,7 +3,7 @@
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 use std::collections::VecDeque;
 use std::sync::mpsc;
@@ -252,6 +252,8 @@ fn download_remote_file(
     let mut cmd = Command::new("scp");
     // -q to silence progress / banners
     cmd.arg("-q");
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
     cmd.arg("-P").arg(port.to_string());
     if let Some(id) = identity {
         if !id.is_empty() {
@@ -268,6 +270,112 @@ fn download_remote_file(
             io::ErrorKind::Other,
             format!("scp failed with status: {:?}", status.code()),
         ));
+    }
+
+    Ok(())
+}
+
+fn ssh_mkdir_remote(
+    user: &str,
+    host: &str,
+    port: u16,
+    identity: Option<&str>,
+    remote_dir: &str,
+) -> io::Result<()> {
+    let mut cmd = Command::new("ssh");
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.arg("-p").arg(port.to_string());
+
+    if let Some(id) = identity {
+        if !id.is_empty() {
+            cmd.arg("-i").arg(id);
+        }
+    }
+
+    let target = format!("{}@{}", user, host);
+    let escaped = shell_escape(remote_dir);
+    let remote_cmd = format!("mkdir -p {}", escaped);
+    cmd.arg(target).arg(remote_cmd);
+
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("ssh mkdir -p failed for {}", remote_dir),
+        ));
+    }
+
+    Ok(())
+}
+
+fn upload_local_file(
+    user: &str,
+    host: &str,
+    port: u16,
+    identity: Option<&str>,
+    local_path: &Path,
+    remote_target: &str,
+) -> io::Result<()> {
+    let mut cmd = Command::new("scp");
+    cmd.stdout(Stdio::null());
+    cmd.stderr(Stdio::null());
+    cmd.arg("-q");
+    cmd.arg("-P").arg(port.to_string());
+    if let Some(id) = identity {
+        if !id.is_empty() {
+            cmd.arg("-i").arg(id);
+        }
+    }
+
+    let remote_spec = format!("{}@{}:{}", user, host, remote_target);
+    cmd.arg(local_path).arg(remote_spec);
+
+    let status = cmd.status()?;
+    if !status.success() {
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            format!("scp upload failed with status: {:?}", status.code()),
+        ));
+    }
+
+    Ok(())
+}
+
+fn upload_local_folder(
+    user: &str,
+    host: &str,
+    port: u16,
+    identity: Option<&str>,
+    local_root: &Path,
+    remote_root: &str,
+) -> io::Result<()> {
+    // Ensure the root directory exists on remote
+    ssh_mkdir_remote(user, host, port, identity, remote_root)?;
+
+    // Stack-based DFS over local directories
+    let mut stack: Vec<(PathBuf, String)> = Vec::new();
+    stack.push((local_root.to_path_buf(), remote_root.to_string()));
+
+    while let Some((local_dir, remote_dir)) = stack.pop() {
+        for entry in fs::read_dir(&local_dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            let name = entry
+                .file_name()
+                .to_string_lossy()
+                .to_string();
+            let remote_path = join_remote_path(&remote_dir, &name);
+
+            if path.is_dir() {
+                // Create remote subdir and recurse
+                ssh_mkdir_remote(user, host, port, identity, &remote_path)?;
+                stack.push((path, remote_path));
+            } else {
+                // Upload single file
+                upload_local_file(user, host, port, identity, &path, &remote_path)?;
+            }
+        }
     }
 
     Ok(())
@@ -355,7 +463,16 @@ pub fn run_sftp_ui(user: &str, host: &str, port: u16, identity: Option<&str>) ->
     const MAX_PARALLEL_DOWNLOADS: usize = 3;
 
     let local_start = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let remote_start = "/".to_string();
+    // Try to start in /home/<user> — fallback to "/" if unreadable
+    let home_path = format!("/home/{}", user);
+    let remote_start = if ssh_list_remote_dir(user, host, port, identity, &home_path)
+        .unwrap_or_default()
+        .len() > 0
+    {
+        home_path
+    } else {
+        "/".to_string()
+    };
 
     let mut local_panel = PanelState::new(local_start);
     let mut remote_panel = PanelState::new(PathBuf::from(&remote_start));
@@ -565,8 +682,20 @@ pub fn run_sftp_ui(user: &str, host: &str, port: u16, identity: Option<&str>) ->
 
             // --- New two-line footer with download info ---
             let help_text = match mode {
-                Mode::Normal => message.as_deref().unwrap_or("Tab: switch panel • Enter: open dir • Backspace: up • /: filter • d: download (remote) • q: quit"),
-                Mode::Filter => &format!("Filter: {}", filter_input),
+                Mode::Normal => {
+                    match focus {
+                        PanelFocus::Local => {
+                            "Local — Enter: open directory • Backspace: parent • u: upload • /: filter • Tab: switch panel • q: quit"
+                        }
+                        PanelFocus::Remote => {
+                            "Remote — Enter: open directory • Backspace: parent • d: download • /: filter • Tab: switch panel • q: quit"
+                        }
+                    }
+                }
+                Mode::Filter => {
+                    // Filtering overrides help text fully
+                    Box::leak(format!("Filter: {}", filter_input).into_boxed_str())
+                }
             };
 
             let active_count = active_downloads.len();
@@ -873,6 +1002,52 @@ pub fn run_sftp_ui(user: &str, host: &str, port: u16, identity: Option<&str>) ->
                                         Err(e) => {
                                             message = Some(format!("Remote read error: {}", e));
                                         }
+                                    }
+                                }
+                            }
+                        }
+                        KeyCode::Char('u') => {
+                            if focus == PanelFocus::Local {
+                                if let Some(entry) = local_panel.selected_entry() {
+                                    if entry.name == ".." {
+                                        // Do nothing on parent pseudo-entry
+                                    } else {
+                                        let name = entry.name.clone();
+                                        let name_for_thread = name.clone();
+                                        let is_dir = entry.is_dir;
+                                        let local_root = local_panel.cwd.clone();
+                                        let remote_cwd = remote_panel.cwd.to_string_lossy().to_string();
+                                        let user_cl = user.to_string();
+                                        let host_cl = host.to_string();
+                                        let id_cl = identity.map(|s| s.to_string());
+
+                                        thread::spawn(move || {
+                                            if is_dir {
+                                                let local_path = local_root.join(&name_for_thread);
+                                                let remote_root = join_remote_path(&remote_cwd, &name_for_thread);
+                                                let _ = upload_local_folder(
+                                                    &user_cl,
+                                                    &host_cl,
+                                                    port,
+                                                    id_cl.as_deref(),
+                                                    &local_path,
+                                                    &remote_root,
+                                                );
+                                            } else {
+                                                let local_path = local_root.join(&name_for_thread);
+                                                let remote_target = join_remote_path(&remote_cwd, &name_for_thread);
+                                                let _ = upload_local_file(
+                                                    &user_cl,
+                                                    &host_cl,
+                                                    port,
+                                                    id_cl.as_deref(),
+                                                    &local_path,
+                                                    &remote_target,
+                                                );
+                                            }
+                                        });
+
+                                        message = Some(format!("Uploading '{}' in background…", name));
                                     }
                                 }
                             }
