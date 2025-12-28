@@ -188,7 +188,7 @@ pub fn run_tui(db: &mut Database) {
                         match row {
                             Row::Host(h) => {
                                 let detail = format!(
-                                    "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}",
+                                    "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n\nPress 'f' for SFTP services",
                                     h.name,
                                     h.username,
                                     h.host,
