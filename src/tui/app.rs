@@ -20,6 +20,9 @@ use crate::config::io::save_db;
 use crate::tui::functions::build_rows;
 use crate::tui::theme;
 
+use crate::tui::ssh::folder_form_state::FolderFormState;
+use crate::tui::ssh::host_form_state::HostFormState;
+
 // Import all custom TUI functions for custom keypress
 use crate::tui::char::{q};
 
@@ -620,60 +623,7 @@ pub fn run_tui(db: &mut Database) {
 }
 
 
-// ===== Folder rename form TUI (Zenburn-style) =====
-
-struct FolderFormState {
-    name: String,
-    original_name: String,
-    selected_field: usize,
-    error: Option<String>,
-}
-
-impl FolderFormState {
-    fn new_rename(name: &str) -> Self {
-        FolderFormState {
-            name: name.to_string(),
-            original_name: name.to_string(),
-            selected_field: 0,
-            error: None,
-        }
-    }
-
-    fn fields_count() -> usize {
-        1
-    }
-
-    fn next_field(&mut self) {
-        self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
-    }
-
-    fn prev_field(&mut self) {
-        if self.selected_field == 0 {
-            self.selected_field = Self::fields_count();
-        } else {
-            self.selected_field -= 1;
-        }
-    }
-
-    fn active_value_mut(&mut self) -> Option<&mut String> {
-        match self.selected_field {
-            0 => Some(&mut self.name),
-            _ => None,
-        }
-    }
-
-    fn push_char(&mut self, c: char) {
-        if let Some(field) = self.active_value_mut() {
-            field.push(c);
-        }
-    }
-
-    fn pop_char(&mut self) {
-        if let Some(field) = self.active_value_mut() {
-            field.pop();
-        }
-    }
-}
+// ===== Folder rename form TUI =====
 
 fn draw_folder_form(f: &mut Frame, state: &FolderFormState) {
     let size = f.area();
@@ -824,101 +774,9 @@ fn run_folder_rename_form(db: &mut Database, folder_name: &str) {
 }
 
 
-struct HostFormState {
-    name: String,
-    host: String,
-    port: String,
-    username: String,
-    identity_file: String,
-    proxy_jump: String,
-    tags: String,
-    folder: String,
-    selected_field: usize,
-    is_edit: bool,
-    original_name: Option<String>,
-}
+// ===== Host update form TUI =====
 
-impl HostFormState {
-    fn new_create(current_folder: Option<String>) -> Self {
-        HostFormState {
-            name: String::new(),
-            host: String::new(),
-            port: "22".to_string(),
-            username: "root".to_string(),
-            identity_file: String::new(),
-            proxy_jump: String::new(),
-            tags: String::new(),
-            folder: current_folder.unwrap_or_default(),
-            selected_field: 0,
-            is_edit: false,
-            original_name: None,
-        }
-    }
-
-    fn new_edit(db: &Database, name: &str) -> Self {
-        if let Some(h) = db.hosts.get(name) {
-            HostFormState {
-                name: h.name.clone(),
-                host: h.host.clone(),
-                port: h.port.to_string(),
-                username: h.username.clone(),
-                identity_file: h.identity_file.clone().unwrap_or_default(),
-                proxy_jump: h.proxy_jump.clone().unwrap_or_default(),
-                tags: tags_to_string(&h.tags),
-                folder: h.folder.clone().unwrap_or_default(),
-                selected_field: 0,
-                is_edit: true,
-                original_name: Some(h.name.clone()),
-            }
-        } else {
-            HostFormState::new_create(None)
-        }
-    }
-
-    fn fields_count() -> usize {
-        8 // name, host, port, username, identity_file, proxy_jump, tags, folder
-    }
-
-    fn next_field(&mut self) {
-        self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1); // +1 for Save
-    }
-
-    fn prev_field(&mut self) {
-        if self.selected_field == 0 {
-            self.selected_field = Self::fields_count();
-        } else {
-            self.selected_field -= 1;
-        }
-    }
-
-    fn active_value_mut(&mut self) -> Option<&mut String> {
-        match self.selected_field {
-            0 => Some(&mut self.name),
-            1 => Some(&mut self.host),
-            2 => Some(&mut self.port),
-            3 => Some(&mut self.username),
-            4 => Some(&mut self.identity_file),
-            5 => Some(&mut self.proxy_jump),
-            6 => Some(&mut self.tags),
-            7 => Some(&mut self.folder),
-            _ => None,
-        }
-    }
-
-    fn push_char(&mut self, c: char) {
-        if let Some(field) = self.active_value_mut() {
-            field.push(c);
-        }
-    }
-
-    fn pop_char(&mut self) {
-        if let Some(field) = self.active_value_mut() {
-            field.pop();
-        }
-    }
-}
-
-pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints(
