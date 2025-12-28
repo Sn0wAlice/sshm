@@ -146,3 +146,51 @@ pub fn rename_host(hosts: &mut HashMap<String, Host>, old: &str) {
         hosts.insert(new, h);
     }
 }
+
+pub fn rename_folder(db: &mut Database) {
+    if db.folders.is_empty() {
+        println!("No folders available to rename.");
+        return;
+    }
+
+    let mut folders = db.folders.clone();
+    folders.sort();
+
+    let old = match Select::new("Choose folder to rename:", folders).prompt() {
+        Ok(v) => v,
+        Err(_) => return,
+    };
+
+    let new = match Text::new("New folder name:").with_initial_value(&old).prompt() {
+        Ok(v) => v.trim().to_string(),
+        Err(_) => return,
+    };
+
+    if new.is_empty() || new == old {
+        return;
+    }
+
+    if db.folders.iter().any(|f| f.eq_ignore_ascii_case(&new)) {
+        eprintln!("Folder '{}' already exists.", new);
+        return;
+    }
+
+    // Update folder list
+    for f in db.folders.iter_mut() {
+        if f == &old {
+            *f = new.clone();
+        }
+    }
+    db.folders.sort();
+    db.folders.dedup();
+
+    // Update hosts in folder
+    for h in db.hosts.values_mut() {
+        if h.folder.as_deref() == Some(old.as_str()) {
+            h.folder = Some(new.clone());
+        }
+    }
+
+    save_db(db);
+    println!("Folder '{}' renamed to '{}'", old, new);
+}

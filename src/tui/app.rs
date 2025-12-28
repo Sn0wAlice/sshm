@@ -167,11 +167,27 @@ pub fn run_tui(db: &mut Database) {
                 }
 
                 // ----- Help -----
-                let help = Paragraph::new(
-                    "Shortcuts:  ↑/↓ move • Enter open/connect • a add • e edit • r rename • i add identity • d delete • q quit\n\
-                     Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."
-                )
-                .block(Block::default().title("Help").borders(Borders::ALL));
+                let rows_help = build_rows(db, &items, &filtered, &filter, &current_folder);
+                let help_text = if let Some(sel) = list_state.selected() {
+                    match rows_help.get(sel) {
+                        Some(Row::Host(_)) => {
+                            "Shortcuts:  ↑/↓ move • Enter open/connect • a add • e edit • r rename • i add identity • d delete • q quit\n\
+                             Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."
+                        }
+                        Some(Row::Folder(_)) => {
+                            "Shortcuts:  ↑/↓ move • Enter open folder • a add • r rename • q quit\n\
+                             Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."
+                        }
+                        None => {
+                            "Shortcuts:  ↑/↓ move • q quit"
+                        }
+                    }
+                } else {
+                    "Shortcuts:  ↑/↓ move • q quit"
+                };
+
+                let help = Paragraph::new(help_text)
+                    .block(Block::default().title("Help").borders(Borders::ALL));
                 f.render_widget(help, vchunks[1]);
             })
             .ok();
@@ -370,19 +386,25 @@ pub fn run_tui(db: &mut Database) {
                                         }
                                     }
                                     'r' => {
-                                        // Rename selected host, if any
                                         let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
-                                        if let Some(Row::Host(h)) = rows.get(selected) {
-                                            let name = h.name.clone();
+                                        if let Some(row) = rows.get(selected) {
                                             let _ = disable_raw_mode();
                                             let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            crate::commands::crud::rename_host(
-                                                &mut db.hosts,
-                                                &name,
-                                            );
+
+                                            match row {
+                                                Row::Host(h) => {
+                                                    let name = h.name.clone();
+                                                    crate::commands::crud::rename_host(&mut db.hosts, &name);
+                                                }
+                                                Row::Folder(_) => {
+                                                    crate::commands::crud::rename_folder(db);
+                                                }
+                                            }
+
                                             save_db(db);
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
+
                                             items = db.hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
@@ -392,7 +414,6 @@ pub fn run_tui(db: &mut Database) {
                                                 Some(0)
                                             });
 
-                                            // reload ui
                                             run_tui(&mut db.clone());
                                         }
                                     }
