@@ -14,9 +14,11 @@ use ratatui::{
     },
     Terminal,
 };
+use ratatui::text::Span;
 use std::{io::stdout, time::Duration};
 use crate::config::io::save_db;
 use crate::tui::functions::build_rows;
+use crate::tui::theme;
 
 // Import all custom TUI functions for custom keypress
 use crate::tui::char::{q};
@@ -358,17 +360,13 @@ pub fn run_tui(db: &mut Database) {
                                         q::press();
                                     }
                                     'e' => {
-                                        // Edit currently selected host (if a host is selected)
+                                        // Edit currently selected host (if a host is selected) using TUI form
                                         let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
                                         if let Some(Row::Host(h)) = rows.get(selected) {
                                             let name = h.name.clone();
                                             let _ = disable_raw_mode();
                                             let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            crate::commands::crud::edit_host_by_name(
-                                                &mut db.hosts,
-                                                &name,
-                                            );
-                                            save_db(db);
+                                            run_host_edit_form(db, &name);
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
                                             // refresh lists
@@ -458,7 +456,7 @@ pub fn run_tui(db: &mut Database) {
                                         // Create Host or Folder; host goes into current folder
                                         let _ = disable_raw_mode();
                                         let _ = execute!(stdout(), LeaveAlternateScreen);
-                                        crate::commands::crud::create(db, current_folder.clone());
+                                        run_host_create_form(db, current_folder.clone());
                                         let _ = enable_raw_mode();
                                         let _ = execute!(stdout(), EnterAlternateScreen);
                                         items = db.hosts.values().collect();
@@ -494,4 +492,456 @@ pub fn run_tui(db: &mut Database) {
             }
         }
     }
+}
+
+// ===== Host form TUI (Zenburn-style) =====
+
+struct HostFormState {
+    name: String,
+    host: String,
+    port: String,
+    username: String,
+    identity_file: String,
+    proxy_jump: String,
+    tags: String,
+    folder: String,
+    selected_field: usize,
+    is_edit: bool,
+    original_name: Option<String>,
+}
+
+impl HostFormState {
+    fn new_create(current_folder: Option<String>) -> Self {
+        HostFormState {
+            name: String::new(),
+            host: String::new(),
+            port: "22".to_string(),
+            username: "root".to_string(),
+            identity_file: String::new(),
+            proxy_jump: String::new(),
+            tags: String::new(),
+            folder: current_folder.unwrap_or_default(),
+            selected_field: 0,
+            is_edit: false,
+            original_name: None,
+        }
+    }
+
+    fn new_edit(db: &Database, name: &str) -> Self {
+        if let Some(h) = db.hosts.get(name) {
+            HostFormState {
+                name: h.name.clone(),
+                host: h.host.clone(),
+                port: h.port.to_string(),
+                username: h.username.clone(),
+                identity_file: h.identity_file.clone().unwrap_or_default(),
+                proxy_jump: h.proxy_jump.clone().unwrap_or_default(),
+                tags: tags_to_string(&h.tags),
+                folder: h.folder.clone().unwrap_or_default(),
+                selected_field: 0,
+                is_edit: true,
+                original_name: Some(h.name.clone()),
+            }
+        } else {
+            HostFormState::new_create(None)
+        }
+    }
+
+    fn fields_count() -> usize {
+        8 // name, host, port, username, identity_file, proxy_jump, tags, folder
+    }
+
+    fn next_field(&mut self) {
+        self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1); // +1 for Save
+    }
+
+    fn prev_field(&mut self) {
+        if self.selected_field == 0 {
+            self.selected_field = Self::fields_count();
+        } else {
+            self.selected_field -= 1;
+        }
+    }
+
+    fn active_value_mut(&mut self) -> Option<&mut String> {
+        match self.selected_field {
+            0 => Some(&mut self.name),
+            1 => Some(&mut self.host),
+            2 => Some(&mut self.port),
+            3 => Some(&mut self.username),
+            4 => Some(&mut self.identity_file),
+            5 => Some(&mut self.proxy_jump),
+            6 => Some(&mut self.tags),
+            7 => Some(&mut self.folder),
+            _ => None,
+        }
+    }
+
+    fn push_char(&mut self, c: char) {
+        if let Some(field) = self.active_value_mut() {
+            field.push(c);
+        }
+    }
+
+    fn pop_char(&mut self) {
+        if let Some(field) = self.active_value_mut() {
+            field.pop();
+        }
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_y) / 2),
+                Constraint::Percentage(percent_y),
+                Constraint::Percentage((100 - percent_y) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(r);
+
+    let horizontal = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints(
+            [
+                Constraint::Percentage((100 - percent_x) / 2),
+                Constraint::Percentage(percent_x),
+                Constraint::Percentage((100 - percent_x) / 2),
+            ]
+            .as_ref(),
+        )
+        .split(popup_layout[1]);
+
+    horizontal[1]
+}
+
+fn draw_host_form(
+    f: &mut Frame,
+    db: &Database,
+    state: &HostFormState,
+) {
+    let size = f.size();
+    let area = centered_rect(70, 80, size);
+    let theme = theme::zenburn();
+    let bg = theme.bg;
+    let fg = theme.fg;
+    let accent = theme.accent;
+
+    let block = Block::default()
+        .title(
+            Span::styled(
+                if state.is_edit { "Edit host" } else { "Create host" },
+                Style::default()
+                    .fg(accent)
+                    .add_modifier(Modifier::BOLD),
+            ),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent))
+        .style(Style::default().bg(bg).fg(fg));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints(
+            [
+                Constraint::Length(1), // name
+                Constraint::Length(1), // host
+                Constraint::Length(1), // port
+                Constraint::Length(1), // username
+                Constraint::Length(1), // identity
+                Constraint::Length(1), // proxyjump
+                Constraint::Length(1), // tags
+                Constraint::Length(1), // folder
+                Constraint::Length(1), // actions
+            ]
+            .as_ref(),
+        )
+        .split(inner);
+
+    let mk_line = |label: &str, value: &str, selected: bool| {
+        let value_span = if selected {
+            Span::styled(
+                format!("[{}]", value),
+                Style::default()
+                    .bg(accent)
+                    .fg(bg)
+                    .add_modifier(Modifier::BOLD),
+            )
+        } else {
+            Span::raw(format!("[{}]", value))
+        };
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!("{label}: "),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
+            value_span,
+        ]))
+    };
+
+    f.render_widget(
+        mk_line("Name", &state.name, state.selected_field == 0),
+        chunks[0],
+    );
+    f.render_widget(
+        mk_line("Host/IP", &state.host, state.selected_field == 1),
+        chunks[1],
+    );
+    f.render_widget(
+        mk_line("Port", &state.port, state.selected_field == 2),
+        chunks[2],
+    );
+    f.render_widget(
+        mk_line("Username", &state.username, state.selected_field == 3),
+        chunks[3],
+    );
+    f.render_widget(
+        mk_line(
+            "Identity file",
+            &state.identity_file,
+            state.selected_field == 4,
+        ),
+        chunks[4],
+    );
+    f.render_widget(
+        mk_line("ProxyJump", &state.proxy_jump, state.selected_field == 5),
+        chunks[5],
+    );
+    f.render_widget(
+        mk_line("Tags", &state.tags, state.selected_field == 6),
+        chunks[6],
+    );
+    f.render_widget(
+        mk_line("Folder", &state.folder, state.selected_field == 7),
+        chunks[7],
+    );
+
+    let save_selected = state.selected_field == HostFormState::fields_count();
+    let save_style = if save_selected {
+        Style::default()
+            .bg(accent)
+            .fg(bg)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(accent)
+    };
+
+    let actions = Paragraph::new(Line::from(vec![
+        Span::styled("[ Save ]", save_style),
+        Span::raw("  "),
+        Span::styled(
+            "[ Esc = Cancel ]",
+            Style::default().fg(Color::Rgb(150, 150, 150)),
+        ),
+    ]));
+
+    f.render_widget(actions, chunks[8]);
+
+    let help = Paragraph::new(Line::from(vec![Span::raw("Tab/Shift+Tab or ↑/↓ to move • Type to edit • Enter to save when [ Save ] is selected • Esc to cancel")]))
+        .style(Style::default().fg(Color::Rgb(150, 150, 150)));
+    let help_area = Rect {
+        x: inner.x,
+        y: inner.y + inner.height.saturating_sub(2),
+        width: inner.width,
+        height: 2,
+    };
+    f.render_widget(help, help_area);
+}
+
+fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), String> {
+    let name = state.name.trim();
+    if name.is_empty() {
+        return Err("Name cannot be empty".into());
+    }
+
+    let host = state.host.trim();
+    if host.is_empty() {
+        return Err("Host cannot be empty".into());
+    }
+
+    let port: u16 = state
+        .port
+        .trim()
+        .parse()
+        .map_err(|_| "Port must be a number".to_string())?;
+
+    // Validate alias uniqueness for create or rename
+    if let Some(orig) = &state.original_name {
+        if name != orig && db.hosts.contains_key(name) {
+            return Err(format!("Host alias '{}' already exists", name));
+        }
+    } else if db.hosts.contains_key(name) {
+        return Err(format!("Host alias '{}' already exists", name));
+    }
+
+    let username = state.username.trim();
+    let username = if username.is_empty() {
+        "root"
+    } else {
+        username
+    }
+    .to_string();
+
+    let identity_file = if state.identity_file.trim().is_empty() {
+        None
+    } else {
+        Some(state.identity_file.trim().to_string())
+    };
+
+    let proxy_jump = if state.proxy_jump.trim().is_empty() {
+        None
+    } else {
+        Some(state.proxy_jump.trim().to_string())
+    };
+
+    let folder = if state.folder.trim().is_empty() {
+        None
+    } else {
+        Some(state.folder.trim().to_string())
+    };
+
+    let tags = {
+        let v = state.tags.trim();
+        if v.is_empty() {
+            None
+        } else {
+            let v = v
+                .split(',')
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+                .collect::<Vec<_>>();
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
+        }
+    };
+
+    if state.is_edit {
+        if let Some(orig_name) = &state.original_name {
+            if let Some(existing) = db.hosts.remove(orig_name) {
+                let mut new_host = Host {
+                    name: name.to_string(),
+                    host: host.to_string(),
+                    port,
+                    username,
+                    identity_file,
+                    proxy_jump,
+                    folder,
+                    tags,
+                };
+                // Preserve other fields if needed (here we overwrite fully)
+                db.hosts.insert(new_host.name.clone(), new_host);
+            }
+        }
+    } else {
+        let host_obj = Host {
+            name: name.to_string(),
+            host: host.to_string(),
+            port,
+            username,
+            identity_file,
+            proxy_jump,
+            folder,
+            tags,
+        };
+        db.hosts.insert(name.to_string(), host_obj);
+    }
+
+    save_db(db);
+    Ok(())
+}
+
+fn run_host_create_form(db: &mut Database, current_folder: Option<String>) {
+    let mut state = HostFormState::new_create(current_folder);
+
+    let mut stdout = stdout();
+    let _ = enable_raw_mode();
+    let _ = execute!(stdout, EnterAlternateScreen);
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    loop {
+        let _ = terminal.draw(|f| {
+            draw_host_form(f, db, &state);
+        });
+
+        if event::poll(Duration::from_millis(150)).unwrap_or(false) {
+            if let Ok(Event::Key(k)) = event::read() {
+                if k.kind == KeyEventKind::Press {
+                    match k.code {
+                        KeyCode::Esc => break,
+                        KeyCode::Tab | KeyCode::Down => state.next_field(),
+                        KeyCode::BackTab | KeyCode::Up => state.prev_field(),
+                        KeyCode::Enter => {
+                            if state.selected_field == HostFormState::fields_count() {
+                                if apply_host_form(db, &state).is_ok() {
+                                    break;
+                                }
+                            } else {
+                                state.next_field();
+                            }
+                        }
+                        KeyCode::Char(c) => state.push_char(c),
+                        KeyCode::Backspace => state.pop_char(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+}
+
+fn run_host_edit_form(db: &mut Database, name: &str) {
+    let mut state = HostFormState::new_edit(db, name);
+
+    let mut stdout = stdout();
+    let _ = enable_raw_mode();
+    let _ = execute!(stdout, EnterAlternateScreen);
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    loop {
+        let _ = terminal.draw(|f| {
+            draw_host_form(f, db, &state);
+        });
+
+        if event::poll(Duration::from_millis(150)).unwrap_or(false) {
+            if let Ok(Event::Key(k)) = event::read() {
+                if k.kind == KeyEventKind::Press {
+                    match k.code {
+                        KeyCode::Esc => break,
+                        KeyCode::Tab | KeyCode::Down => state.next_field(),
+                        KeyCode::BackTab | KeyCode::Up => state.prev_field(),
+                        KeyCode::Enter => {
+                            if state.selected_field == HostFormState::fields_count() {
+                                if apply_host_form(db, &state).is_ok() {
+                                    break;
+                                }
+                            } else {
+                                state.next_field();
+                            }
+                        }
+                        KeyCode::Char(c) => state.push_char(c),
+                        KeyCode::Backspace => state.pop_char(),
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
 }
