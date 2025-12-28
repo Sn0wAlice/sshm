@@ -3,3 +3,4 @@ pub mod functions;
 pub mod char;
 pub mod theme;
 pub mod app_sftp;
+pub mod ssh;

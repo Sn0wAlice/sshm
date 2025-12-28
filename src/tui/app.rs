@@ -10,7 +10,7 @@ use ratatui::{
     prelude::*,
     widgets::{
         Block, Borders, List, ListItem, ListState, Paragraph, Scrollbar, ScrollbarOrientation,
-        ScrollbarState, Clear,
+        ScrollbarState,
     },
     Terminal,
 };
@@ -31,7 +31,7 @@ pub enum Row<'a> {
 }
 
 // --- Delete confirmation modal state ---
-enum DeleteMode {
+pub enum DeleteMode {
     None,
     Host { name: String },
     EmptyFolder { name: String },
@@ -71,7 +71,7 @@ pub fn run_tui(db: &mut Database) {
         // --- Draw ---
         terminal
             .draw(|f| {
-                let size = f.size();
+                let size = f.area();
                 let theme = theme::load();
                 let vchunks = Layout::default()
                     .direction(Direction::Vertical)
@@ -117,7 +117,7 @@ pub fn run_tui(db: &mut Database) {
                 f.render_widget(filter_para, left_chunks[0]);
 
                 // ----- Build rows (folders + hosts) -----
-                let mut rows = build_rows(db, &items, &filtered, &filter, &current_folder);
+                let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
 
                 // Clamp selection to available rows
                 last_rows_len = rows.len();
@@ -131,26 +131,7 @@ pub fn run_tui(db: &mut Database) {
                 }
 
                 // ----- Render list -----
-                let list_items: Vec<ListItem> = rows
-                    .iter()
-                    .map(|r| match r {
-                        Row::Folder(name) => {
-                            let label = if name == "All" {
-                                "➤ All".to_string()
-                            } else {
-                                format!("➤ {}", name)
-                            };
-                            ListItem::new(Line::from(vec![Span::raw(label)]))
-                        }
-                        Row::Host(h) => ListItem::new(Line::from(vec![
-                            Span::styled(
-                                (*h).name.clone(),
-                                Style::default().add_modifier(Modifier::BOLD),
-                            ),
-                            Span::raw(format!("  {}", h.host)),
-                        ])),
-                    })
-                    .collect();
+                let list_items: Vec<ListItem> = crate::tui::ssh::listitems::get_item_list(&rows);
 
                 // Dynamic list title based on current folder
                 let list_title = if let Some(folder) = &current_folder {
@@ -183,304 +164,22 @@ pub fn run_tui(db: &mut Database) {
                 f.render_stateful_widget(sb, list_area, &mut sb_state);
 
                 // ----- Details (Host or Folder) -----
-                if let Some(sel) = (last_rows_len > 0).then(|| selected) {
-                    if let Some(row) = rows.get(sel) {
-                        match row {
-                            Row::Host(h) => {
-                                let detail = format!(
-                                    "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n\nPress 'f' for SFTP services",
-                                    h.name,
-                                    h.username,
-                                    h.host,
-                                    h.port,
-                                    tags_to_string(&h.tags),
-                                    h.identity_file.clone().unwrap_or_default(),
-                                    h.proxy_jump.clone().unwrap_or_default(),
-                                    h.folder.clone().unwrap_or_else(|| "-".to_string())
-                                );
-                                let p = Paragraph::new(detail)
-                                    .block(
-                                        Block::default()
-                                            .title("Details")
-                                            .borders(Borders::ALL)
-                                            .border_style(Style::default().fg(theme.accent))
-                                            .style(Style::default().bg(theme.bg).fg(theme.fg))
-                                    );
-                                f.render_widget(p, hchunks[1]);
-                            }
-                            Row::Folder(folder) => {
-                                let count = db.hosts.values()
-                                    .filter(|h| h.folder.as_deref() == Some(folder.as_str()))
-                                    .count();
-
-                                let detail = if folder == "All" {
-                                    format!(
-                                        "Folder: All\nHosts: {}\n\nSelect a folder item or press Enter to open.",
-                                        db.hosts.len()
-                                    )
-                                } else {
-                                    format!(
-                                        "Folder: {}\nHosts inside: {}\n\nPress Enter to view its hosts.",
-                                        folder,
-                                        count
-                                    )
-                                };
-
-                                let p = Paragraph::new(detail)
-                                    .block(
-                                        Block::default()
-                                            .title("Folder Details")
-                                            .borders(Borders::ALL)
-                                            .border_style(Style::default().fg(theme.accent))
-                                            .style(Style::default().bg(theme.bg).fg(theme.muted))
-                                    );
-                                f.render_widget(p, hchunks[1]);
-                            }
-                        }
-                    }
-                }
+                crate::tui::ssh::detailbox::show_detail_box(
+                    last_rows_len,
+                    selected,
+                    &rows,
+                    f,
+                    &hchunks,
+                    &theme,
+                    db,
+                );
 
                 // ----- Help -----
                 let rows_help = build_rows(db, &items, &filtered, &filter, &current_folder);
-                let help_text = if let Some(sel) = list_state.selected() {
-                    match rows_help.get(sel) {
-                        Some(Row::Host(_)) => {
-                            "Shortcuts:  ↑/↓ move • Enter open/connect • a add • e edit • r rename • i add identity • d delete • q quit\n\
-                             Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."
-                        }
-                        Some(Row::Folder(_)) => {
-                            "Shortcuts:  ↑/↓ move • Enter open folder • a add • r rename • q quit\n\
-                             Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."
-                        }
-                        None => {
-                            "Shortcuts:  ↑/↓ move • q quit"
-                        }
-                    }
-                } else {
-                    "Shortcuts:  ↑/↓ move • q quit"
-                };
-
-                let help = Paragraph::new(help_text)
-                    .block(
-                        Block::default()
-                            .title("Help")
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(theme.accent))
-                            .style(Style::default().bg(theme.bg).fg(theme.muted))
-                    );
-                f.render_widget(help, vchunks[1]);
+                f.render_widget(crate::tui::ssh::helpbox::get_help_box_content(&list_state, &rows_help, &theme), vchunks[1]);
 
                 // ----- Delete confirmation modal -----
-                match &delete_mode {
-                    DeleteMode::None => {}
-                    DeleteMode::Host { name } => {
-                        let area = centered_rect(60, 30, size);
-                        let block = Block::default()
-                            .title(Span::styled(
-                                "Confirm delete",
-                                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-                            ))
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(theme.accent))
-                            .style(Style::default().bg(theme.bg).fg(theme.fg));
-                        let inner = block.inner(area);
-                        f.render_widget(Clear, area);
-                        f.render_widget(block, area);
-
-                        let lines = vec![
-                            Line::from(format!("Delete host \"{}\" ?", name)),
-                            Line::from(""),
-                            Line::from("This action cannot be undone."),
-                        ];
-                        let msg = Paragraph::new(lines)
-                            .alignment(Alignment::Center);
-                        f.render_widget(msg, inner);
-
-                        let buttons_area = Rect {
-                            x: inner.x,
-                            y: inner.y + inner.height.saturating_sub(3),
-                            width: inner.width,
-                            height: 3,
-                        };
-
-                        let delete_selected = delete_button_index == 0;
-                        let cancel_selected = delete_button_index == 1;
-
-                        let delete_span = if delete_selected {
-                            Span::styled(
-                                "[ Delete ]",
-                                Style::default()
-                                    .bg(theme.accent)
-                                    .fg(theme.bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::styled("[ Delete ]", Style::default().fg(theme.accent))
-                        };
-
-                        let cancel_span = if cancel_selected {
-                            Span::styled(
-                                "[ Cancel ]",
-                                Style::default()
-                                    .bg(theme.accent)
-                                    .fg(theme.bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::raw("[ Cancel ]")
-                        };
-
-                        let buttons = Paragraph::new(Line::from(vec![
-                            delete_span,
-                            Span::raw("   "),
-                            cancel_span,
-                        ])).alignment(Alignment::Center);
-                        f.render_widget(buttons, buttons_area);
-                    }
-                    DeleteMode::EmptyFolder { name } => {
-                        let area = centered_rect(60, 30, size);
-                        let block = Block::default()
-                            .title(Span::styled(
-                                "Confirm delete folder",
-                                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-                            ))
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(theme.accent))
-                            .style(Style::default().bg(theme.bg).fg(theme.fg));
-                        let inner = block.inner(area);
-                        f.render_widget(Clear, area);
-                        f.render_widget(block, area);
-
-                        let lines = vec![
-                            Line::from(format!("Delete empty folder \"{}\" ?", name)),
-                            Line::from(""),
-                            Line::from("This will remove the folder only."),
-                        ];
-                        let msg = Paragraph::new(lines)
-                            .alignment(Alignment::Center);
-                        f.render_widget(msg, inner);
-
-                        let buttons_area = Rect {
-                            x: inner.x,
-                            y: inner.y + inner.height.saturating_sub(3),
-                            width: inner.width,
-                            height: 3,
-                        };
-
-                        let delete_selected = delete_button_index == 0;
-                        let cancel_selected = delete_button_index == 1;
-
-                        let delete_span = if delete_selected {
-                            Span::styled(
-                                "[ Delete ]",
-                                Style::default()
-                                    .bg(theme.accent)
-                                    .fg(theme.bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::styled("[ Delete ]", Style::default().fg(theme.accent))
-                        };
-
-                        let cancel_span = if cancel_selected {
-                            Span::styled(
-                                "[ Cancel ]",
-                                Style::default()
-                                    .bg(theme.accent)
-                                    .fg(theme.bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::raw("[ Cancel ]")
-                        };
-
-                        let buttons = Paragraph::new(Line::from(vec![
-                            delete_span,
-                            Span::raw("   "),
-                            cancel_span,
-                        ])).alignment(Alignment::Center);
-                        f.render_widget(buttons, buttons_area);
-                    }
-                    DeleteMode::FolderWithHosts { name, host_count } => {
-                        let area = centered_rect(70, 35, size);
-                        let block = Block::default()
-                            .title(Span::styled(
-                                "Confirm delete folder & hosts",
-                                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
-                            ))
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(theme.accent))
-                            .style(Style::default().bg(theme.bg).fg(theme.fg));
-                        let inner = block.inner(area);
-                        f.render_widget(Clear, area);
-                        f.render_widget(block, area);
-
-                        let lines = vec![
-                            Line::from(format!("Folder \"{}\" contains {} hosts.", name, host_count)),
-                            Line::from(""),
-                            Line::from("What do you want to do?"),
-                        ];
-                        let msg = Paragraph::new(lines)
-                            .alignment(Alignment::Center);
-                        f.render_widget(msg, inner);
-
-                        let buttons_area = Rect {
-                            x: inner.x,
-                            y: inner.y + inner.height.saturating_sub(3),
-                            width: inner.width,
-                            height: 3,
-                        };
-
-                        let delete_all_sel = delete_button_index == 0;
-                        let keep_hosts_sel = delete_button_index == 1;
-                        let cancel_sel = delete_button_index == 2;
-
-                        let delete_all_span = if delete_all_sel {
-                            Span::styled(
-                                "[ Delete all ]",
-                                Style::default()
-                                    .bg(theme.accent)
-                                    .fg(theme.bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::styled("[ Delete all ]", Style::default().fg(theme.accent))
-                        };
-
-                        let keep_hosts_span = if keep_hosts_sel {
-                            Span::styled(
-                                "[ Keep hosts ]",
-                                Style::default()
-                                    .bg(theme.accent)
-                                    .fg(theme.bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::raw("[ Keep hosts ]")
-                        };
-
-                        let cancel_span = if cancel_sel {
-                            Span::styled(
-                                "[ Cancel ]",
-                                Style::default()
-                                    .bg(theme.accent)
-                                    .fg(theme.bg)
-                                    .add_modifier(Modifier::BOLD),
-                            )
-                        } else {
-                            Span::raw("[ Cancel ]")
-                        };
-
-                        let buttons = Paragraph::new(Line::from(vec![
-                            delete_all_span,
-                            Span::raw("   "),
-                            keep_hosts_span,
-                            Span::raw("   "),
-                            cancel_span,
-                        ])).alignment(Alignment::Center);
-                        f.render_widget(buttons, buttons_area);
-                    }
-                }
+                crate::tui::ssh::deletebox::show_delete_box(&delete_mode, delete_button_index, f, size, &theme);
             })
             .ok();
 
@@ -800,8 +499,15 @@ pub fn run_tui(db: &mut Database) {
                                                         let name = h.name.clone();
                                                         crate::commands::crud::rename_host(&mut db.hosts, &name);
                                                     }
-                                                    Row::Folder(_) => {
-                                                        crate::commands::crud::rename_folder(db);
+                                                    Row::Folder(folder_name) => {
+                                                        if folder_name != "All" {
+                                                            let folder_name = folder_name.clone();
+                                                            let _ = disable_raw_mode();
+                                                            let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                            run_folder_rename_form(db, &folder_name);
+                                                            let _ = enable_raw_mode();
+                                                            let _ = execute!(stdout(), EnterAlternateScreen);
+                                                        }
                                                     }
                                                 }
 
@@ -913,7 +619,210 @@ pub fn run_tui(db: &mut Database) {
     }
 }
 
-// ===== Host form TUI (Zenburn-style) =====
+
+// ===== Folder rename form TUI (Zenburn-style) =====
+
+struct FolderFormState {
+    name: String,
+    original_name: String,
+    selected_field: usize,
+    error: Option<String>,
+}
+
+impl FolderFormState {
+    fn new_rename(name: &str) -> Self {
+        FolderFormState {
+            name: name.to_string(),
+            original_name: name.to_string(),
+            selected_field: 0,
+            error: None,
+        }
+    }
+
+    fn fields_count() -> usize {
+        1
+    }
+
+    fn next_field(&mut self) {
+        self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
+    }
+
+    fn prev_field(&mut self) {
+        if self.selected_field == 0 {
+            self.selected_field = Self::fields_count();
+        } else {
+            self.selected_field -= 1;
+        }
+    }
+
+    fn active_value_mut(&mut self) -> Option<&mut String> {
+        match self.selected_field {
+            0 => Some(&mut self.name),
+            _ => None,
+        }
+    }
+
+    fn push_char(&mut self, c: char) {
+        if let Some(field) = self.active_value_mut() {
+            field.push(c);
+        }
+    }
+
+    fn pop_char(&mut self) {
+        if let Some(field) = self.active_value_mut() {
+            field.pop();
+        }
+    }
+}
+
+fn draw_folder_form(f: &mut Frame, state: &FolderFormState) {
+    let size = f.area();
+    let area = centered_rect(50, 40, size);
+    let theme = theme::get_global_theme();
+    let bg = theme.bg;
+    let fg = theme.fg;
+    let accent = theme.accent;
+
+    let block = Block::default()
+        .title(
+            Span::styled(
+                "Rename folder",
+                Style::default().fg(accent).add_modifier(Modifier::BOLD),
+            ),
+        )
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(accent))
+        .style(Style::default().bg(bg).fg(fg));
+
+    let inner = block.inner(area);
+    f.render_widget(block, area);
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .margin(1)
+        .constraints([Constraint::Length(1), Constraint::Length(1), Constraint::Length(1)].as_ref())
+        .split(inner);
+
+    let name_selected = state.selected_field == 0;
+    let name_span = if name_selected {
+        Span::styled(
+            format!("[{}]", state.name),
+            Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD),
+        )
+    } else {
+        Span::raw(format!("[{}]", state.name))
+    };
+
+    let name_line = Paragraph::new(Line::from(vec![
+        Span::styled("Folder: ", Style::default().add_modifier(Modifier::BOLD)),
+        name_span,
+    ]));
+    f.render_widget(name_line, chunks[0]);
+
+    let save_selected = state.selected_field == FolderFormState::fields_count();
+    let save_style = if save_selected {
+        Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(accent)
+    };
+
+    let actions = Paragraph::new(Line::from(vec![
+        Span::styled("[ Save ]", save_style),
+        Span::raw("  "),
+        Span::styled("[ Esc = Cancel ]", Style::default().fg(Color::Rgb(150, 150, 150))),
+    ]));
+    f.render_widget(actions, chunks[1]);
+
+    let error_text = if let Some(err) = &state.error {
+        err.as_str()
+    } else {
+        "Tab/Shift+Tab or ↑/↓ to move • Type to edit • Enter to save"
+    };
+
+    let error_para = Paragraph::new(error_text).style(Style::default().fg(Color::Rgb(200, 120, 120)));
+    f.render_widget(error_para, chunks[2]);
+}
+
+fn apply_folder_form(db: &mut Database, state: &mut FolderFormState) -> Result<(), String> {
+    let new_name = state.name.trim();
+    if new_name.is_empty() {
+        return Err("Folder name cannot be empty".into());
+    }
+
+    if new_name == state.original_name {
+        return Ok(());
+    }
+
+    if db.folders.iter().any(|f| f == new_name) {
+        return Err(format!("Folder '{}' already exists", new_name));
+    }
+
+    let original = state.original_name.clone();
+    let new_str = new_name.to_string();
+
+    for f in db.folders.iter_mut() {
+        if f == &original {
+            *f = new_str.clone();
+        }
+    }
+    for h in db.hosts.values_mut() {
+        if h.folder.as_deref() == Some(original.as_str()) {
+            h.folder = Some(new_str.clone());
+        }
+    }
+
+    save_db(db);
+    Ok(())
+}
+
+fn run_folder_rename_form(db: &mut Database, folder_name: &str) {
+    let mut state = FolderFormState::new_rename(folder_name);
+
+    let mut stdout = stdout();
+    let _ = enable_raw_mode();
+    let _ = execute!(stdout, EnterAlternateScreen);
+    let backend = CrosstermBackend::new(stdout);
+    let mut terminal = Terminal::new(backend).unwrap();
+
+    loop {
+        let _ = terminal.draw(|f| draw_folder_form(f, &state));
+
+        if event::poll(Duration::from_millis(120)).unwrap_or(false) {
+            if let Ok(Event::Key(k)) = event::read() {
+                if k.kind == KeyEventKind::Press {
+                    match k.code {
+                        KeyCode::Esc => break,
+                        KeyCode::Tab | KeyCode::Down => state.next_field(),
+                        KeyCode::BackTab | KeyCode::Up => state.prev_field(),
+                        KeyCode::Enter => {
+                            if state.selected_field == FolderFormState::fields_count() {
+                                match apply_folder_form(db, &mut state) {
+                                    Ok(_) => break,
+                                    Err(e) => state.error = Some(e),
+                                }
+                            } else {
+                                state.next_field();
+                            }
+                        }
+                        KeyCode::Char(c) => {
+                            state.push_char(c);
+                            state.error = None;
+                        }
+                        KeyCode::Backspace => {
+                            state.pop_char();
+                            state.error = None;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+}
+
 
 struct HostFormState {
     name: String,
@@ -1009,7 +918,7 @@ impl HostFormState {
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+pub(crate) fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     let popup_layout = Layout::default()
         .direction(Direction::Vertical)
         .constraints(
@@ -1042,7 +951,7 @@ fn draw_host_form(
     db: &Database,
     state: &HostFormState,
 ) {
-    let size = f.size();
+    let size = f.area();
     let area = centered_rect(70, 80, size);
     let theme = theme::get_global_theme();
     let bg = theme.bg;
@@ -1247,7 +1156,7 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
     if state.is_edit {
         if let Some(orig_name) = &state.original_name {
             if let Some(existing) = db.hosts.remove(orig_name) {
-                let mut new_host = Host {
+                let new_host = Host {
                     name: name.to_string(),
                     host: host.to_string(),
                     port,
