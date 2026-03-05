@@ -24,6 +24,7 @@ use crate::tui::theme;
 use crate::tui::tabs::tab_bar::draw_tab_bar;
 use crate::tui::tabs::settings_tab::{self, SettingsFormState, SettingsAction};
 use crate::tui::tabs::theme_tab::{self, ThemeTabState, ThemeAction};
+use crate::tui::tabs::help_tab::{self, HelpTabState};
 
 use crate::tui::ssh::folder_form_state::FolderFormState;
 use crate::tui::ssh::host_form_state::HostFormState;
@@ -49,6 +50,7 @@ pub enum ActiveTab {
     Hosts,
     Settings,
     Theme,
+    Help,
 }
 
 impl ActiveTab {
@@ -56,14 +58,16 @@ impl ActiveTab {
         match self {
             Self::Hosts => Self::Settings,
             Self::Settings => Self::Theme,
-            Self::Theme => Self::Hosts,
+            Self::Theme => Self::Help,
+            Self::Help => Self::Hosts,
         }
     }
     pub fn prev(self) -> Self {
         match self {
-            Self::Hosts => Self::Theme,
+            Self::Hosts => Self::Help,
             Self::Settings => Self::Hosts,
             Self::Theme => Self::Settings,
+            Self::Help => Self::Theme,
         }
     }
     pub fn index(self) -> usize {
@@ -71,6 +75,7 @@ impl ActiveTab {
             Self::Hosts => 0,
             Self::Settings => 1,
             Self::Theme => 2,
+            Self::Help => 3,
         }
     }
 }
@@ -117,6 +122,7 @@ pub fn run_tui(db: &mut Database) {
     let mut app_config = load_settings();
     let mut settings_state = SettingsFormState::from_config(&app_config);
     let mut theme_state = ThemeTabState::new(&theme::load());
+    let mut help_state = HelpTabState::new();
 
     // Toast notification
     let mut toast: Option<Toast> = None;
@@ -242,6 +248,9 @@ pub fn run_tui(db: &mut Database) {
                     ActiveTab::Theme => {
                         theme_tab::draw_theme_tab(f, vchunks[1], &theme_state, &theme);
                     }
+                    ActiveTab::Help => {
+                        help_tab::draw_help_tab(f, vchunks[1], &help_state, &theme);
+                    }
                 }
 
                 // Contextual help bar (unified for all tabs)
@@ -265,6 +274,7 @@ pub fn run_tui(db: &mut Database) {
                     }
                     ActiveTab::Settings => HelpContext::SettingsTab,
                     ActiveTab::Theme => HelpContext::ThemeTab,
+                    ActiveTab::Help => HelpContext::HelpTab,
                 };
                 f.render_widget(
                     crate::tui::ssh::helpbox::get_contextual_help(help_ctx, &theme),
@@ -290,6 +300,7 @@ pub fn run_tui(db: &mut Database) {
                         ActiveTab::Hosts => !input_mode && matches!(delete_mode, DeleteMode::None),
                         ActiveTab::Settings => !settings_state.is_editing_field(),
                         ActiveTab::Theme => !theme_state.is_editing_custom_field(),
+                        ActiveTab::Help => true,
                     };
 
                     if tab_nav_allowed {
@@ -688,6 +699,10 @@ pub fn run_tui(db: &mut Database) {
                                     }
                                 }
                             }
+                        }
+
+                        ActiveTab::Help => {
+                            help_tab::handle_help_event(k.code, &mut help_state);
                         }
                     } // match active_tab
                 }

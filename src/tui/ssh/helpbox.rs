@@ -9,6 +9,7 @@ pub enum HelpContext {
     DeleteModal,
     SettingsTab,
     ThemeTab,
+    HelpTab,
     Empty,
 }
 
@@ -31,6 +32,9 @@ pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static
         }
         HelpContext::ThemeTab => {
             "↑↓ navigate │ Enter apply/save │ ←→ tab │ Esc reset"
+        }
+        HelpContext::HelpTab => {
+            "↑↓ scroll │ PageUp/PageDn fast scroll │ Home top │ ←→ tab │ q quit"
         }
         HelpContext::Empty => {
             "a add host │ q quit │ ←→ tab"
