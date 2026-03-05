@@ -3,22 +3,22 @@ use crate::tui::app::Row;
 use ratatui::prelude::Style;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &Vec<Row>, f: &mut ratatui::Frame<'_>, hchunks: &[ratatui::layout::Rect], theme: &crate::tui::theme::Theme, db: &Database) {
-    if let Some(sel) = (last_rows_len > 0).then(|| selected) {
+pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &mut ratatui::Frame<'_>, hchunks: &[ratatui::layout::Rect], theme: &crate::tui::theme::Theme, db: &Database) {
+    if let Some(sel) = (last_rows_len > 0).then_some(selected) {
         if let Some(row) = rows.get(sel) {
             match row {
                 Row::Host(h) => {
                     let detail = format!(
-                                    "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n\nPress 'f' for SFTP services",
-                                    h.name,
-                                    h.username,
-                                    h.host,
-                                    h.port,
-                                    tags_to_string(&h.tags),
-                                    h.identity_file.clone().unwrap_or_default(),
-                                    h.proxy_jump.clone().unwrap_or_default(),
-                                    h.folder.clone().unwrap_or_else(|| "-".to_string())
-                                );
+                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}",
+                        h.name,
+                        h.username,
+                        h.host,
+                        h.port,
+                        tags_to_string(&h.tags),
+                        h.identity_file.as_deref().unwrap_or_default(),
+                        h.proxy_jump.as_deref().unwrap_or_default(),
+                        h.folder.as_deref().unwrap_or("-")
+                    );
                     let p = Paragraph::new(detail).block(
                         Block::default()
                             .title("Details")

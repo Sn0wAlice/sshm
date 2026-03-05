@@ -4,9 +4,9 @@ use crate::tui::app::Row;
 use crate::tui::theme::Theme;
 
 /// Generate help box content based on the selected row type
-pub fn get_help_box_content(list_state: &ListState, rows_help: &Vec<Row>, theme: &Theme) -> Paragraph<'static> {
+pub fn get_help_box_content(list_state: &ListState, rows: &[Row], theme: &Theme) -> Paragraph<'static> {
     let help_text = if let Some(sel) = list_state.selected() {
-        match rows_help.get(sel) {
+        match rows.get(sel) {
             Some(Row::Host(_)) => {
                 "Shortcuts:  ↑/↓ move • Enter open/connect • a add • e edit • i add identity • d delete • q quit\n\
                              Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."

@@ -2,8 +2,8 @@ use crate::models::{Database, Host};
 use crate::tui::app::Row;
 pub fn build_rows<'a>(
     db: &'a Database,
-    items: &'a Vec<&'a Host>,
-    filtered: &'a Vec<&'a Host>,
+    items: &'a [&'a Host],
+    filtered: &'a [&'a Host],
     filter: &str,
     current_folder: &Option<String>,
 ) -> Vec<Row<'a>> {

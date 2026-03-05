@@ -1,10 +1,10 @@
+use std::io::stdout;
 use std::process::Command;
+use crossterm::{terminal::disable_raw_mode, cursor::Show, execute};
 use crate::models::Host;
 
 /// Construit et exécute la commande ssh en combinant Host + overrides CLI.
 pub fn launch_ssh(h: &Host, overrides: Option<&[String]>) {
-    use std::io::stdout;
-    use crossterm::{terminal::disable_raw_mode, cursor::Show, execute};
 
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), Show);

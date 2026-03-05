@@ -1,7 +1,7 @@
-use std::{collections::{HashMap, BTreeMap}, fs::File, io::Read};
-use std::fs;
+use std::collections::{BTreeMap, HashMap};
+use std::fs::{self, File};
+use std::io::Read;
 use serde::Serialize;
-use serde_json;
 use crate::models::{Host, Database};
 use super::path::{config_path, ensure_config_file};
 
@@ -107,11 +107,11 @@ pub fn save_db(db: &Database) {
     #[derive(Serialize)]
     struct Out<'a> { hosts: BTreeMap<String, &'a Host>, folders: Vec<String> }
 
-    let mut ordered: BTreeMap<String, &Host> = BTreeMap::new();
-    for (k, v) in db.hosts.iter() { ordered.insert(k.clone(), v); }
+    let ordered: BTreeMap<_, _> = db.hosts.iter().map(|(k, v)| (k.clone(), v)).collect();
 
     let mut folders = db.folders.clone();
-    folders.sort(); folders.dedup();
+    folders.sort();
+    folders.dedup();
 
     let out = Out { hosts: ordered, folders };
 

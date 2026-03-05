@@ -14,7 +14,6 @@ use ratatui::{
     },
     Terminal,
 };
-use ratatui::text::Span;
 use std::{io::stdout, time::Duration};
 use crate::config::io::save_db;
 use crate::tui::functions::build_rows;
@@ -23,10 +22,8 @@ use crate::tui::theme;
 use crate::tui::ssh::folder_form_state::FolderFormState;
 use crate::tui::ssh::host_form_state::HostFormState;
 
-// Import all custom TUI functions for custom keypress
-use crate::tui::char::{q};
+use crate::tui::char::q;
 
-// Row type for folders/hosts in the TUI list
 
 pub enum Row<'a> {
     Folder(String),
@@ -178,8 +175,7 @@ pub fn run_tui(db: &mut Database) {
                 );
 
                 // ----- Help -----
-                let rows_help = build_rows(db, &items, &filtered, &filter, &current_folder);
-                f.render_widget(crate::tui::ssh::helpbox::get_help_box_content(&list_state, &rows_help, &theme), vchunks[1]);
+                f.render_widget(crate::tui::ssh::helpbox::get_help_box_content(&list_state, &rows, &theme), vchunks[1]);
 
                 // ----- Delete confirmation modal -----
                 crate::tui::ssh::deletebox::show_delete_box(&delete_mode, delete_button_index, f, size, &theme);
@@ -232,7 +228,6 @@ pub fn run_tui(db: &mut Database) {
                                     DeleteMode::EmptyFolder { name } => {
                                         if delete_button_index == 0 {
                                             db.folders.retain(|f| f != name);
-                                            // Safety: also detach any hosts that might still point to it
                                             for h in db.hosts.values_mut() {
                                                 if h.folder.as_deref() == Some(name.as_str()) {
                                                     h.folder = None;
@@ -251,12 +246,10 @@ pub fn run_tui(db: &mut Database) {
                                     DeleteMode::FolderWithHosts { name, .. } => {
                                         match delete_button_index {
                                             0 => {
-                                                // Delete folder and all its hosts
                                                 db.hosts.retain(|_, h| h.folder.as_deref() != Some(name.as_str()));
                                                 db.folders.retain(|f| f != name);
                                             }
                                             1 => {
-                                                // Keep hosts: move them to root
                                                 for h in db.hosts.values_mut() {
                                                     if h.folder.as_deref() == Some(name.as_str()) {
                                                         h.folder = None;
@@ -268,10 +261,10 @@ pub fn run_tui(db: &mut Database) {
                                         }
                                         save_db(db);
                                         items = db.hosts.values().collect();
-                                        items.sort_by(|a, b| a.name.cmp(&b.name));
-                                        filtered = apply_filter(&filter, &items);
-                                        selected = 0;
-                                        list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                            items.sort_by(|a, b| a.name.cmp(&b.name));
+                                            filtered = apply_filter(&filter, &items);
+                                            selected = 0;
+                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
                                         delete_mode = DeleteMode::None;
                                         delete_button_index = 0;
                                     }
@@ -441,93 +434,41 @@ pub fn run_tui(db: &mut Database) {
                                         'q' | 'Q' => {
                                             q::press();
                                         }
-                                        'f' => {
-                                            // Launch SFTP UI for selected host
-                                            let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
-                                            if let Some(Row::Host(h)) = rows.get(selected) {
-                                                let username = h.username.clone();
-                                                let host_addr = h.host.clone();
-                                                let port = h.port;
-                                                let identity = h.identity_file.clone();
-
-                                                let _ = disable_raw_mode();
-                                                let _ = execute!(stdout(), LeaveAlternateScreen);
-
-                                                let _ = crate::tui::app_sftp::run_sftp_ui(
-                                                    &username,
-                                                    &host_addr,
-                                                    port,
-                                                    identity.as_deref(),
-                                                );
-
-                                                let _ = enable_raw_mode();
-                                                let _ = execute!(stdout(), EnterAlternateScreen);
-
-                                                // Refresh state after returning from SFTP
-                                                run_tui(&mut db.clone());
-                                            }
-                                        }
                                         'e' => {
-                                            // Edit currently selected host (if a host is selected) using TUI form
                                             let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
                                             if let Some(Row::Host(h)) = rows.get(selected) {
-                                                let name = h.name.clone();
+                                                let state = HostFormState::new_edit(db, &h.name);
                                                 let _ = disable_raw_mode();
                                                 let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                run_host_edit_form(db, &name);
+                                                run_host_form(db, state);
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
-                                                // refresh lists
                                                 items = db.hosts.values().collect();
-                                                items.sort_by(|a, b| a.name.cmp(&b.name));
-                                                filtered = apply_filter(&filter, &items);
-                                                list_state.select(if filtered.is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(0)
-                                                });
-
-                                                // reload ui
+                                            items.sort_by(|a, b| a.name.cmp(&b.name));
+                                            filtered = apply_filter(&filter, &items);
+                                            selected = 0;
+                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
                                                 run_tui(&mut db.clone());
                                             }
                                         }
                                         'r' => {
                                             let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
-                                            if let Some(row) = rows.get(selected) {
-                                                let _ = disable_raw_mode();
-                                                let _ = execute!(stdout(), LeaveAlternateScreen);
-
-                                                match row {
-                                                    Row::Host(_h) => {
-                                                        // ignore
-                                                        continue;
-                                                    }
-                                                    Row::Folder(folder_name) => {
-                                                        if folder_name != "All" {
-                                                            let folder_name = folder_name.clone();
-                                                            let _ = disable_raw_mode();
-                                                            let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                            run_folder_rename_form(db, &folder_name);
-                                                            let _ = enable_raw_mode();
-                                                            let _ = execute!(stdout(), EnterAlternateScreen);
-                                                        }
-                                                    }
+                                            if let Some(Row::Folder(folder_name)) = rows.get(selected) {
+                                                if folder_name != "All" && folder_name != ".." {
+                                                    let folder_name = folder_name.clone();
+                                                    let _ = disable_raw_mode();
+                                                    let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                    run_folder_rename_form(db, &folder_name);
+                                                    save_db(db);
+                                                    let _ = enable_raw_mode();
+                                                    let _ = execute!(stdout(), EnterAlternateScreen);
+                                                    items = db.hosts.values().collect();
+                                            items.sort_by(|a, b| a.name.cmp(&b.name));
+                                            filtered = apply_filter(&filter, &items);
+                                            selected = 0;
+                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                                    run_tui(&mut db.clone());
                                                 }
-
-                                                save_db(db);
-                                                let _ = enable_raw_mode();
-                                                let _ = execute!(stdout(), EnterAlternateScreen);
-
-                                                items = db.hosts.values().collect();
-                                                items.sort_by(|a, b| a.name.cmp(&b.name));
-                                                filtered = apply_filter(&filter, &items);
-                                                list_state.select(if filtered.is_empty() {
-                                                    None
-                                                } else {
-                                                    Some(0)
-                                                });
-
-                                                run_tui(&mut db.clone());
                                             }
                                         }
                                         'd' => {
@@ -580,21 +521,17 @@ pub fn run_tui(db: &mut Database) {
                                             }
                                         }
                                         'a' => {
-                                            // Create Host or Folder; host goes into current folder
                                             let _ = disable_raw_mode();
                                             let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            run_host_create_form(db, current_folder.clone());
+                                            let state = HostFormState::new_create(current_folder.clone());
+                                            run_host_form(db, state);
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
                                             items = db.hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
-                                            list_state.select(if filtered.is_empty() {
-                                                None
-                                            } else {
-                                                Some(0)
-                                            });
-                                            // reload ui
+                                            selected = 0;
+                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
                                             run_tui(&mut db.clone());
                                         }
                                         _ => {
@@ -806,7 +743,6 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
 
 fn draw_host_form(
     f: &mut Frame,
-    _db: &Database,
     state: &HostFormState,
 ) {
     let size = f.area();
@@ -1013,20 +949,18 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
 
     if state.is_edit {
         if let Some(orig_name) = &state.original_name {
-            if let Some(_existing) = db.hosts.remove(orig_name) {
-                let new_host = Host {
-                    name: name.to_string(),
-                    host: host.to_string(),
-                    port,
-                    username,
-                    identity_file,
-                    proxy_jump,
-                    folder,
-                    tags,
-                };
-                // Preserve other fields if needed (here we overwrite fully)
-                db.hosts.insert(new_host.name.clone(), new_host);
-            }
+            db.hosts.remove(orig_name);
+            let new_host = Host {
+                name: name.to_string(),
+                host: host.to_string(),
+                port,
+                username,
+                identity_file,
+                proxy_jump,
+                folder,
+                tags,
+            };
+            db.hosts.insert(new_host.name.clone(), new_host);
         }
     } else {
         let host_obj = Host {
@@ -1046,9 +980,7 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
     Ok(())
 }
 
-fn run_host_create_form(db: &mut Database, current_folder: Option<String>) {
-    let mut state = HostFormState::new_create(current_folder);
-
+fn run_host_form(db: &mut Database, mut state: HostFormState) {
     let mut stdout = stdout();
     let _ = enable_raw_mode();
     let _ = execute!(stdout, EnterAlternateScreen);
@@ -1057,50 +989,7 @@ fn run_host_create_form(db: &mut Database, current_folder: Option<String>) {
 
     loop {
         let _ = terminal.draw(|f| {
-            draw_host_form(f, db, &state);
-        });
-
-        if event::poll(Duration::from_millis(150)).unwrap_or(false) {
-            if let Ok(Event::Key(k)) = event::read() {
-                if k.kind == KeyEventKind::Press {
-                    match k.code {
-                        KeyCode::Esc => break,
-                        KeyCode::Tab | KeyCode::Down => state.next_field(),
-                        KeyCode::BackTab | KeyCode::Up => state.prev_field(),
-                        KeyCode::Enter => {
-                            if state.selected_field == HostFormState::fields_count() {
-                                if apply_host_form(db, &state).is_ok() {
-                                    break;
-                                }
-                            } else {
-                                state.next_field();
-                            }
-                        }
-                        KeyCode::Char(c) => state.push_char(c),
-                        KeyCode::Backspace => state.pop_char(),
-                        _ => {}
-                    }
-                }
-            }
-        }
-    }
-
-    let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-}
-
-fn run_host_edit_form(db: &mut Database, name: &str) {
-    let mut state = HostFormState::new_edit(db, name);
-
-    let mut stdout = stdout();
-    let _ = enable_raw_mode();
-    let _ = execute!(stdout, EnterAlternateScreen);
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend).unwrap();
-
-    loop {
-        let _ = terminal.draw(|f| {
-            draw_host_form(f, db, &state);
+            draw_host_form(f, &state);
         });
 
         if event::poll(Duration::from_millis(150)).unwrap_or(false) {

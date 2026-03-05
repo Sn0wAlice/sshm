@@ -44,9 +44,7 @@ fn default_username() -> String { "root".to_string() }
 
 /// Convertit `Option<Vec<String>>` en string d’affichage.
 pub fn tags_to_string(tags: &Option<Vec<String>>) -> String {
-    match tags {
-        None => "".to_string(),
-        Some(v) if v.is_empty() => "".to_string(),
-        Some(v) => v.join(","),
-    }
+    tags.as_ref()
+        .filter(|v| !v.is_empty())
+        .map_or_else(String::new, |v| v.join(","))
 }

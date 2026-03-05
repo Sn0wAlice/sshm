@@ -8,7 +8,6 @@ pub mod import;
 pub mod filter;
 pub mod tui;
 pub mod commands;
-pub mod sftp;
 
 // Convenience re-exports
 pub use commands::{list, connect, crud, tags};

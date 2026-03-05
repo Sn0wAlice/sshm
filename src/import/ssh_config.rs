@@ -35,7 +35,7 @@ pub fn import_ssh_config(hosts: &mut HashMap<String, Host>) {
         let username = get("User").or_else(|| get("Username")).unwrap_or_else(|| "root".into());
         let port = get("Port").and_then(|p| p.parse::<u16>().ok()).unwrap_or(22);
         let identity_file = get("IdentityFile");
-        let proxy_jump = get("ProxyJump").or_else(|| get("ProxyJump"));
+        let proxy_jump = get("ProxyJump");
 
         hosts.insert(alias.clone(), Host {
             name: alias.clone(),
