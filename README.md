@@ -3,11 +3,6 @@
   <p align="center">A fast, modern SSH host manager for your terminal.</p>
 </p>
 
-<p align="center">
-  <a href="https://github.com/Sn0wAlice/sshm/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Sn0wAlice/sshm?style=flat-square" alt="License"></a>
-  <a href="https://github.com/Sn0wAlice/sshm/stargazers"><img src="https://img.shields.io/github/stars/Sn0wAlice/sshm?style=flat-square" alt="Stars"></a>
-</p>
-
 ---
 
 **SSHM** is a TUI & CLI tool written in Rust to **manage, organize, and connect to SSH hosts** from your terminal. It features an interactive UI, port forwarding, fuzzy search, folders, themes, and more.

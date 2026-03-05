@@ -74,89 +74,71 @@ impl PortForwardForm {
 }
 
 // ============================================================================
-// ASCII tunnel animation frames
+// Dynamic tunnel rendering
 // ============================================================================
-
-const TUNNEL_FRAMES: &[&str] = &[
-    r#"
-        ╔══════════════════════════════════════════╗
-        ║     LOCAL          TUNNEL         REMOTE ║
-        ║                                          ║
-        ║   ┌──────┐    ╔══════════╗    ┌──────┐   ║
-        ║   │ :{lp} │───>║ ▓▓▓░░░░░ ║───>│ :{rp} │   ║
-        ║   └──────┘    ╚══════════╝    └──────┘   ║
-        ║                                          ║
-        ║           >>> SSH TUNNEL >>>             ║
-        ╚══════════════════════════════════════════╝"#,
-    r#"
-        ╔══════════════════════════════════════════╗
-        ║     LOCAL          TUNNEL         REMOTE ║
-        ║                                          ║
-        ║   ┌──────┐    ╔══════════╗    ┌──────┐   ║
-        ║   │ :{lp} │───>║ ░▓▓▓░░░░ ║───>│ :{rp} │   ║
-        ║   └──────┘    ╚══════════╝    └──────┘   ║
-        ║                                          ║
-        ║           >>> SSH TUNNEL >>>             ║
-        ╚══════════════════════════════════════════╝"#,
-    r#"
-        ╔══════════════════════════════════════════╗
-        ║     LOCAL          TUNNEL         REMOTE ║
-        ║                                          ║
-        ║   ┌──────┐    ╔══════════╗    ┌──────┐   ║
-        ║   │ :{lp} │───>║ ░░▓▓▓░░░ ║───>│ :{rp} │   ║
-        ║   └──────┘    ╚══════════╝    └──────┘   ║
-        ║                                          ║
-        ║           >>> SSH TUNNEL >>>             ║
-        ╚══════════════════════════════════════════╝"#,
-    r#"
-        ╔══════════════════════════════════════════╗
-        ║     LOCAL          TUNNEL         REMOTE ║
-        ║                                          ║
-        ║   ┌──────┐    ╔══════════╗    ┌──────┐   ║
-        ║   │ :{lp} │───>║ ░░░▓▓▓░░ ║───>│ :{rp} │   ║
-        ║   └──────┘    ╚══════════╝    └──────┘   ║
-        ║                                          ║
-        ║           >>> SSH TUNNEL >>>             ║
-        ╚══════════════════════════════════════════╝"#,
-    r#"
-        ╔══════════════════════════════════════════╗
-        ║     LOCAL          TUNNEL         REMOTE ║
-        ║                                          ║
-        ║   ┌──────┐    ╔══════════╗    ┌──────┐   ║
-        ║   │ :{lp} │───>║ ░░░░▓▓▓░ ║───>│ :{rp} │   ║
-        ║   └──────┘    ╚══════════╝    └──────┘   ║
-        ║                                          ║
-        ║           >>> SSH TUNNEL >>>             ║
-        ╚══════════════════════════════════════════╝"#,
-    r#"
-        ╔══════════════════════════════════════════╗
-        ║     LOCAL          TUNNEL         REMOTE ║
-        ║                                          ║
-        ║   ┌──────┐    ╔══════════╗    ┌──────┐   ║
-        ║   │ :{lp} │───>║ ░░░░░▓▓▓ ║───>│ :{rp} │   ║
-        ║   └──────┘    ╚══════════╝    └──────┘   ║
-        ║                                          ║
-        ║           >>> SSH TUNNEL >>>             ║
-        ╚══════════════════════════════════════════╝"#,
-];
-
-const PACKET_FRAMES: &[&str] = &[
-    "    ~={>=>     ~={>=>     ~={>=>     ~={>=>",
-    "     ~={>=>     ~={>=>     ~={>=>     ~={>=>",
-    "      ~={>=>     ~={>=>     ~={>=>     ~={>=>",
-    "       ~={>=>     ~={>=>     ~={>=>     ~={>=>",
-    "      ~={>=>     ~={>=>     ~={>=>     ~={>=>",
-    "     ~={>=>     ~={>=>     ~={>=>     ~={>=>",
-];
 
 const SPINNER: &[&str] = &["[=   ]", "[ =  ]", "[  = ]", "[   =]", "[  = ]", "[ =  ]"];
 
-fn render_frame(frame_template: &str, local_port: &str, remote_port: &str) -> String {
-    let lp = format!("{:>5}", local_port);
-    let rp = format!("{:<5}", remote_port);
-    frame_template
-        .replace("{lp}", &lp)
-        .replace("{rp}", &rp)
+fn build_tunnel_lines(lp: &str, rp: &str, frame_idx: usize) -> Vec<String> {
+    let lp_label = format!(" :{} ", lp);
+    let rp_label = format!(" :{} ", rp);
+    let box_w = lp_label.len().max(rp_label.len());
+    let lp_padded = format!("{:^bw$}", lp_label, bw = box_w);
+    let rp_padded = format!("{:^bw$}", rp_label, bw = box_w);
+
+    let pipe_len: usize = 12;
+    let pos = frame_idx % pipe_len;
+    let pipe: String = (0..pipe_len)
+        .map(|i| if (i + pipe_len - pos) % pipe_len < 3 { '▓' } else { '░' })
+        .collect();
+
+    let box_h = "─".repeat(box_w);
+    let pipe_h = "═".repeat(pipe_len + 2);
+    let conn = "───>";
+    let conn_sp = "    ";
+
+    let row_top = format!("┌{}┐{}╔{}╗{}┌{}┐", box_h, conn_sp, pipe_h, conn_sp, box_h);
+    let row_mid = format!("│{}│{}║ {} ║{}│{}│", lp_padded, conn, pipe, conn, rp_padded);
+    let row_bot = format!("└{}┘{}╚{}╝{}└{}┘", box_h, conn_sp, pipe_h, conn_sp, box_h);
+
+    let inner_w = row_top.chars().count();
+
+    let center_in_frame = |s: &str| -> String {
+        let slen = s.chars().count();
+        let l = inner_w.saturating_sub(slen) / 2;
+        let r = inner_w.saturating_sub(slen).saturating_sub(l);
+        format!("║ {}{}{} ║", " ".repeat(l), s, " ".repeat(r))
+    };
+
+    let border = "═".repeat(inner_w + 2);
+
+    vec![
+        format!("╔{}╗", border),
+        center_in_frame("LOCAL           TUNNEL           REMOTE"),
+        center_in_frame(""),
+        center_in_frame(&row_top),
+        center_in_frame(&row_mid),
+        center_in_frame(&row_bot),
+        center_in_frame(""),
+        center_in_frame(">>> SSH TUNNEL >>>"),
+        format!("╚{}╝", border),
+    ]
+}
+
+fn build_packet_line(width: usize, frame_idx: usize) -> String {
+    let pkt = "~={>=>";
+    let gap = 5;
+    let shift = frame_idx % (pkt.len() + gap);
+    let mut s = String::new();
+    let mut pos = shift;
+    while pos < width.saturating_sub(pkt.len()) {
+        while s.len() < pos {
+            s.push(' ');
+        }
+        s.push_str(pkt);
+        pos += pkt.len() + gap;
+    }
+    s
 }
 
 // ============================================================================
@@ -244,7 +226,7 @@ fn draw_tunnel_screen(
     let size = f.area();
     let theme = theme::load();
 
-    // Full screen dark background
+    // Full screen background
     f.render_widget(
         Block::default().style(Style::default().bg(theme.bg)),
         size,
@@ -257,9 +239,8 @@ fn draw_tunnel_screen(
             Constraint::Length(2),  // title
             Constraint::Length(1),  // connection info
             Constraint::Length(1),  // spacer
-            Constraint::Length(10), // ASCII art
+            Constraint::Length(9),  // ASCII art (dynamic)
             Constraint::Length(2),  // packet animation
-            Constraint::Length(1),  // spacer
             Constraint::Length(1),  // status line
             Constraint::Length(1),  // timer
             Constraint::Length(1),  // spacer
@@ -268,24 +249,21 @@ fn draw_tunnel_screen(
         ])
         .split(size);
 
-    // Title
-    let title_art = format!(
-        "  {} TUNNEL ACTIVE {}",
-        SPINNER[frame_idx % SPINNER.len()],
-        SPINNER[(frame_idx + 3) % SPINNER.len()]
-    );
+    // Title (centered by ratatui)
+    let spinner_a = SPINNER[frame_idx % SPINNER.len()];
+    let spinner_b = SPINNER[(frame_idx + 3) % SPINNER.len()];
     let title = Paragraph::new(vec![
         Line::from(Span::styled(
-            title_art,
+            format!("{} TUNNEL ACTIVE {}", spinner_a, spinner_b),
             Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-    ]);
+    ]).alignment(Alignment::Center);
     f.render_widget(title, chunks[0]);
 
-    // Connection info
+    // Connection info (centered by ratatui)
     let info = Paragraph::new(Line::from(vec![
-        Span::styled("  Host: ", Style::default().fg(theme.muted)),
+        Span::styled("Host: ", Style::default().fg(theme.muted)),
         Span::styled(
             format!("{}@{}:{}", host.username, host.host, host.port),
             Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
@@ -295,28 +273,21 @@ fn draw_tunnel_screen(
             format!("localhost:{} -> remote:{}", local_port, remote_port),
             Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
         ),
-    ]));
+    ])).alignment(Alignment::Center);
     f.render_widget(info, chunks[1]);
 
-    // ASCII tunnel art
-    let frame_str = render_frame(
-        TUNNEL_FRAMES[frame_idx % TUNNEL_FRAMES.len()],
-        local_port,
-        remote_port,
-    );
-    let tunnel_lines: Vec<Line> = frame_str
-        .lines()
-        .map(|l| Line::from(Span::styled(l.to_string(), Style::default().fg(theme.accent))))
+    // Dynamic ASCII tunnel art (centered by ratatui)
+    let art_lines = build_tunnel_lines(local_port, remote_port, frame_idx);
+    let tunnel: Vec<Line> = art_lines
+        .iter()
+        .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(theme.accent))))
         .collect();
-    f.render_widget(Paragraph::new(tunnel_lines), chunks[3]);
+    f.render_widget(Paragraph::new(tunnel).alignment(Alignment::Center), chunks[3]);
 
     // Packet animation
-    let pkt = PACKET_FRAMES[frame_idx % PACKET_FRAMES.len()];
+    let pkt = build_packet_line(chunks[4].width as usize, frame_idx);
     let pkt_lines = vec![
-        Line::from(Span::styled(
-            pkt.to_string(),
-            Style::default().fg(theme.success),
-        )),
+        Line::from(Span::styled(pkt, Style::default().fg(theme.success))),
         Line::from(""),
     ];
     f.render_widget(Paragraph::new(pkt_lines), chunks[4]);
@@ -330,7 +301,7 @@ fn draw_tunnel_screen(
             Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
         ),
     ]));
-    f.render_widget(status, chunks[6]);
+    f.render_widget(status, chunks[5]);
 
     // Timer
     let secs = elapsed.as_secs();
@@ -345,7 +316,7 @@ fn draw_tunnel_screen(
         Span::styled("  Uptime: ", Style::default().fg(theme.muted)),
         Span::styled(time_str, Style::default().fg(theme.fg)),
     ]));
-    f.render_widget(timer, chunks[7]);
+    f.render_widget(timer, chunks[6]);
 
     // Exit button
     let exit_style = if exit_selected {
@@ -355,7 +326,7 @@ fn draw_tunnel_screen(
     };
     f.render_widget(
         Paragraph::new(Span::styled("  [ Exit Tunnel ]", exit_style)),
-        chunks[9],
+        chunks[8],
     );
 }
 

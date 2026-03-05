@@ -573,6 +573,7 @@ pub fn run_tui(db: &mut Database) {
                                                 crate::tui::ssh::portforward::run_port_forward(h);
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
+                                                let _ = terminal.clear();
                                             }
                                         }
                                         'i' => {
