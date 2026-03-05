@@ -120,6 +120,16 @@ const HELP_TEXT: &str = r#"
   • Toast notifications appear briefly after actions (save, delete, etc.)
   • Delete confirmations use a modal popup with keyboard navigation
   • All data is stored locally in ~/.config/sshm/
+
+  ─── Thanks ─────────────────────────────────────
+  All the crazy people who force me to update this shit:
+  - @N1-gHT
+  - @Batleforc
+  - myself of course
+
+
+
+
 "#;
 
 pub fn draw_help_tab(f: &mut Frame, area: Rect, state: &HelpTabState, theme: &Theme) {
