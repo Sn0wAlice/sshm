@@ -554,6 +554,16 @@ pub fn run_tui(db: &mut Database) {
                                                 }
                                             }
                                         }
+                                        'p' => {
+                                            let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
+                                            if let Some(Row::Host(h)) = rows.get(selected) {
+                                                let _ = disable_raw_mode();
+                                                let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                crate::tui::ssh::portforward::run_port_forward(h);
+                                                let _ = enable_raw_mode();
+                                                let _ = execute!(stdout(), EnterAlternateScreen);
+                                            }
+                                        }
                                         'i' => {
                                             let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
                                             if let Some(Row::Host(h)) = rows.get(selected) {

@@ -15,7 +15,7 @@ pub enum HelpContext {
 pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static> {
     let text = match ctx {
         HelpContext::HostNav => {
-            "↑↓ move │ Enter connect │ / filter │ a add │ e edit │ d delete │ i identity │ q quit"
+            "↑↓ move │ Enter connect │ / filter │ a add │ e edit │ d delete │ p forward │ i identity │ q quit"
         }
         HelpContext::FolderNav => {
             "↑↓ move │ Enter expand/collapse │ / filter │ a add │ r rename │ d delete │ q quit"
