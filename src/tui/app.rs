@@ -16,8 +16,12 @@ use ratatui::{
 };
 use std::{io::stdout, time::Duration};
 use crate::config::io::save_db;
+use crate::config::settings::{load_settings, save_settings};
 use crate::tui::functions::build_rows;
 use crate::tui::theme;
+use crate::tui::tabs::tab_bar::draw_tab_bar;
+use crate::tui::tabs::settings_tab::{self, SettingsFormState, SettingsAction};
+use crate::tui::tabs::theme_tab::{self, ThemeTabState, ThemeAction};
 
 use crate::tui::ssh::folder_form_state::FolderFormState;
 use crate::tui::ssh::host_form_state::HostFormState;
@@ -36,6 +40,37 @@ pub enum DeleteMode {
     Host { name: String },
     EmptyFolder { name: String },
     FolderWithHosts { name: String, host_count: usize },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ActiveTab {
+    Hosts,
+    Settings,
+    Theme,
+}
+
+impl ActiveTab {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Hosts => Self::Settings,
+            Self::Settings => Self::Theme,
+            Self::Theme => Self::Hosts,
+        }
+    }
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Hosts => Self::Theme,
+            Self::Settings => Self::Hosts,
+            Self::Theme => Self::Settings,
+        }
+    }
+    pub fn index(self) -> usize {
+        match self {
+            Self::Hosts => 0,
+            Self::Settings => 1,
+            Self::Theme => 2,
+        }
+    }
 }
 
 pub fn run_tui(db: &mut Database) {
@@ -62,6 +97,12 @@ pub fn run_tui(db: &mut Database) {
     let mut delete_mode = DeleteMode::None;
     let mut delete_button_index: usize = 0;
 
+    // Tab state
+    let mut active_tab = ActiveTab::Hosts;
+    let mut app_config = load_settings();
+    let mut settings_state = SettingsFormState::from_config(&app_config);
+    let mut theme_state = ThemeTabState::new(&theme::load());
+
     enable_raw_mode().ok();
     execute!(stdout(), EnterAlternateScreen).ok();
     let backend = CrosstermBackend::new(stdout());
@@ -73,112 +114,133 @@ pub fn run_tui(db: &mut Database) {
             .draw(|f| {
                 let size = f.area();
                 let theme = theme::load();
+
+                // Top-level layout: tab bar + content + help
                 let vchunks = Layout::default()
                     .direction(Direction::Vertical)
                     .constraints([
-                        Constraint::Percentage(85),
-                        Constraint::Percentage(15),
+                        Constraint::Length(1),
+                        Constraint::Min(0),
+                        Constraint::Length(5),
                     ])
                     .split(size);
-                let hchunks = Layout::default()
-                    .direction(Direction::Horizontal)
-                    .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
-                    .split(vchunks[0]);
 
-                // Left pane: filter bar + list
-                let left_chunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([Constraint::Length(3), Constraint::Min(0)])
-                    .split(hchunks[0]);
+                // Tab bar
+                draw_tab_bar(f, vchunks[0], active_tab.index(), &theme);
 
-                let list_area = left_chunks[1];
-                let vh = list_area.height.saturating_sub(2) as usize;
-                viewport_h = vh.max(1);
+                match active_tab {
+                    ActiveTab::Hosts => {
+                        let hchunks = Layout::default()
+                            .direction(Direction::Horizontal)
+                            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                            .split(vchunks[1]);
 
-                // ----- Filter bar -----
-                let filter_label = if input_mode {
-                    format!("{}|", filter) // visual caret
-                } else if filter.is_empty() {
-                    "(press '/' to start)".to_string()
-                } else {
-                    filter.clone()
-                };
-                let filter_para = Paragraph::new(Line::from(vec![
-                    Span::styled("Filter ", Style::default().add_modifier(Modifier::BOLD)),
-                    Span::raw(filter_label),
-                ]))
-                .block(
-                    Block::default()
-                        .title("Filter")
-                        .borders(Borders::ALL)
-                        .border_style(Style::default().fg(theme.accent))
-                        .style(Style::default().bg(theme.bg).fg(theme.fg))
-                );
-                f.render_widget(filter_para, left_chunks[0]);
+                        // Left pane: filter bar + list
+                        let left_chunks = Layout::default()
+                            .direction(Direction::Vertical)
+                            .constraints([Constraint::Length(3), Constraint::Min(0)])
+                            .split(hchunks[0]);
 
-                // ----- Build rows (folders + hosts) -----
-                let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
+                        let list_area = left_chunks[1];
+                        let vh = list_area.height.saturating_sub(2) as usize;
+                        viewport_h = vh.max(1);
 
-                // Clamp selection to available rows
-                last_rows_len = rows.len();
-                if last_rows_len == 0 {
-                    list_state.select(None);
-                } else {
-                    if selected >= last_rows_len {
-                        selected = last_rows_len - 1;
+                        // ----- Filter bar -----
+                        let filter_label = if input_mode {
+                            format!("{}|", filter)
+                        } else if filter.is_empty() {
+                            "(press '/' to start)".to_string()
+                        } else {
+                            filter.clone()
+                        };
+                        let filter_para = Paragraph::new(Line::from(vec![
+                            Span::styled("Filter ", Style::default().add_modifier(Modifier::BOLD)),
+                            Span::raw(filter_label),
+                        ]))
+                        .block(
+                            Block::default()
+                                .title("Filter")
+                                .borders(Borders::ALL)
+                                .border_style(Style::default().fg(theme.accent))
+                                .style(Style::default().bg(theme.bg).fg(theme.fg))
+                        );
+                        f.render_widget(filter_para, left_chunks[0]);
+
+                        // ----- Build rows (folders + hosts) -----
+                        let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
+
+                        last_rows_len = rows.len();
+                        if last_rows_len == 0 {
+                            list_state.select(None);
+                        } else {
+                            if selected >= last_rows_len {
+                                selected = last_rows_len - 1;
+                            }
+                            list_state.select(Some(selected));
+                        }
+
+                        // ----- Render list -----
+                        let list_items: Vec<ListItem> = crate::tui::ssh::listitems::get_item_list(&rows);
+
+                        let list_title = if let Some(folder) = &current_folder {
+                            format!("Folder: {} (↑/↓ / filter)", folder)
+                        } else {
+                            "Hosts (↑/↓ / filter)".to_string()
+                        };
+                        let list = List::new(list_items)
+                            .block(
+                                Block::default()
+                                    .title(list_title)
+                                    .borders(Borders::ALL)
+                                    .border_style(Style::default().fg(theme.accent))
+                                    .style(Style::default().bg(theme.bg).fg(theme.fg))
+                            )
+                            .highlight_symbol("➜ ")
+                            .highlight_style(
+                                Style::default()
+                                    .bg(theme.accent)
+                                    .fg(theme.bg)
+                                    .add_modifier(Modifier::BOLD)
+                            );
+
+                        f.render_stateful_widget(list, list_area, &mut list_state);
+
+                        let mut sb_state = ScrollbarState::new(last_rows_len.max(1))
+                            .position(selected.saturating_sub(viewport_h / 2));
+                        let sb = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
+                        f.render_stateful_widget(sb, list_area, &mut sb_state);
+
+                        // ----- Details (Host or Folder) -----
+                        crate::tui::ssh::detailbox::show_detail_box(
+                            last_rows_len, selected, &rows, f, &hchunks, &theme, db,
+                        );
+
+                        // ----- Help -----
+                        f.render_widget(
+                            crate::tui::ssh::helpbox::get_help_box_content(&list_state, &rows, &theme),
+                            vchunks[2],
+                        );
+
+                        // ----- Delete confirmation modal -----
+                        crate::tui::ssh::deletebox::show_delete_box(&delete_mode, delete_button_index, f, size, &theme);
                     }
-                    list_state.select(Some(selected));
+                    ActiveTab::Settings => {
+                        settings_tab::draw_settings_tab(f, vchunks[1], &settings_state, &theme);
+                        let help = Paragraph::new("  ↑/↓/Tab: navigate fields | Type to edit | Enter on [ Save ] to save | ←/→: switch tab")
+                            .block(Block::default().title("Help").borders(Borders::ALL)
+                                .border_style(Style::default().fg(theme.accent))
+                                .style(Style::default().bg(theme.bg).fg(theme.muted)));
+                        f.render_widget(help, vchunks[2]);
+                    }
+                    ActiveTab::Theme => {
+                        theme_tab::draw_theme_tab(f, vchunks[1], &theme_state, &theme);
+                        let help = Paragraph::new("  ↑/↓: select | Enter: apply preset / save custom | Type hex in custom fields | ←/→: switch tab")
+                            .block(Block::default().title("Help").borders(Borders::ALL)
+                                .border_style(Style::default().fg(theme.accent))
+                                .style(Style::default().bg(theme.bg).fg(theme.muted)));
+                        f.render_widget(help, vchunks[2]);
+                    }
                 }
-
-                // ----- Render list -----
-                let list_items: Vec<ListItem> = crate::tui::ssh::listitems::get_item_list(&rows);
-
-                // Dynamic list title based on current folder
-                let list_title = if let Some(folder) = &current_folder {
-                    format!("Folder: {} (↑/↓ / filter)", folder)
-                } else {
-                    "Hosts (↑/↓ / filter)".to_string()
-                };
-                let list = List::new(list_items)
-                    .block(
-                        Block::default()
-                            .title(list_title)
-                            .borders(Borders::ALL)
-                            .border_style(Style::default().fg(theme.accent))
-                            .style(Style::default().bg(theme.bg).fg(theme.fg))
-                    )
-                    .highlight_symbol("➜ ")
-                    .highlight_style(
-                        Style::default()
-                            .bg(theme.accent)
-                            .fg(theme.bg)
-                            .add_modifier(Modifier::BOLD)
-                    );
-
-                f.render_stateful_widget(list, list_area, &mut list_state);
-
-                // Scrollbar uses total rows
-                let mut sb_state = ScrollbarState::new(last_rows_len.max(1))
-                    .position(selected.saturating_sub(viewport_h / 2));
-                let sb = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-                f.render_stateful_widget(sb, list_area, &mut sb_state);
-
-                // ----- Details (Host or Folder) -----
-                crate::tui::ssh::detailbox::show_detail_box(
-                    last_rows_len,
-                    selected,
-                    &rows,
-                    f,
-                    &hchunks,
-                    &theme,
-                    db,
-                );
-
-                // ----- Help -----
-                f.render_widget(crate::tui::ssh::helpbox::get_help_box_content(&list_state, &rows, &theme), vchunks[1]);
-
-                // ----- Delete confirmation modal -----
-                crate::tui::ssh::deletebox::show_delete_box(&delete_mode, delete_button_index, f, size, &theme);
             })
             .ok();
 
@@ -186,6 +248,26 @@ pub fn run_tui(db: &mut Database) {
         if event::poll(Duration::from_millis(150)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
                 if k.kind == KeyEventKind::Press {
+
+                    // --- Global: tab navigation when not editing ---
+                    let tab_nav_allowed = match active_tab {
+                        ActiveTab::Hosts => !input_mode && matches!(delete_mode, DeleteMode::None),
+                        ActiveTab::Settings => !settings_state.is_editing_field(),
+                        ActiveTab::Theme => !theme_state.is_editing_custom_field(),
+                    };
+
+                    if tab_nav_allowed {
+                        match k.code {
+                            KeyCode::Right => { active_tab = active_tab.next(); continue; }
+                            KeyCode::Left => { active_tab = active_tab.prev(); continue; }
+                            KeyCode::Char('q') | KeyCode::Char('Q') => { q::press(); }
+                            _ => {}
+                        }
+                    }
+
+                    // --- Tab-specific event handling ---
+                    match active_tab {
+                        ActiveTab::Hosts => {
                     // If a delete modal is open, handle only its keys
                     if !matches!(delete_mode, DeleteMode::None) {
                         match k.code {
@@ -307,7 +389,7 @@ pub fn run_tui(db: &mut Database) {
                             }
 
                             KeyCode::Char('/') => {
-                                input_mode = true; // explicit filter mode
+                                input_mode = true;
                                 filter.clear();
                                 filtered = apply_filter(&filter, &items);
                                 selected = 0;
@@ -325,13 +407,10 @@ pub fn run_tui(db: &mut Database) {
 
                             KeyCode::Enter => {
                                 if input_mode {
-                                    // Finish filtering
                                     input_mode = false;
                                 } else {
-                                    // Rebuild rows to know what is selected
                                     let mut rows_hosts: Vec<Option<&Host>> = Vec::new();
                                     if filter.is_empty() {
-                                        // Folder union
                                         let mut folders: Vec<String> = db.folders.clone();
                                         for h in db.hosts.values() {
                                             if let Some(ref folder) = h.folder {
@@ -344,7 +423,6 @@ pub fn run_tui(db: &mut Database) {
                                         folders.dedup();
                                         match &current_folder {
                                             None => {
-                                                // At root: rows = folders (None), then hosts without folder (Some)
                                                 for _ in &folders {
                                                     rows_hosts.push(None);
                                                 }
@@ -355,8 +433,7 @@ pub fn run_tui(db: &mut Database) {
                                                 }
                                             }
                                             Some(fold) => {
-                                                // In folder: first row is "..", then hosts in folder
-                                                rows_hosts.push(None); // ".."
+                                                rows_hosts.push(None);
                                                 for h in items.iter().copied().filter(|h| {
                                                     h.folder.as_deref() == Some(fold.as_str())
                                                 }) {
@@ -364,13 +441,10 @@ pub fn run_tui(db: &mut Database) {
                                                 }
                                             }
                                         }
-                                        // Act based on selection
                                         if let Some(row) = rows_hosts.get(selected).cloned() {
                                             match row {
                                                 None => {
-                                                    // A non-host row was selected (folder/nav)
                                                     match &current_folder {
-                                                        // At root: selecting a folder opens it
                                                         None => {
                                                             if let Some(folder_name) =
                                                                 folders.get(selected)
@@ -381,19 +455,16 @@ pub fn run_tui(db: &mut Database) {
                                                                 list_state.select(Some(0));
                                                             }
                                                         }
-                                                        // Inside a folder: 0 = breadcrumb (noop), 1 = ".." (go parent)
                                                         Some(_) => {
                                                             if selected == 0 {
-                                                                current_folder = None; // go parent
+                                                                current_folder = None;
                                                                 selected = 0;
                                                                 list_state.select(Some(0));
                                                             }
-                                                            // selected == 0 -> breadcrumb: do nothing
                                                         }
                                                     }
                                                 }
                                                 Some(h) => {
-                                                    // Connect to host
                                                     let _ = disable_raw_mode();
                                                     let _ = execute!(stdout(), LeaveAlternateScreen);
                                                     crate::ssh::client::launch_ssh(h, None);
@@ -418,22 +489,18 @@ pub fn run_tui(db: &mut Database) {
                                             return;
                                         }
                                     }
-
                                 }
                             }
 
                             KeyCode::Char(c) => {
                                 if input_mode {
-                                    // Append to filter; disable hotkeys
                                     filter.push(c);
                                     filtered = apply_filter(&filter, &items);
                                     selected = 0;
                                     list_state.select(if filtered.is_empty() { None } else { Some(0) });
                                 } else {
                                     match c {
-                                        'q' | 'Q' => {
-                                            q::press();
-                                        }
+                                        'q' | 'Q' => { /* handled globally above */ }
                                         'e' => {
                                             let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
                                             if let Some(Row::Host(h)) = rows.get(selected) {
@@ -472,7 +539,6 @@ pub fn run_tui(db: &mut Database) {
                                             }
                                         }
                                         'd' => {
-                                            // Open delete modal based on current selection (host or folder)
                                             let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
                                             if let Some(row) = rows.get(selected) {
                                                 match row {
@@ -481,9 +547,7 @@ pub fn run_tui(db: &mut Database) {
                                                         delete_button_index = 0;
                                                     }
                                                     Row::Folder(folder_name) => {
-                                                        if folder_name == "All" {
-                                                            // Don't allow deleting "All"
-                                                        } else {
+                                                        if folder_name != "All" {
                                                             let count = db.hosts.values()
                                                                 .filter(|h| h.folder.as_deref() == Some(folder_name.as_str()))
                                                                 .count();
@@ -502,7 +566,6 @@ pub fn run_tui(db: &mut Database) {
                                             }
                                         }
                                         'i' => {
-                                            // Add identity to selected host, if any
                                             let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
                                             if let Some(Row::Host(h)) = rows.get(selected) {
                                                 let name = h.name.clone();
@@ -515,15 +578,13 @@ pub fn run_tui(db: &mut Database) {
                                                 );
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
-
-                                                // reload ui
                                                 run_tui(&mut db.clone());
                                             }
                                         }
                                         'a' => {
                                             let _ = disable_raw_mode();
                                             let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            let state = HostFormState::new_create(current_folder.clone());
+                                            let state = HostFormState::new_create(current_folder.clone(), &app_config);
                                             run_host_form(db, state);
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
@@ -535,7 +596,6 @@ pub fn run_tui(db: &mut Database) {
                                             run_tui(&mut db.clone());
                                         }
                                         _ => {
-                                            // Start implicit filter mode with this first char
                                             input_mode = true;
                                             filter.clear();
                                             filter.push(c);
@@ -553,6 +613,75 @@ pub fn run_tui(db: &mut Database) {
                             _ => {}
                         }
                     }
+                        } // ActiveTab::Hosts
+
+                        ActiveTab::Settings => {
+                            match k.code {
+                                KeyCode::Esc => {
+                                    settings_state = SettingsFormState::from_config(&app_config);
+                                }
+                                _ => {
+                                    match settings_tab::handle_settings_event(k.code, &mut settings_state) {
+                                        SettingsAction::Save => {
+                                            match settings_state.default_port.trim().parse::<u16>() {
+                                                Ok(port) => {
+                                                    app_config.default_port = port;
+                                                    app_config.default_username = settings_state.default_username.trim().to_string();
+                                                    app_config.default_identity_file = settings_state.default_identity_file.trim().to_string();
+                                                    save_settings(&app_config);
+                                                    settings_state.dirty = false;
+                                                    settings_state.status_message = Some("Saved!".into());
+                                                }
+                                                Err(_) => {
+                                                    settings_state.status_message = Some("Invalid port number".into());
+                                                }
+                                            }
+                                        }
+                                        SettingsAction::None => {}
+                                    }
+                                }
+                            }
+                        }
+
+                        ActiveTab::Theme => {
+                            match k.code {
+                                KeyCode::Esc => {
+                                    let current = theme::load();
+                                    theme_state = ThemeTabState::new(&current);
+                                }
+                                _ => {
+                                    match theme_tab::handle_theme_event(k.code, &mut theme_state) {
+                                        ThemeAction::ApplyPreset(idx) => {
+                                            let preset = &theme::PRESETS[idx];
+                                            theme::save_theme(preset.bg, preset.fg, preset.accent, preset.muted);
+                                            theme_state.custom_bg = preset.bg.to_string();
+                                            theme_state.custom_fg = preset.fg.to_string();
+                                            theme_state.custom_accent = preset.accent.to_string();
+                                            theme_state.custom_muted = preset.muted.to_string();
+                                            theme_state.dirty = false;
+                                            theme_state.status_message = Some(format!("Applied: {}", preset.name));
+                                        }
+                                        ThemeAction::SaveCustom => {
+                                            let valid = [&theme_state.custom_bg, &theme_state.custom_fg,
+                                                         &theme_state.custom_accent, &theme_state.custom_muted]
+                                                .iter().all(|h| theme::hex_to_color(h).is_some());
+                                            if valid {
+                                                theme::save_theme(
+                                                    &theme_state.custom_bg, &theme_state.custom_fg,
+                                                    &theme_state.custom_accent, &theme_state.custom_muted,
+                                                );
+                                                theme_state.dirty = false;
+                                                theme_state.status_message = Some("Custom theme saved!".into());
+                                            } else {
+                                                theme_state.status_message = Some("Invalid hex color(s). Use #RRGGBB format.".into());
+                                            }
+                                        }
+                                        ThemeAction::None => {}
+                                    }
+                                }
+                            }
+                        }
+                    } // match active_tab
                 }
             }
         }

@@ -1,3 +1,4 @@
+use crate::config::settings::AppConfig;
 use crate::models::{tags_to_string, Database};
 
 pub struct HostFormState {
@@ -15,13 +16,13 @@ pub struct HostFormState {
 }
 
 impl HostFormState {
-    pub fn new_create(current_folder: Option<String>) -> Self {
+    pub fn new_create(current_folder: Option<String>, config: &AppConfig) -> Self {
         HostFormState {
             name: String::new(),
             host: String::new(),
-            port: "22".to_string(),
-            username: "root".to_string(),
-            identity_file: String::new(),
+            port: config.default_port.to_string(),
+            username: config.default_username.clone(),
+            identity_file: config.default_identity_file.clone(),
             proxy_jump: String::new(),
             tags: String::new(),
             folder: current_folder.unwrap_or_default(),
@@ -47,7 +48,7 @@ impl HostFormState {
                 original_name: Some(h.name.clone()),
             }
         } else {
-            HostFormState::new_create(None)
+            HostFormState::new_create(None, &AppConfig::default())
         }
     }
 
