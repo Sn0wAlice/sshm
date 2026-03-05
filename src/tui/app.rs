@@ -154,7 +154,7 @@ pub fn run_tui(db: &mut Database) {
                     ActiveTab::Hosts => {
                         let hchunks = Layout::default()
                             .direction(Direction::Horizontal)
-                            .constraints([Constraint::Percentage(40), Constraint::Percentage(60)])
+                            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
                             .split(vchunks[1]);
 
                         // Left pane: filter bar + list
