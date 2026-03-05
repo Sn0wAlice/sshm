@@ -14,7 +14,9 @@ use ratatui::{
     },
     Terminal,
 };
-use std::{io::stdout, time::Duration};
+use std::io::stdout;
+use std::time::Duration;
+use crate::tui::ssh::toast::Toast;
 use crate::config::io::save_db;
 use crate::config::settings::{load_settings, save_settings};
 use crate::tui::functions::build_rows;
@@ -30,7 +32,7 @@ use crate::tui::char::q;
 
 
 pub enum Row<'a> {
-    Folder(String),
+    Folder { name: String, collapsed: bool },
     Host(&'a Host),
 }
 
@@ -89,9 +91,22 @@ pub fn run_tui(db: &mut Database) {
     list_state.select(Some(selected));
     let mut viewport_h: usize = 10;
 
-    // Folder navigation: None = All/root
-    let mut current_folder: Option<String> = None;
-    let mut last_rows_len: usize = 0; // updated on each draw
+    // Collapsible folders: true = collapsed, false = expanded
+    let mut collapsed: std::collections::HashMap<String, bool> = std::collections::HashMap::new();
+    {
+        let mut all_folders: Vec<String> = db.folders.clone();
+        for h in db.hosts.values() {
+            if let Some(ref f) = h.folder {
+                if !all_folders.contains(f) {
+                    all_folders.push(f.clone());
+                }
+            }
+        }
+        for f in all_folders {
+            collapsed.insert(f, true);
+        }
+    }
+    let mut last_rows_len: usize = 0;
 
     // Delete confirmation modal state
     let mut delete_mode = DeleteMode::None;
@@ -103,12 +118,19 @@ pub fn run_tui(db: &mut Database) {
     let mut settings_state = SettingsFormState::from_config(&app_config);
     let mut theme_state = ThemeTabState::new(&theme::load());
 
+    // Toast notification
+    let mut toast: Option<Toast> = None;
+
     enable_raw_mode().ok();
     execute!(stdout(), EnterAlternateScreen).ok();
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend).unwrap();
 
     loop {
+        // Expire toast
+        if toast.as_ref().is_some_and(|t| t.is_expired()) {
+            toast = None;
+        }
         // --- Draw ---
         terminal
             .draw(|f| {
@@ -121,7 +143,7 @@ pub fn run_tui(db: &mut Database) {
                     .constraints([
                         Constraint::Length(1),
                         Constraint::Min(0),
-                        Constraint::Length(5),
+                        Constraint::Length(1),
                     ])
                     .split(size);
 
@@ -167,7 +189,7 @@ pub fn run_tui(db: &mut Database) {
                         f.render_widget(filter_para, left_chunks[0]);
 
                         // ----- Build rows (folders + hosts) -----
-                        let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
+                        let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
 
                         last_rows_len = rows.len();
                         if last_rows_len == 0 {
@@ -182,11 +204,7 @@ pub fn run_tui(db: &mut Database) {
                         // ----- Render list -----
                         let list_items: Vec<ListItem> = crate::tui::ssh::listitems::get_item_list(&rows);
 
-                        let list_title = if let Some(folder) = &current_folder {
-                            format!("Folder: {} (↑/↓ / filter)", folder)
-                        } else {
-                            "Hosts (↑/↓ / filter)".to_string()
-                        };
+                        let list_title = "Hosts (↑/↓ / filter)".to_string();
                         let list = List::new(list_items)
                             .block(
                                 Block::default()
@@ -215,30 +233,48 @@ pub fn run_tui(db: &mut Database) {
                             last_rows_len, selected, &rows, f, &hchunks, &theme, db,
                         );
 
-                        // ----- Help -----
-                        f.render_widget(
-                            crate::tui::ssh::helpbox::get_help_box_content(&list_state, &rows, &theme),
-                            vchunks[2],
-                        );
-
                         // ----- Delete confirmation modal -----
                         crate::tui::ssh::deletebox::show_delete_box(&delete_mode, delete_button_index, f, size, &theme);
                     }
                     ActiveTab::Settings => {
                         settings_tab::draw_settings_tab(f, vchunks[1], &settings_state, &theme);
-                        let help = Paragraph::new("  ↑/↓/Tab: navigate fields | Type to edit | Enter on [ Save ] to save | ←/→: switch tab")
-                            .block(Block::default().title("Help").borders(Borders::ALL)
-                                .border_style(Style::default().fg(theme.accent))
-                                .style(Style::default().bg(theme.bg).fg(theme.muted)));
-                        f.render_widget(help, vchunks[2]);
                     }
                     ActiveTab::Theme => {
                         theme_tab::draw_theme_tab(f, vchunks[1], &theme_state, &theme);
-                        let help = Paragraph::new("  ↑/↓: select | Enter: apply preset / save custom | Type hex in custom fields | ←/→: switch tab")
-                            .block(Block::default().title("Help").borders(Borders::ALL)
-                                .border_style(Style::default().fg(theme.accent))
-                                .style(Style::default().bg(theme.bg).fg(theme.muted)));
-                        f.render_widget(help, vchunks[2]);
+                    }
+                }
+
+                // Contextual help bar (unified for all tabs)
+                use crate::tui::ssh::helpbox::HelpContext;
+                let help_ctx = match active_tab {
+                    ActiveTab::Hosts => {
+                        if !matches!(delete_mode, DeleteMode::None) {
+                            HelpContext::DeleteModal
+                        } else if input_mode {
+                            HelpContext::FilterMode
+                        } else if last_rows_len == 0 {
+                            HelpContext::Empty
+                        } else {
+                            let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
+                            match rows.get(selected) {
+                                Some(Row::Folder { .. }) => HelpContext::FolderNav,
+                                Some(Row::Host(_)) => HelpContext::HostNav,
+                                None => HelpContext::Empty,
+                            }
+                        }
+                    }
+                    ActiveTab::Settings => HelpContext::SettingsTab,
+                    ActiveTab::Theme => HelpContext::ThemeTab,
+                };
+                f.render_widget(
+                    crate::tui::ssh::helpbox::get_contextual_help(help_ctx, &theme),
+                    vchunks[2],
+                );
+
+                // Toast overlay (rendered last, on top of everything)
+                if let Some(ref t) = toast {
+                    if !t.is_expired() {
+                        crate::tui::ssh::toast::render_toast(f, size, t, &theme);
                     }
                 }
             })
@@ -296,6 +332,7 @@ pub fn run_tui(db: &mut Database) {
                                 match &delete_mode {
                                     DeleteMode::Host { name } => {
                                         if delete_button_index == 0 {
+                                            let deleted_name = name.clone();
                                             db.hosts.remove(name);
                                             save_db(db);
                                             items = db.hosts.values().collect();
@@ -303,12 +340,15 @@ pub fn run_tui(db: &mut Database) {
                                             filtered = apply_filter(&filter, &items);
                                             selected = 0;
                                             list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                            toast = Some(Toast::success(format!("Deleted: {}", deleted_name)));
                                         }
                                         delete_mode = DeleteMode::None;
                                         delete_button_index = 0;
                                     }
                                     DeleteMode::EmptyFolder { name } => {
                                         if delete_button_index == 0 {
+                                            let deleted_name = name.clone();
+                                            collapsed.remove(name);
                                             db.folders.retain(|f| f != name);
                                             for h in db.hosts.values_mut() {
                                                 if h.folder.as_deref() == Some(name.as_str()) {
@@ -321,23 +361,29 @@ pub fn run_tui(db: &mut Database) {
                                             filtered = apply_filter(&filter, &items);
                                             selected = 0;
                                             list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                            toast = Some(Toast::success(format!("Deleted folder: {}", deleted_name)));
                                         }
                                         delete_mode = DeleteMode::None;
                                         delete_button_index = 0;
                                     }
                                     DeleteMode::FolderWithHosts { name, .. } => {
+                                        let deleted_name = name.clone();
                                         match delete_button_index {
                                             0 => {
+                                                collapsed.remove(name);
                                                 db.hosts.retain(|_, h| h.folder.as_deref() != Some(name.as_str()));
                                                 db.folders.retain(|f| f != name);
+                                                toast = Some(Toast::success(format!("Deleted folder & hosts: {}", deleted_name)));
                                             }
                                             1 => {
+                                                collapsed.remove(name);
                                                 for h in db.hosts.values_mut() {
                                                     if h.folder.as_deref() == Some(name.as_str()) {
                                                         h.folder = None;
                                                     }
                                                 }
                                                 db.folders.retain(|f| f != name);
+                                                toast = Some(Toast::success(format!("Deleted folder: {}", deleted_name)));
                                             }
                                             _ => { /* Cancel */ }
                                         }
@@ -409,84 +455,21 @@ pub fn run_tui(db: &mut Database) {
                                 if input_mode {
                                     input_mode = false;
                                 } else {
-                                    let mut rows_hosts: Vec<Option<&Host>> = Vec::new();
-                                    if filter.is_empty() {
-                                        let mut folders: Vec<String> = db.folders.clone();
-                                        for h in db.hosts.values() {
-                                            if let Some(ref folder) = h.folder {
-                                                if !folders.iter().any(|f| f == folder) {
-                                                    folders.push(folder.clone());
-                                                }
+                                    let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
+                                    if let Some(row) = rows.get(selected) {
+                                        match row {
+                                            Row::Folder { name, collapsed: is_c } => {
+                                                collapsed.insert(name.clone(), !is_c);
                                             }
-                                        }
-                                        folders.sort();
-                                        folders.dedup();
-                                        match &current_folder {
-                                            None => {
-                                                for _ in &folders {
-                                                    rows_hosts.push(None);
-                                                }
-                                                for h in
-                                                    items.iter().copied().filter(|h| h.folder.is_none())
-                                                {
-                                                    rows_hosts.push(Some(h));
-                                                }
+                                            Row::Host(h) => {
+                                                let _ = disable_raw_mode();
+                                                let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                crate::ssh::client::launch_ssh(h, None);
+                                                let _ = enable_raw_mode();
+                                                let _ = execute!(stdout(), EnterAlternateScreen);
+                                                clear_console();
+                                                return;
                                             }
-                                            Some(fold) => {
-                                                rows_hosts.push(None);
-                                                for h in items.iter().copied().filter(|h| {
-                                                    h.folder.as_deref() == Some(fold.as_str())
-                                                }) {
-                                                    rows_hosts.push(Some(h));
-                                                }
-                                            }
-                                        }
-                                        if let Some(row) = rows_hosts.get(selected).cloned() {
-                                            match row {
-                                                None => {
-                                                    match &current_folder {
-                                                        None => {
-                                                            if let Some(folder_name) =
-                                                                folders.get(selected)
-                                                            {
-                                                                current_folder =
-                                                                    Some(folder_name.clone());
-                                                                selected = 0;
-                                                                list_state.select(Some(0));
-                                                            }
-                                                        }
-                                                        Some(_) => {
-                                                            if selected == 0 {
-                                                                current_folder = None;
-                                                                selected = 0;
-                                                                list_state.select(Some(0));
-                                                            }
-                                                        }
-                                                    }
-                                                }
-                                                Some(h) => {
-                                                    let _ = disable_raw_mode();
-                                                    let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                    crate::ssh::client::launch_ssh(h, None);
-                                                    let _ = enable_raw_mode();
-                                                    let _ = execute!(stdout(), EnterAlternateScreen);
-                                                    clear_console();
-                                                    return;
-                                                }
-                                            }
-                                        }
-                                    } else {
-                                        for h in &filtered {
-                                            rows_hosts.push(Some(h));
-                                        }
-                                        if let Some(Some(h)) = rows_hosts.get(selected) {
-                                            let _ = disable_raw_mode();
-                                            let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            crate::ssh::client::launch_ssh(h, None);
-                                            let _ = enable_raw_mode();
-                                            let _ = execute!(stdout(), EnterAlternateScreen);
-                                            clear_console();
-                                            return;
                                         }
                                     }
                                 }
@@ -502,7 +485,7 @@ pub fn run_tui(db: &mut Database) {
                                     match c {
                                         'q' | 'Q' => { /* handled globally above */ }
                                         'e' => {
-                                            let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
+                                            let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
                                             if let Some(Row::Host(h)) = rows.get(selected) {
                                                 let state = HostFormState::new_edit(db, &h.name);
                                                 let _ = disable_raw_mode();
@@ -519,54 +502,60 @@ pub fn run_tui(db: &mut Database) {
                                             }
                                         }
                                         'r' => {
-                                            let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
-                                            if let Some(Row::Folder(folder_name)) = rows.get(selected) {
-                                                if folder_name != "All" && folder_name != ".." {
-                                                    let folder_name = folder_name.clone();
-                                                    let _ = disable_raw_mode();
-                                                    let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                    run_folder_rename_form(db, &folder_name);
-                                                    save_db(db);
-                                                    let _ = enable_raw_mode();
-                                                    let _ = execute!(stdout(), EnterAlternateScreen);
-                                                    items = db.hosts.values().collect();
-                                            items.sort_by(|a, b| a.name.cmp(&b.name));
-                                            filtered = apply_filter(&filter, &items);
-                                            selected = 0;
-                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
-                                                    run_tui(&mut db.clone());
+                                            let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
+                                            if let Some(Row::Folder { name: folder_name, .. }) = rows.get(selected) {
+                                                let folder_name = folder_name.clone();
+                                                let _ = disable_raw_mode();
+                                                let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                run_folder_rename_form(db, &folder_name);
+                                                // Update collapsed map with new name
+                                                if let Some(was_collapsed) = collapsed.remove(&folder_name) {
+                                                    // Find the new folder name
+                                                    for f in &db.folders {
+                                                        if !collapsed.contains_key(f) {
+                                                            collapsed.insert(f.clone(), was_collapsed);
+                                                            break;
+                                                        }
+                                                    }
                                                 }
+                                                save_db(db);
+                                                let _ = enable_raw_mode();
+                                                let _ = execute!(stdout(), EnterAlternateScreen);
+                                                items = db.hosts.values().collect();
+                                                items.sort_by(|a, b| a.name.cmp(&b.name));
+                                                filtered = apply_filter(&filter, &items);
+                                                selected = 0;
+                                                list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                                run_tui(&mut db.clone());
                                             }
                                         }
                                         'd' => {
-                                            let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
+                                            let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
                                             if let Some(row) = rows.get(selected) {
                                                 match row {
                                                     Row::Host(h) => {
                                                         delete_mode = DeleteMode::Host { name: h.name.clone() };
                                                         delete_button_index = 0;
                                                     }
-                                                    Row::Folder(folder_name) => {
-                                                        if folder_name != "All" {
-                                                            let count = db.hosts.values()
-                                                                .filter(|h| h.folder.as_deref() == Some(folder_name.as_str()))
-                                                                .count();
-                                                            delete_button_index = 0;
-                                                            if count == 0 {
-                                                                delete_mode = DeleteMode::EmptyFolder { name: folder_name.clone() };
-                                                            } else {
-                                                                delete_mode = DeleteMode::FolderWithHosts {
-                                                                    name: folder_name.clone(),
-                                                                    host_count: count,
-                                                                };
-                                                            }
+                                                    Row::Folder { name: folder_name, .. } => {
+                                                        let count = db.hosts.values()
+                                                            .filter(|h| h.folder.as_deref() == Some(folder_name.as_str()))
+                                                            .count();
+                                                        delete_button_index = 0;
+                                                        if count == 0 {
+                                                            delete_mode = DeleteMode::EmptyFolder { name: folder_name.clone() };
+                                                        } else {
+                                                            delete_mode = DeleteMode::FolderWithHosts {
+                                                                name: folder_name.clone(),
+                                                                host_count: count,
+                                                            };
                                                         }
                                                     }
                                                 }
                                             }
                                         }
                                         'i' => {
-                                            let rows = build_rows(db, &items, &filtered, &filter, &current_folder);
+                                            let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
                                             if let Some(Row::Host(h)) = rows.get(selected) {
                                                 let name = h.name.clone();
                                                 let _ = disable_raw_mode();
@@ -582,9 +571,18 @@ pub fn run_tui(db: &mut Database) {
                                             }
                                         }
                                         'a' => {
+                                            // Determine folder context from selected row
+                                            let folder_ctx = {
+                                                let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
+                                                match rows.get(selected) {
+                                                    Some(Row::Folder { name, .. }) => Some(name.clone()),
+                                                    Some(Row::Host(h)) => h.folder.clone(),
+                                                    None => None,
+                                                }
+                                            };
                                             let _ = disable_raw_mode();
                                             let _ = execute!(stdout(), LeaveAlternateScreen);
-                                            let state = HostFormState::new_create(current_folder.clone(), &app_config);
+                                            let state = HostFormState::new_create(folder_ctx, &app_config);
                                             run_host_form(db, state);
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
@@ -630,10 +628,10 @@ pub fn run_tui(db: &mut Database) {
                                                     app_config.default_identity_file = settings_state.default_identity_file.trim().to_string();
                                                     save_settings(&app_config);
                                                     settings_state.dirty = false;
-                                                    settings_state.status_message = Some("Saved!".into());
+                                                    toast = Some(Toast::success("Settings saved!"));
                                                 }
                                                 Err(_) => {
-                                                    settings_state.status_message = Some("Invalid port number".into());
+                                                    toast = Some(Toast::error("Invalid port number"));
                                                 }
                                             }
                                         }
@@ -659,7 +657,7 @@ pub fn run_tui(db: &mut Database) {
                                             theme_state.custom_accent = preset.accent.to_string();
                                             theme_state.custom_muted = preset.muted.to_string();
                                             theme_state.dirty = false;
-                                            theme_state.status_message = Some(format!("Applied: {}", preset.name));
+                                            toast = Some(Toast::success(format!("Theme: {}", preset.name)));
                                         }
                                         ThemeAction::SaveCustom => {
                                             let valid = [&theme_state.custom_bg, &theme_state.custom_fg,
@@ -671,9 +669,9 @@ pub fn run_tui(db: &mut Database) {
                                                     &theme_state.custom_accent, &theme_state.custom_muted,
                                                 );
                                                 theme_state.dirty = false;
-                                                theme_state.status_message = Some("Custom theme saved!".into());
+                                                toast = Some(Toast::success("Custom theme saved!"));
                                             } else {
-                                                theme_state.status_message = Some("Invalid hex color(s). Use #RRGGBB format.".into());
+                                                toast = Some(Toast::error("Invalid hex color(s)"));
                                             }
                                         }
                                         ThemeAction::None => {}
@@ -842,33 +840,7 @@ fn run_folder_rename_form(db: &mut Database, folder_name: &str) {
 
 // ===== Host update form TUI =====
 
-pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
-    let popup_layout = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_y) / 2),
-                Constraint::Percentage(percent_y),
-                Constraint::Percentage((100 - percent_y) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(r);
-
-    let horizontal = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints(
-            [
-                Constraint::Percentage((100 - percent_x) / 2),
-                Constraint::Percentage(percent_x),
-                Constraint::Percentage((100 - percent_x) / 2),
-            ]
-            .as_ref(),
-        )
-        .split(popup_layout[1]);
-
-    horizontal[1]
-}
+pub use crate::tui::ssh::modal::centered_rect;
 
 fn draw_host_form(
     f: &mut Frame,

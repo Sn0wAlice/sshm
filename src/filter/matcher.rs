@@ -1,14 +1,16 @@
 use std::collections::HashMap;
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use crate::models::Host;
 
 /// Simple match insensible à la casse, avec support du '*' (wildcard).
+/// Used by CLI commands.
 pub fn wildcard_match(pat: &str, text: &str) -> bool {
     let pat = pat.to_lowercase();
     let text = text.to_lowercase();
     if pat == "*" { return true; }
     let parts: Vec<&str> = pat.split('*').collect();
     if parts.len() == 1 { return text.contains(&pat); }
-    // contains-in-order
     let mut idx = 0usize;
     for (i, part) in parts.iter().enumerate() {
         if part.is_empty() { continue; }
@@ -35,7 +37,7 @@ pub fn wildcard_match(pat: &str, text: &str) -> bool {
 }
 
 /// Parse un filtre de type "tag:prod host:10.* name:web user:ubuntu"
-/// Clés supportées : tag, host, name, user. Valeurs avec '*' autorisé.
+/// Used by CLI commands.
 pub fn filter_hosts<'a>(hosts: &'a HashMap<String, Host>, filter: &str) -> Vec<&'a Host> {
     if filter.trim().is_empty() { return hosts.values().collect(); }
     let mut name_pats: Vec<String> = Vec::new();
@@ -63,13 +65,66 @@ pub fn filter_hosts<'a>(hosts: &'a HashMap<String, Host>, filter: &str) -> Vec<&
     }).collect()
 }
 
-/// Applique un filtre (wildcard) sur une liste de références vers Host.
+/// Fuzzy score for a single host against the pattern. Returns best score across all fields.
+fn fuzzy_score(matcher: &SkimMatcherV2, h: &Host, pattern: &str) -> Option<i64> {
+    let tag_str = h.tags.as_ref().map(|v| v.join(" ")).unwrap_or_default();
+    [
+        matcher.fuzzy_match(&h.name, pattern),
+        matcher.fuzzy_match(&h.host, pattern),
+        matcher.fuzzy_match(&h.username, pattern),
+        matcher.fuzzy_match(&tag_str, pattern),
+    ]
+    .into_iter()
+    .flatten()
+    .max()
+}
+
+/// Fuzzy filter (TUI). Matches across name/host/username/tags, sorted by relevance.
 pub fn apply_filter<'a>(pattern: &str, items: &'a [&'a Host]) -> Vec<&'a Host> {
     if pattern.trim().is_empty() { return items.to_vec(); }
+
+    // Check for prefix syntax — fall back to wildcard-based prefix filter
+    let has_prefix = pattern.split_whitespace().any(|tok|
+        tok.starts_with("name:") || tok.starts_with("host:")
+        || tok.starts_with("user:") || tok.starts_with("tag:")
+    );
+    if has_prefix {
+        return apply_filter_prefixed(pattern, items);
+    }
+
+    let matcher = SkimMatcherV2::default().smart_case();
+    let mut scored: Vec<(&Host, i64)> = items.iter().copied()
+        .filter_map(|h| fuzzy_score(&matcher, h, pattern).map(|s| (h, s)))
+        .collect();
+
+    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.into_iter().map(|(h, _)| h).collect()
+}
+
+/// Prefix-based filter (name:, host:, user:, tag:) using fuzzy matching per field.
+fn apply_filter_prefixed<'a>(filter: &str, items: &'a [&'a Host]) -> Vec<&'a Host> {
+    let matcher = SkimMatcherV2::default().smart_case();
+    let mut name_pats: Vec<String> = Vec::new();
+    let mut host_pats: Vec<String> = Vec::new();
+    let mut user_pats: Vec<String> = Vec::new();
+    let mut tag_pats: Vec<String> = Vec::new();
+
+    for tok in filter.split_whitespace() {
+        if let Some(rest) = tok.strip_prefix("name:") { name_pats.push(rest.to_string()); continue; }
+        if let Some(rest) = tok.strip_prefix("host:") { host_pats.push(rest.to_string()); continue; }
+        if let Some(rest) = tok.strip_prefix("user:") { user_pats.push(rest.to_string()); continue; }
+        if let Some(rest) = tok.strip_prefix("tag:")  { tag_pats.push(rest.to_string());  continue; }
+        name_pats.push(tok.to_string());
+    }
+
     items.iter().copied().filter(|h| {
-        wildcard_match(pattern, &h.name)
-            || wildcard_match(pattern, &h.host)
-            || wildcard_match(pattern, &h.username)
-            || h.tags.as_ref().map(|v| v.iter().any(|t| wildcard_match(pattern, t))).unwrap_or(false)
+        let name_ok = name_pats.is_empty() || name_pats.iter().all(|p| matcher.fuzzy_match(&h.name, p).is_some());
+        let host_ok = host_pats.is_empty() || host_pats.iter().all(|p| matcher.fuzzy_match(&h.host, p).is_some());
+        let user_ok = user_pats.is_empty() || user_pats.iter().all(|p| matcher.fuzzy_match(&h.username, p).is_some());
+        let tag_ok = tag_pats.is_empty() || {
+            let tags = h.tags.as_ref().map(|v| v.join(" ")).unwrap_or_default();
+            tag_pats.iter().all(|p| matcher.fuzzy_match(&tags, p).is_some())
+        };
+        name_ok && host_ok && user_ok && tag_ok
     }).collect()
 }

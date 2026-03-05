@@ -1,16 +1,18 @@
+use std::collections::HashMap;
 use crate::models::{Database, Host};
 use crate::tui::app::Row;
+
 pub fn build_rows<'a>(
     db: &'a Database,
     items: &'a [&'a Host],
     filtered: &'a [&'a Host],
     filter: &str,
-    current_folder: &Option<String>,
+    collapsed: &HashMap<String, bool>,
 ) -> Vec<Row<'a>> {
     let mut rows: Vec<Row<'a>> = Vec::new();
 
     if filter.is_empty() {
-        // Union of declared folders and folders inferred from hosts
+        // Gather all folders (declared + inferred from hosts)
         let mut folders: Vec<String> = db.folders.clone();
         for h in db.hosts.values() {
             if let Some(ref folder) = h.folder {
@@ -22,31 +24,23 @@ pub fn build_rows<'a>(
         folders.sort();
         folders.dedup();
 
-        match current_folder {
-            None => {
-                // At root: show folders + hosts without folder
-                for f_name in &folders {
-                    rows.push(Row::Folder(f_name.clone()));
-                }
-                for h in items.iter().copied().filter(|h| h.folder.is_none()) {
-                    rows.push(Row::Host(h));
-                }
-            }
-            Some(fold) => {
-                // Inside a folder: show breadcrumb + hosts
-                //rows.push(Row::Folder(format!("<{}>", fold))); // breadcrumb
-                rows.push(Row::Folder("..".to_string()));      // go parent
-                for h in items
-                    .iter()
-                    .copied()
-                    .filter(|h| h.folder.as_deref() == Some(fold.as_str()))
-                {
+        // For each folder, emit folder row, then hosts if expanded
+        for f_name in &folders {
+            let is_collapsed = collapsed.get(f_name).copied().unwrap_or(true);
+            rows.push(Row::Folder { name: f_name.clone(), collapsed: is_collapsed });
+            if !is_collapsed {
+                for h in items.iter().copied().filter(|h| h.folder.as_deref() == Some(f_name.as_str())) {
                     rows.push(Row::Host(h));
                 }
             }
         }
+
+        // Unfiled hosts (no folder)
+        for h in items.iter().copied().filter(|h| h.folder.is_none()) {
+            rows.push(Row::Host(h));
+        }
     } else {
-        // Filtered view ignores folders
+        // Filtered view: flat host list, no folders
         for h in filtered {
             rows.push(Row::Host(*h));
         }

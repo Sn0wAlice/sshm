@@ -28,24 +28,18 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                     );
                     f.render_widget(p, hchunks[1]);
                 }
-                Row::Folder(folder) => {
+                Row::Folder { name, collapsed } => {
                     let count = db
                         .hosts
                         .values()
-                        .filter(|h| h.folder.as_deref() == Some(folder.as_str()))
+                        .filter(|h| h.folder.as_deref() == Some(name.as_str()))
                         .count();
 
-                    let detail = if folder == "All" {
-                        format!(
-                                        "Folder: All\nHosts: {}\n\nSelect a folder item or press Enter to open.",
-                                        db.hosts.len()
-                                    )
-                    } else {
-                        format!(
-                            "Folder: {}\nHosts inside: {}\n\nPress Enter to view its hosts.",
-                            folder, count
-                        )
-                    };
+                    let state_text = if *collapsed { "collapsed" } else { "expanded" };
+                    let detail = format!(
+                        "Folder: {}\nHosts inside: {}\nState: {}\n\nEnter to expand/collapse.",
+                        name, count, state_text
+                    );
 
                     let p = Paragraph::new(detail).block(
                         Block::default()

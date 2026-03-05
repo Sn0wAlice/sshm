@@ -9,7 +9,6 @@ pub struct SettingsFormState {
     pub default_username: String,
     pub default_identity_file: String,
     pub selected_field: usize,
-    pub status_message: Option<String>,
     pub dirty: bool,
 }
 
@@ -20,7 +19,6 @@ impl SettingsFormState {
             default_username: config.default_username.clone(),
             default_identity_file: config.default_identity_file.clone(),
             selected_field: 0,
-            status_message: None,
             dirty: false,
         }
     }
@@ -73,7 +71,6 @@ pub enum SettingsAction {
 }
 
 pub fn handle_settings_event(key: KeyCode, state: &mut SettingsFormState) -> SettingsAction {
-    state.status_message = None;
     match key {
         KeyCode::Tab | KeyCode::Down => { state.next_field(); SettingsAction::None }
         KeyCode::BackTab | KeyCode::Up => { state.prev_field(); SettingsAction::None }
@@ -104,13 +101,11 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
     let labels = ["Default Port", "Default Username", "Default Identity File"];
     let values = [&state.default_port, &state.default_username, &state.default_identity_file];
 
-    // Each field takes 2 lines (label + value), plus 2 for save button, plus status
     let mut constraints: Vec<Constraint> = Vec::new();
     for _ in 0..SettingsFormState::fields_count() {
         constraints.push(Constraint::Length(2));
     }
     constraints.push(Constraint::Length(2)); // save button
-    constraints.push(Constraint::Length(2)); // status message
     constraints.push(Constraint::Min(0));    // spacer
 
     let chunks = Layout::default()
@@ -142,11 +137,4 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
     };
     let save = Paragraph::new("  [ Save ]").style(save_style);
     f.render_widget(save, chunks[save_idx]);
-
-    // Status message
-    if let Some(ref msg) = state.status_message {
-        let status = Paragraph::new(format!("  {}", msg))
-            .style(Style::default().fg(theme.accent));
-        f.render_widget(status, chunks[save_idx + 1]);
-    }
 }

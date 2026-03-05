@@ -1720,6 +1720,7 @@ dependencies = [
  "async-ssh2-lite",
  "crossterm 0.29.0",
  "dirs",
+ "fuzzy-matcher",
  "inquire",
  "openssh-sftp-client",
  "prettytable",

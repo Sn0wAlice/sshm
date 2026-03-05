@@ -14,7 +14,6 @@ pub struct ThemeTabState {
     pub custom_fg: String,
     pub custom_accent: String,
     pub custom_muted: String,
-    pub status_message: Option<String>,
     pub dirty: bool,
 }
 
@@ -26,13 +25,11 @@ impl ThemeTabState {
             custom_fg: color_to_hex(current_theme.fg),
             custom_accent: color_to_hex(current_theme.accent),
             custom_muted: color_to_hex(current_theme.muted),
-            status_message: None,
             dirty: false,
         }
     }
 
     fn total_fields() -> usize {
-        // presets + separator + 4 custom fields + save button
         PRESETS.len() + 1 + 4 + 1
     }
 
@@ -42,7 +39,6 @@ impl ThemeTabState {
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % Self::total_fields();
-        // Skip separator
         if self.selected_field == Self::separator_index() {
             self.selected_field += 1;
         }
@@ -54,7 +50,6 @@ impl ThemeTabState {
         } else {
             self.selected_field -= 1;
         }
-        // Skip separator
         if self.selected_field == Self::separator_index() {
             if self.selected_field == 0 {
                 self.selected_field = Self::total_fields() - 1;
@@ -106,7 +101,6 @@ pub enum ThemeAction {
 }
 
 pub fn handle_theme_event(key: KeyCode, state: &mut ThemeTabState) -> ThemeAction {
-    state.status_message = None;
     match key {
         KeyCode::Down | KeyCode::Tab => { state.next_field(); ThemeAction::None }
         KeyCode::Up | KeyCode::BackTab => { state.prev_field(); ThemeAction::None }
@@ -146,26 +140,17 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    // Build layout: 1 line per preset, 1 separator, 1 line per custom field, 1 save, 1 status, rest spacer
     let mut constraints: Vec<Constraint> = Vec::new();
-    // Presets header
-    constraints.push(Constraint::Length(1));
-    // Each preset
+    constraints.push(Constraint::Length(1)); // Presets header
     for _ in PRESETS {
         constraints.push(Constraint::Length(1));
     }
-    // Separator
-    constraints.push(Constraint::Length(2));
-    // Custom fields (4)
+    constraints.push(Constraint::Length(2)); // Separator
     for _ in 0..4 {
-        constraints.push(Constraint::Length(1));
+        constraints.push(Constraint::Length(1)); // Custom fields
     }
-    // Save button
-    constraints.push(Constraint::Length(2));
-    // Status
-    constraints.push(Constraint::Length(1));
-    // Spacer
-    constraints.push(Constraint::Min(0));
+    constraints.push(Constraint::Length(2)); // Save button
+    constraints.push(Constraint::Min(0));    // Spacer
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -249,11 +234,4 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
     };
     let save = Paragraph::new("\n  [ Save Custom ]").style(save_style);
     f.render_widget(save, chunks[save_chunk]);
-
-    // --- Status ---
-    if let Some(ref msg) = state.status_message {
-        let status = Paragraph::new(format!("  {}", msg))
-            .style(Style::default().fg(theme.accent));
-        f.render_widget(status, chunks[save_chunk + 1]);
-    }
 }

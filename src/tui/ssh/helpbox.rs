@@ -1,35 +1,64 @@
-use ratatui::prelude::Style;
-use ratatui::widgets::{Block, Borders, ListState, Paragraph};
-use crate::tui::app::Row;
+use ratatui::prelude::{Line, Modifier, Span, Style};
+use ratatui::widgets::Paragraph;
 use crate::tui::theme::Theme;
 
-/// Generate help box content based on the selected row type
-pub fn get_help_box_content(list_state: &ListState, rows: &[Row], theme: &Theme) -> Paragraph<'static> {
-    let help_text = if let Some(sel) = list_state.selected() {
-        match rows.get(sel) {
-            Some(Row::Host(_)) => {
-                "Shortcuts:  ↑/↓ move • Enter open/connect • a add • e edit • i add identity • d delete • q quit\n\
-                             Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."
-            }
-            Some(Row::Folder(_)) => {
-                "Shortcuts:  ↑/↓ move • Enter open folder • a add • r rename • q quit\n\
-                             Notes: '/' to start filter, Enter to finish; folders shown when filter is empty."
-            }
-            None => {
-                "Shortcuts:  ↑/↓ move • q quit"
-            }
+pub enum HelpContext {
+    HostNav,
+    FolderNav,
+    FilterMode,
+    DeleteModal,
+    SettingsTab,
+    ThemeTab,
+    Empty,
+}
+
+pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static> {
+    let text = match ctx {
+        HelpContext::HostNav => {
+            "↑↓ move │ Enter connect │ / filter │ a add │ e edit │ d delete │ i identity │ q quit"
         }
-    } else {
-        "Shortcuts:  ↑/↓ move • q quit"
+        HelpContext::FolderNav => {
+            "↑↓ move │ Enter expand/collapse │ / filter │ a add │ r rename │ d delete │ q quit"
+        }
+        HelpContext::FilterMode => {
+            "Type to filter (fuzzy) │ Esc clear │ Enter confirm"
+        }
+        HelpContext::DeleteModal => {
+            "←→ select │ Enter confirm │ Esc cancel"
+        }
+        HelpContext::SettingsTab => {
+            "↑↓ navigate │ Type to edit │ Enter save │ ←→ tab │ Esc reset"
+        }
+        HelpContext::ThemeTab => {
+            "↑↓ navigate │ Enter apply/save │ ←→ tab │ Esc reset"
+        }
+        HelpContext::Empty => {
+            "a add host │ q quit │ ←→ tab"
+        }
     };
 
-    let help = Paragraph::new(help_text)
-        .block(
-            Block::default()
-                .title("Help")
-                .borders(Borders::ALL)
-                .border_style(Style::default().fg(theme.accent))
-                .style(Style::default().bg(theme.bg).fg(theme.muted))
-        );
-    help
+    let spans = parse_help_spans(text, theme);
+    Paragraph::new(Line::from(spans))
+        .style(Style::default().bg(theme.bg))
+}
+
+fn parse_help_spans(text: &str, theme: &Theme) -> Vec<Span<'static>> {
+    let mut spans = Vec::new();
+    for (i, segment) in text.split(" │ ").enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" │ ", Style::default().fg(theme.muted)));
+        }
+        if let Some(space_idx) = segment.find(' ') {
+            let key = &segment[..space_idx];
+            let desc = &segment[space_idx..];
+            spans.push(Span::styled(
+                key.to_string(),
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            ));
+            spans.push(Span::styled(desc.to_string(), Style::default().fg(theme.muted)));
+        } else {
+            spans.push(Span::styled(segment.to_string(), Style::default().fg(theme.accent)));
+        }
+    }
+    spans
 }
