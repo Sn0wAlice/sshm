@@ -31,7 +31,7 @@ Built for developers, sysadmins, pentesters, and homelab enthusiasts.
 ### Homebrew (macOS / Linux)
 
 ```bash
-brew tap Sn0wAlice/sshm
+brew tap Sn0wAlice/sshm https://github.com/Sn0wAlice/sshm
 brew install sshm
 ```
 
@@ -140,9 +140,6 @@ highlight = "#313244"
 
 PRs are welcome — especially for terminal UX, new features, and platform support.
 
-## License
-
-MIT
 
 ---
 
