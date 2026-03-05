@@ -1,132 +1,149 @@
-# SSHM – SSH Host Manager 🚀
+<p align="center">
+  <h1 align="center">SSHM</h1>
+  <p align="center">A fast, modern SSH host manager for your terminal.</p>
+</p>
 
-**SSHM** is a powerful TUI and CLI tool written in Rust to help you **manage, organize, and connect to SSH hosts** with ease.
-
-It supports host folders, tagging, filtering, automatic import from `~/.ssh/config`, and a full-blown SFTP explorer - all inside your terminal.  
-Perfect for developers, sysadmins, pentesters, and homelab enthusiasts. 🧑‍💻⚡
-
----
-
-## ✨ Key Features
-
-### 🔐 SSH Host Management
-- Add, edit, rename & delete hosts
-- Supports identity files, proxy jump, and port forwarding
-- Organize hosts inside folders
-- Tag support + smart filtering
-- Import hosts directly from your `~/.ssh/config`
-
-### 🖥️ Full TUI Mode (Ratatui)
-- Left: Host & folder explorer
-- Right: Host details (and advanced actions)
-- Keyboard‑driven UI
-
-### 📁 Integrated SFTP Explorer
-- Dual-panel navigation (local ↔ remote)
-- Breadth-first recursive folder upload & download
-- Progress bars (global) for big folders
-- Background SSH execution (no MOTD/noise)
-- Filter mode for fast navigation
-- Automatic refresh after file transfers
-
-### 🔍 Smart Quality-of-Life
-- Config stored in `~/.config/sshm/host.json`
-- Theme customization with `theme.toml`
-- Intuitive keybindings (displayed in UI footer)
-- Cross‑platform (Linux, macOS, Windows)
+<p align="center">
+  <a href="https://github.com/Sn0wAlice/sshm/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Sn0wAlice/sshm?style=flat-square" alt="License"></a>
+  <a href="https://github.com/Sn0wAlice/sshm/stargazers"><img src="https://img.shields.io/github/stars/Sn0wAlice/sshm?style=flat-square" alt="Stars"></a>
+</p>
 
 ---
 
-## 📦 Installation
+**SSHM** is a TUI & CLI tool written in Rust to **manage, organize, and connect to SSH hosts** from your terminal. It features an interactive UI, port forwarding, fuzzy search, folders, themes, and more.
 
-### Clone & build from source
+Built for developers, sysadmins, pentesters, and homelab enthusiasts.
+
+## Features
+
+- **Host management** — add, edit, delete, tag, and organize hosts into collapsible folders
+- **Interactive TUI** — keyboard-driven interface built with [Ratatui](https://github.com/ratatui/ratatui)
+- **Fuzzy search** — fzf-style filtering across host names, addresses, users, and tags
+- **Port forwarding** — set up SSH tunnels (`-L`) directly from the TUI
+- **Identity management** — push SSH public keys to remote hosts
+- **Import from `~/.ssh/config`** — one command to import all your existing hosts
+- **Themes** — fully customizable colors via `theme.toml`
+- **Toast notifications** — non-intrusive feedback for actions
+- **CLI mode** — scriptable commands for automation
+
+## Installation
+
+### Homebrew (macOS / Linux)
+
+```bash
+brew tap Sn0wAlice/sshm
+brew install sshm
+```
+
+### Download pre-built binary
+
+Grab the latest binary from the [Releases](https://github.com/Sn0wAlice/sshm/releases/latest) page.
+
+**Linux (amd64)**
+```bash
+curl -sL https://github.com/Sn0wAlice/sshm/releases/latest/download/sshm-linux-amd64.tar.gz | tar xz
+sudo mv sshm /usr/local/bin/
+```
+
+**Linux (arm64)**
+```bash
+curl -sL https://github.com/Sn0wAlice/sshm/releases/latest/download/sshm-linux-arm64.tar.gz | tar xz
+sudo mv sshm /usr/local/bin/
+```
+
+**macOS (Apple Silicon)**
+```bash
+curl -sL https://github.com/Sn0wAlice/sshm/releases/latest/download/sshm-darwin-arm64.tar.gz | tar xz
+sudo mv sshm /usr/local/bin/
+```
+
+### Build from source
 
 ```bash
 git clone https://github.com/Sn0wAlice/sshm.git
 cd sshm
 cargo build --release
+sudo cp target/release/sshm /usr/local/bin/
 ```
 
-Binary will be located at:
-```
-./target/release/sshm
-```
+**Requirements:** Rust stable toolchain, SSH client installed, a terminal with UTF-8 & ANSI support.
 
-To install system‑wide:
-```bash
-sudo cp ./target/release/sshm /usr/local/bin/
-```
+## Usage
 
----
+### TUI (recommended)
 
-## ⚡ Usage
-
-### Launch TUI (recommended)
 ```bash
 sshm
 ```
 
-### List & manage hosts using CLI prompts
+### CLI commands
+
 ```bash
-sshm --cli
+sshm list [--filter "expr"]              # list hosts, optionally filtered
+sshm connect <name> [ssh-options...]     # connect to a host (alias: c)
+sshm create                              # create a new host
+sshm edit                                # edit an existing host
+sshm delete                              # delete a host
+sshm tag add <name> <tag1,tag2>          # add tags to a host
+sshm tag del <name> <tag1,tag2>          # remove tags from a host
+sshm load_local_conf                     # import hosts from ~/.ssh/config
+sshm add-identity <name> [--pub <key>]   # push pubkey to remote host
 ```
 
-### Connect directly to a host by name
-```bash
-sshm connect myserver
-```
+## Keyboard shortcuts
 
-### SFTP (from inside TUI)
-Press `f` on a host → Full SFTP browser
+### Hosts tab
 
----
+| Key | Action |
+|-----|--------|
+| `Up` / `Down` | Navigate hosts and folders |
+| `Enter` | Connect to host / expand-collapse folder |
+| `/` | Activate fuzzy search |
+| `a` | Add new host |
+| `e` | Edit selected host |
+| `d` | Delete selected host or folder |
+| `p` | Port forwarding |
+| `i` | Push identity (SSH key) |
+| `Left` / `Right` | Switch tabs |
+| `q` | Quit |
 
-## 🗂️ Configuration
+### Folders
+
+| Key | Action |
+|-----|--------|
+| `Enter` | Expand / collapse |
+| `a` | Add new folder |
+| `r` | Rename folder |
+| `d` | Delete folder |
+
+## Configuration
 
 | File | Description |
 |------|-------------|
-| `~/.config/sshm/host.json` | Stores all host entries & folder structure |
-| `~/.config/sshm/theme.toml` | Custom colors for the TUI (optional) |
+| `~/.config/sshm/host.json` | Host entries and folder structure |
+| `~/.config/sshm/theme.toml` | TUI color theme (optional) |
 
-Example theme + documentation available in the wiki.
+### Theme example
 
----
+```toml
+bg = "#1e1e2e"
+fg = "#cdd6f4"
+accent = "#89b4fa"
+muted = "#6c7086"
+error = "#f38ba8"
+success = "#a6e3a1"
+border = "#45475a"
+highlight = "#313244"
+```
 
-## ⌨️ Keyboard Shortcuts (TUI)
+## Contributing
 
-> Shortcuts dynamically change depending on whether a folder or host is selected.
+PRs are welcome — especially for terminal UX, new features, and platform support.
 
----
+## License
 
-## 🛠️ Build Requirements
-
-- Rust stable toolchain (`rustup`)
-- SSH installed locally
-- A modern terminal with UTF‑8 + ANSI support
-
-SSHM bundles statically-required networking libraries so users don't need OpenSSL/zlib installed.
-
----
-
-
-## 🤝 Contributing
-
-PRs are welcome - especially for:
-- terminal UX improvements
-- better folder management
-- multi-platform installers
-
-Star ⭐ the project if SSHM helps you daily!
+MIT
 
 ---
 
-## 🧑‍💻 Author
-
-Made with ❤️ by **Sn0wAlice**  
-Cybersecurity engineer & tooling enthusiast 🐾
-
-GitHub: https://github.com/Sn0wAlice
-
----
-
-> If you like SSHM, share it with your team - productivity boost guaranteed 🚀
+Made by [Sn0wAlice](https://github.com/Sn0wAlice)
