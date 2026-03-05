@@ -135,7 +135,6 @@ highlight = "#313244"
 
 PRs are welcome — especially for terminal UX, new features, and platform support.
 
-
 ---
 
 Made by [Sn0wAlice](https://github.com/Sn0wAlice)
