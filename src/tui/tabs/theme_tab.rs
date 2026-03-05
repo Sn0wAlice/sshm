@@ -6,14 +6,16 @@ use crate::tui::theme::{Theme, PRESETS, hex_to_color, color_to_hex};
 /// Fields layout:
 /// 0..PRESETS.len()-1  = preset items
 /// PRESETS.len()       = "Custom Colors" separator (skipped on Enter)
-/// PRESETS.len()+1..+4 = custom hex fields (bg, fg, accent, muted)
-/// PRESETS.len()+5     = Save Custom button
+/// PRESETS.len()+1..+6 = custom hex fields (bg, fg, accent, muted, error, success)
+/// PRESETS.len()+7     = Save Custom button
 pub struct ThemeTabState {
     pub selected_field: usize,
     pub custom_bg: String,
     pub custom_fg: String,
     pub custom_accent: String,
     pub custom_muted: String,
+    pub custom_error: String,
+    pub custom_success: String,
     pub dirty: bool,
 }
 
@@ -25,17 +27,19 @@ impl ThemeTabState {
             custom_fg: color_to_hex(current_theme.fg),
             custom_accent: color_to_hex(current_theme.accent),
             custom_muted: color_to_hex(current_theme.muted),
+            custom_error: color_to_hex(current_theme.error),
+            custom_success: color_to_hex(current_theme.success),
             dirty: false,
         }
     }
 
     fn total_fields() -> usize {
-        PRESETS.len() + 1 + 4 + 1
+        PRESETS.len() + 1 + 6 + 1
     }
 
     fn separator_index() -> usize { PRESETS.len() }
     fn custom_start() -> usize { PRESETS.len() + 1 }
-    fn save_index() -> usize { PRESETS.len() + 5 }
+    fn save_index() -> usize { PRESETS.len() + 7 }
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % Self::total_fields();
@@ -65,7 +69,7 @@ impl ThemeTabState {
 
     pub fn is_editing_custom_field(&self) -> bool {
         let start = Self::custom_start();
-        self.dirty && self.selected_field >= start && self.selected_field < start + 4
+        self.dirty && self.selected_field >= start && self.selected_field < start + 6
     }
 
     fn active_custom_mut(&mut self) -> Option<&mut String> {
@@ -75,6 +79,8 @@ impl ThemeTabState {
             Some(1) => Some(&mut self.custom_fg),
             Some(2) => Some(&mut self.custom_accent),
             Some(3) => Some(&mut self.custom_muted),
+            Some(4) => Some(&mut self.custom_error),
+            Some(5) => Some(&mut self.custom_success),
             _ => None,
         }
     }
@@ -146,7 +152,7 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
         constraints.push(Constraint::Length(1));
     }
     constraints.push(Constraint::Length(2)); // Separator
-    for _ in 0..4 {
+    for _ in 0..6 {
         constraints.push(Constraint::Length(1)); // Custom fields
     }
     constraints.push(Constraint::Length(2)); // Save button
@@ -194,8 +200,8 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
     f.render_widget(sep, chunks[sep_chunk_idx]);
 
     // --- Custom fields ---
-    let custom_labels = ["Background", "Foreground", "Accent", "Muted"];
-    let custom_values = [&state.custom_bg, &state.custom_fg, &state.custom_accent, &state.custom_muted];
+    let custom_labels = ["Background", "Foreground", "Accent", "Muted", "Error", "Success"];
+    let custom_values = [&state.custom_bg, &state.custom_fg, &state.custom_accent, &state.custom_muted, &state.custom_error, &state.custom_success];
     let custom_chunk_start = sep_chunk_idx + 1;
 
     for (i, (label, value)) in custom_labels.iter().zip(custom_values.iter()).enumerate() {
@@ -225,7 +231,7 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
     }
 
     // --- Save button ---
-    let save_chunk = custom_chunk_start + 4;
+    let save_chunk = custom_chunk_start + 6;
     let is_save = state.selected_field == ThemeTabState::save_index();
     let save_style = if is_save {
         Style::default().fg(theme.bg).bg(theme.accent).add_modifier(Modifier::BOLD)

@@ -672,22 +672,26 @@ pub fn run_tui(db: &mut Database) {
                                     match theme_tab::handle_theme_event(k.code, &mut theme_state) {
                                         ThemeAction::ApplyPreset(idx) => {
                                             let preset = &theme::PRESETS[idx];
-                                            theme::save_theme(preset.bg, preset.fg, preset.accent, preset.muted);
+                                            theme::save_theme(preset.bg, preset.fg, preset.accent, preset.muted, preset.error, preset.success);
                                             theme_state.custom_bg = preset.bg.to_string();
                                             theme_state.custom_fg = preset.fg.to_string();
                                             theme_state.custom_accent = preset.accent.to_string();
                                             theme_state.custom_muted = preset.muted.to_string();
+                                            theme_state.custom_error = preset.error.to_string();
+                                            theme_state.custom_success = preset.success.to_string();
                                             theme_state.dirty = false;
                                             toast = Some(Toast::success(format!("Theme: {}", preset.name)));
                                         }
                                         ThemeAction::SaveCustom => {
                                             let valid = [&theme_state.custom_bg, &theme_state.custom_fg,
-                                                         &theme_state.custom_accent, &theme_state.custom_muted]
+                                                         &theme_state.custom_accent, &theme_state.custom_muted,
+                                                         &theme_state.custom_error, &theme_state.custom_success]
                                                 .iter().all(|h| theme::hex_to_color(h).is_some());
                                             if valid {
                                                 theme::save_theme(
                                                     &theme_state.custom_bg, &theme_state.custom_fg,
                                                     &theme_state.custom_accent, &theme_state.custom_muted,
+                                                    &theme_state.custom_error, &theme_state.custom_success,
                                                 );
                                                 theme_state.dirty = false;
                                                 toast = Some(Toast::success("Custom theme saved!"));
@@ -717,7 +721,7 @@ pub fn run_tui(db: &mut Database) {
 fn draw_folder_form(f: &mut Frame, state: &FolderFormState) {
     let size = f.area();
     let area = centered_rect(50, 40, size);
-    let theme = theme::get_global_theme();
+    let theme = theme::load();
     let bg = theme.bg;
     let fg = theme.fg;
     let accent = theme.accent;
@@ -768,7 +772,7 @@ fn draw_folder_form(f: &mut Frame, state: &FolderFormState) {
     let actions = Paragraph::new(Line::from(vec![
         Span::styled("[ Save ]", save_style),
         Span::raw("  "),
-        Span::styled("[ Esc = Cancel ]", Style::default().fg(Color::Rgb(150, 150, 150))),
+        Span::styled("[ Esc = Cancel ]", Style::default().fg(theme.muted)),
     ]));
     f.render_widget(actions, chunks[1]);
 
@@ -778,7 +782,7 @@ fn draw_folder_form(f: &mut Frame, state: &FolderFormState) {
         "Tab/Shift+Tab or ↑/↓ to move • Type to edit • Enter to save"
     };
 
-    let error_para = Paragraph::new(error_text).style(Style::default().fg(Color::Rgb(200, 120, 120)));
+    let error_para = Paragraph::new(error_text).style(Style::default().fg(if state.error.is_some() { theme.error } else { theme.muted }));
     f.render_widget(error_para, chunks[2]);
 }
 
@@ -873,7 +877,7 @@ fn draw_host_form(
 ) {
     let size = f.area();
     let area = centered_rect(70, 80, size);
-    let theme = theme::get_global_theme();
+    let theme = theme::load();
     let bg = theme.bg;
     let fg = theme.fg;
     let accent = theme.accent;
@@ -986,14 +990,14 @@ fn draw_host_form(
         Span::raw("  "),
         Span::styled(
             "[ Esc = Cancel ]",
-            Style::default().fg(Color::Rgb(150, 150, 150)),
+            Style::default().fg(theme.muted),
         ),
     ]));
 
     f.render_widget(actions, chunks[8]);
 
     let help = Paragraph::new(Line::from(vec![Span::raw("Tab/Shift+Tab or ↑/↓ to move • Type to edit • Enter to save when [ Save ] is selected • Esc to cancel")]))
-        .style(Style::default().fg(Color::Rgb(150, 150, 150)));
+        .style(Style::default().fg(theme.muted));
     let help_area = Rect {
         x: inner.x,
         y: inner.y + inner.height.saturating_sub(2),

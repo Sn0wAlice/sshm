@@ -166,7 +166,7 @@ fn render_frame(frame_template: &str, local_port: &str, remote_port: &str) -> St
 fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     let size = f.area();
     let area = centered_rect(50, 45, size);
-    let theme = theme::get_global_theme();
+    let theme = theme::load();
 
     let block = Block::default()
         .title(Span::styled(
@@ -224,7 +224,7 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     f.render_widget(Paragraph::new("  [ Start Tunnel ]").style(start_style), chunks[5]);
 
     let help_text = if let Some(ref err) = state.error {
-        Paragraph::new(format!("  {}", err)).style(Style::default().fg(Color::Rgb(220, 80, 80)))
+        Paragraph::new(format!("  {}", err)).style(Style::default().fg(theme.error))
     } else {
         Paragraph::new("  Ex: local 8080 -> remote 80  |  Esc to cancel")
             .style(Style::default().fg(theme.muted))
@@ -242,7 +242,7 @@ fn draw_tunnel_screen(
     exit_selected: bool,
 ) {
     let size = f.area();
-    let theme = theme::get_global_theme();
+    let theme = theme::load();
 
     // Full screen dark background
     f.render_widget(
@@ -315,7 +315,7 @@ fn draw_tunnel_screen(
     let pkt_lines = vec![
         Line::from(Span::styled(
             pkt.to_string(),
-            Style::default().fg(Color::Rgb(100, 200, 100)),
+            Style::default().fg(theme.success),
         )),
         Line::from(""),
     ];
@@ -327,7 +327,7 @@ fn draw_tunnel_screen(
         Span::styled("  Status: ", Style::default().fg(theme.muted)),
         Span::styled(
             format!("Tunnel active{:<4}", dots),
-            Style::default().fg(Color::Rgb(100, 200, 100)).add_modifier(Modifier::BOLD),
+            Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
         ),
     ]));
     f.render_widget(status, chunks[6]);
@@ -349,9 +349,9 @@ fn draw_tunnel_screen(
 
     // Exit button
     let exit_style = if exit_selected {
-        Style::default().bg(Color::Rgb(220, 80, 80)).fg(theme.bg).add_modifier(Modifier::BOLD)
+        Style::default().bg(theme.error).fg(theme.bg).add_modifier(Modifier::BOLD)
     } else {
-        Style::default().fg(Color::Rgb(220, 80, 80))
+        Style::default().fg(theme.error)
     };
     f.render_widget(
         Paragraph::new(Span::styled("  [ Exit Tunnel ]", exit_style)),
@@ -448,13 +448,13 @@ pub fn run_port_forward(host: &Host) {
         Err(e) => {
             // Show error briefly then return
             let _ = terminal.draw(|f| {
-                let theme = theme::get_global_theme();
+                let theme = theme::load();
                 let area = centered_rect(50, 20, f.area());
                 f.render_widget(Clear, area);
                 let block = Block::default()
                     .title(" Error ")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Rgb(220, 80, 80)))
+                    .border_style(Style::default().fg(theme.error))
                     .style(Style::default().bg(theme.bg).fg(theme.fg));
                 let inner = block.inner(area);
                 f.render_widget(block, area);
@@ -504,7 +504,7 @@ pub fn run_port_forward(host: &Host) {
             } else {
                 // Tunnel died - show dead state
                 let size = f.area();
-                let theme = theme::get_global_theme();
+                let theme = theme::load();
                 f.render_widget(Block::default().style(Style::default().bg(theme.bg)), size);
 
                 let area = centered_rect(50, 30, size);
@@ -512,7 +512,7 @@ pub fn run_port_forward(host: &Host) {
                 let block = Block::default()
                     .title(" Tunnel Closed ")
                     .borders(Borders::ALL)
-                    .border_style(Style::default().fg(Color::Rgb(220, 80, 80)))
+                    .border_style(Style::default().fg(theme.error))
                     .style(Style::default().bg(theme.bg).fg(theme.fg));
                 let inner = block.inner(area);
                 f.render_widget(block, area);

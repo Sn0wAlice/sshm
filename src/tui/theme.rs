@@ -9,6 +9,8 @@ pub struct Theme {
     pub fg: Color,
     pub accent: Color,
     pub muted: Color,
+    pub error: Color,
+    pub success: Color,
 }
 
 pub fn hex_to_color(hex: &str) -> Option<Color> {
@@ -36,6 +38,8 @@ pub struct ThemePreset {
     pub fg: &'static str,
     pub accent: &'static str,
     pub muted: &'static str,
+    pub error: &'static str,
+    pub success: &'static str,
 }
 
 impl ThemePreset {
@@ -45,17 +49,19 @@ impl ThemePreset {
             fg: hex_to_color(self.fg).unwrap_or(Color::Rgb(255, 255, 255)),
             accent: hex_to_color(self.accent).unwrap_or(Color::Rgb(128, 128, 128)),
             muted: hex_to_color(self.muted).unwrap_or(Color::Rgb(100, 100, 100)),
+            error: hex_to_color(self.error).unwrap_or(Color::Rgb(220, 80, 80)),
+            success: hex_to_color(self.success).unwrap_or(Color::Rgb(100, 200, 100)),
         }
     }
 }
 
 pub const PRESETS: &[ThemePreset] = &[
-    ThemePreset { name: "Gruvbox",      bg: "#282828", fg: "#dcdccc", accent: "#b5bd68", muted: "#969696" },
-    ThemePreset { name: "Dracula",      bg: "#282a36", fg: "#f8f8f2", accent: "#bd93f9", muted: "#6272a4" },
-    ThemePreset { name: "Monokai",      bg: "#272822", fg: "#f8f8f2", accent: "#a6e22e", muted: "#75715e" },
-    ThemePreset { name: "Nord",         bg: "#2e3440", fg: "#eceff4", accent: "#88c0d0", muted: "#4c566a" },
-    ThemePreset { name: "Solarized",    bg: "#002b36", fg: "#839496", accent: "#268bd2", muted: "#586e75" },
-    ThemePreset { name: "Tokyo Night",  bg: "#1a1b26", fg: "#c0caf5", accent: "#7aa2f7", muted: "#565f89" },
+    ThemePreset { name: "Gruvbox",      bg: "#282828", fg: "#dcdccc", accent: "#b5bd68", muted: "#969696", error: "#cc6666", success: "#b5bd68" },
+    ThemePreset { name: "Dracula",      bg: "#282a36", fg: "#f8f8f2", accent: "#bd93f9", muted: "#6272a4", error: "#ff5555", success: "#50fa7b" },
+    ThemePreset { name: "Monokai",      bg: "#272822", fg: "#f8f8f2", accent: "#a6e22e", muted: "#75715e", error: "#f92672", success: "#a6e22e" },
+    ThemePreset { name: "Nord",         bg: "#2e3440", fg: "#eceff4", accent: "#88c0d0", muted: "#4c566a", error: "#bf616a", success: "#a3be8c" },
+    ThemePreset { name: "Solarized",    bg: "#002b36", fg: "#839496", accent: "#268bd2", muted: "#586e75", error: "#dc322f", success: "#859900" },
+    ThemePreset { name: "Tokyo Night",  bg: "#1a1b26", fg: "#c0caf5", accent: "#7aa2f7", muted: "#565f89", error: "#f7768e", success: "#9ece6a" },
 ];
 
 #[derive(Deserialize)]
@@ -64,6 +70,8 @@ struct Config {
     fg: Option<String>,
     accent: Option<String>,
     muted: Option<String>,
+    error: Option<String>,
+    success: Option<String>,
 }
 
 fn theme_path() -> PathBuf {
@@ -91,6 +99,12 @@ pub fn load() -> Theme {
                 muted: cfg.muted.as_ref()
                     .and_then(|v| hex_to_color(v))
                     .unwrap_or(fallback.muted),
+                error: cfg.error.as_ref()
+                    .and_then(|v| hex_to_color(v))
+                    .unwrap_or(fallback.error),
+                success: cfg.success.as_ref()
+                    .and_then(|v| hex_to_color(v))
+                    .unwrap_or(fallback.success),
             };
         }
     }
@@ -98,15 +112,15 @@ pub fn load() -> Theme {
     get_global_theme()
 }
 
-pub fn save_theme(bg: &str, fg: &str, accent: &str, muted: &str) {
+pub fn save_theme(bg: &str, fg: &str, accent: &str, muted: &str, error: &str, success: &str) {
     let path = theme_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
 
     let content = format!(
-        "bg = \"{}\"\nfg = \"{}\"\naccent = \"{}\"\nmuted = \"{}\"\n",
-        bg, fg, accent, muted
+        "bg = \"{}\"\nfg = \"{}\"\naccent = \"{}\"\nmuted = \"{}\"\nerror = \"{}\"\nsuccess = \"{}\"\n",
+        bg, fg, accent, muted, error, success
     );
 
     let tmp = path.with_extension("toml.tmp");
@@ -127,5 +141,7 @@ pub fn get_global_theme() -> Theme {
         fg: Color::Rgb(220, 220, 204),
         accent: Color::Rgb(181, 189, 104),
         muted: Color::Rgb(150, 150, 150),
+        error: Color::Rgb(204, 102, 102),
+        success: Color::Rgb(181, 189, 104),
     }
 }

@@ -1,7 +1,14 @@
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
-use ratatui::prelude::{Line, Modifier, Span, Style};
+use ratatui::prelude::{Color, Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use crate::tui::theme::Theme;
+
+fn darken_color(c: Color) -> Color {
+    match c {
+        Color::Rgb(r, g, b) => Color::Rgb(r.saturating_sub(20), g.saturating_sub(20), b.saturating_sub(20)),
+        _ => Color::Rgb(20, 20, 20),
+    }
+}
 
 pub struct ModalButton {
     pub label: String,
@@ -60,7 +67,7 @@ pub fn render_modal(
         height: area.height.min(size.height.saturating_sub(area.y + 1)),
     };
     f.render_widget(
-        Block::default().style(Style::default().bg(ratatui::prelude::Color::Rgb(20, 20, 20))),
+        Block::default().style(Style::default().bg(darken_color(theme.bg))),
         shadow_area,
     );
 

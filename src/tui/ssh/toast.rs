@@ -1,6 +1,6 @@
 use std::time::Instant;
 use ratatui::layout::Rect;
-use ratatui::prelude::{Color, Line, Modifier, Span, Style};
+use ratatui::prelude::{Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
 use crate::tui::theme::Theme;
 
@@ -40,8 +40,8 @@ pub fn render_toast(f: &mut ratatui::Frame, screen: Rect, toast: &Toast, theme: 
     let area = Rect { x, y, width: msg_width, height: toast_height };
 
     let border_color = match toast.kind {
-        ToastKind::Success => Color::Rgb(100, 200, 100),
-        ToastKind::Error => Color::Rgb(220, 80, 80),
+        ToastKind::Success => theme.success,
+        ToastKind::Error => theme.error,
     };
 
     let icon = match toast.kind {
