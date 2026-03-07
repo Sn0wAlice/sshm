@@ -3,13 +3,14 @@ use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
 use crate::tui::theme::Theme;
 
+#[derive(Default)]
 pub struct HelpTabState {
     pub scroll: u16,
 }
 
 impl HelpTabState {
     pub fn new() -> Self {
-        HelpTabState { scroll: 0 }
+        Self::default()
     }
 }
 
@@ -75,12 +76,19 @@ const HELP_TEXT: &str = r#"
   ─── Folders ──────────────────────────────────
 
   Hosts can be organized into collapsible folders.
+  Folders support up to 2 levels of nesting using "/" notation.
+  Example: "Production/Web", "Production/DB", "Staging".
   Folders start collapsed by default.
 
   Enter          Expand or collapse a folder
   a (on folder)  Add a new host inside that folder
   d (on folder)  Delete the folder (with options for hosts)
   r (on folder)  Rename the folder
+
+  Nested folders:
+    • Set a host's folder to "Parent/Child" to create a sub-folder
+    • Collapsing a parent hides all its sub-folders and hosts
+    • Deleting a parent also removes its sub-folders
 
   ─── Port Forwarding ─────────────────────────
 
@@ -99,6 +107,11 @@ const HELP_TEXT: &str = r#"
     • Default port (default: 22)
     • Default username (default: root)
     • Default identity file
+    • Export path — path where the host database is automatically
+      exported in ~/.ssh/config format on every save.
+      Leave empty to disable auto-export.
+      Supports ~ expansion (e.g. ~/my-ssh-config).
+      You can also export manually with: sshm export [path]
 
   ↑/↓ or Tab     Navigate fields
   Type           Edit the selected field
@@ -111,7 +124,7 @@ const HELP_TEXT: &str = r#"
 
   Presets        Select and press Enter to apply instantly
   Custom Colors  Enter hex values (#RRGGBB) for:
-                   Background, Foreground, Accent, Muted
+                   Background, Foreground, Accent, Muted, Error, Success
   [ Save Custom ]  Apply your custom colors
 
   ─── Tips ─────────────────────────────────────

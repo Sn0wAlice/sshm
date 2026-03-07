@@ -10,6 +10,8 @@ pub struct AppConfig {
     pub default_username: String,
     #[serde(default)]
     pub default_identity_file: String,
+    #[serde(default)]
+    pub export_path: String,
 }
 
 fn default_port() -> u16 { 22 }
@@ -21,6 +23,7 @@ impl Default for AppConfig {
             default_port: 22,
             default_username: "root".to_string(),
             default_identity_file: String::new(),
+            export_path: String::new(),
         }
     }
 }

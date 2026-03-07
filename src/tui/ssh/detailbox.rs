@@ -29,17 +29,36 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                     f.render_widget(p, hchunks[1]);
                 }
                 Row::Folder { name, collapsed } => {
+                    // Count direct hosts + hosts in sub-folders
+                    let prefix = format!("{}/", name);
                     let count = db
                         .hosts
                         .values()
-                        .filter(|h| h.folder.as_deref() == Some(name.as_str()))
+                        .filter(|h| {
+                            if let Some(ref f) = h.folder {
+                                f == name || f.starts_with(&prefix)
+                            } else {
+                                false
+                            }
+                        })
+                        .count();
+
+                    let sub_count = db.folders.iter()
+                        .filter(|f| f.starts_with(&prefix))
                         .count();
 
                     let state_text = if *collapsed { "collapsed" } else { "expanded" };
-                    let detail = format!(
-                        "Folder: {}\nHosts inside: {}\nState: {}\n\nEnter to expand/collapse.",
-                        name, count, state_text
-                    );
+                    let detail = if sub_count > 0 {
+                        format!(
+                            "Folder: {}\nSub-folders: {}\nHosts (total): {}\nState: {}\n\nEnter to expand/collapse.",
+                            name, sub_count, count, state_text
+                        )
+                    } else {
+                        format!(
+                            "Folder: {}\nHosts inside: {}\nState: {}\n\nEnter to expand/collapse.",
+                            name, count, state_text
+                        )
+                    };
 
                     let p = Paragraph::new(detail).block(
                         Block::default()

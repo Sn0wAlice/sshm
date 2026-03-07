@@ -1,6 +1,8 @@
 use std::env;
 
 use sshm::config::io::{load_db, save_db};
+use sshm::config::export::export_ssh_config;
+use sshm::config::settings::load_settings;
 use sshm::models::Database;
 use sshm::commands;
 use sshm::import::ssh_config::import_ssh_config;
@@ -48,6 +50,20 @@ fn main() {
                 println!("No new hosts imported from ~/.ssh/config.");
             }
         }
+        Some("export") => {
+            let path = args.get(2).cloned().unwrap_or_else(|| {
+                load_settings().export_path
+            });
+            if path.trim().is_empty() {
+                eprintln!("No export path provided. Usage: sshm export <path>");
+                eprintln!("Or set an export path in Settings.");
+            } else {
+                match export_ssh_config(&db, &path) {
+                    Ok(()) => println!("Exported {} hosts to {}", db.hosts.len(), path),
+                    Err(e) => eprintln!("Export failed: {e}"),
+                }
+            }
+        }
         Some("add-identity") => {
             let name = args.get(2).cloned();
             let extras: Vec<String> = if name.is_some() { args[3..].to_vec() } else { args[2..].to_vec() };
@@ -63,6 +79,7 @@ fn main() {
             println!("  sshm create | edit | delete");
             println!("  sshm tag add <name> <tag1,tag2> | tag del <name> <tag1,tag2>");
             println!("  sshm load_local_conf   # import from ~/.ssh/config once");
+            println!("  sshm export [path]                                       # export as ~/.ssh/config format");
             println!("  sshm add-identity <name?> [--pub ~/.ssh/id_ed25519.pub]   # push pubkey to authorized_keys");
         }
         _ => loop { run_tui(&mut db) },

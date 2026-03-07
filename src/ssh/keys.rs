@@ -71,7 +71,7 @@ pub fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<(
     }
     let status = child.wait()?;
     if !status.success() {
-        return Err(std::io::Error::new(std::io::ErrorKind::Other, format!("ssh exited with status {status}")));
+        return Err(std::io::Error::other(format!("ssh exited with status {status}")));
     }
     Ok(())
 }

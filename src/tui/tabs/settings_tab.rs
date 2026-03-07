@@ -8,6 +8,7 @@ pub struct SettingsFormState {
     pub default_port: String,
     pub default_username: String,
     pub default_identity_file: String,
+    pub export_path: String,
     pub selected_field: usize,
     pub dirty: bool,
 }
@@ -18,12 +19,13 @@ impl SettingsFormState {
             default_port: config.default_port.to_string(),
             default_username: config.default_username.clone(),
             default_identity_file: config.default_identity_file.clone(),
+            export_path: config.export_path.clone(),
             selected_field: 0,
             dirty: false,
         }
     }
 
-    pub fn fields_count() -> usize { 3 }
+    pub fn fields_count() -> usize { 4 }
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
@@ -42,6 +44,7 @@ impl SettingsFormState {
             0 => Some(&mut self.default_port),
             1 => Some(&mut self.default_username),
             2 => Some(&mut self.default_identity_file),
+            3 => Some(&mut self.export_path),
             _ => None,
         }
     }
@@ -98,8 +101,8 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let labels = ["Default Port", "Default Username", "Default Identity File"];
-    let values = [&state.default_port, &state.default_username, &state.default_identity_file];
+    let labels = ["Default Port", "Default Username", "Default Identity File", "Export Path"];
+    let values = [&state.default_port, &state.default_username, &state.default_identity_file, &state.export_path];
 
     let mut constraints: Vec<Constraint> = Vec::new();
     for _ in 0..SettingsFormState::fields_count() {

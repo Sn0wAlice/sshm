@@ -18,7 +18,7 @@ use std::io::stdout;
 use std::time::Duration;
 use crate::tui::ssh::toast::Toast;
 use crate::config::io::save_db;
-use crate::config::settings::{load_settings, save_settings};
+use crate::config::settings::{load_settings, save_settings, AppConfig};
 use crate::tui::functions::build_rows;
 use crate::tui::theme;
 use crate::tui::tabs::tab_bar::draw_tab_bar;
@@ -80,6 +80,13 @@ impl ActiveTab {
     }
 }
 
+fn save_and_export(db: &Database, app_config: &AppConfig) {
+    save_db(db);
+    if !app_config.export_path.is_empty() {
+        let _ = crate::config::export::export_ssh_config(db, &app_config.export_path);
+    }
+}
+
 pub fn run_tui(db: &mut Database) {
     // Source items
     let mut items: Vec<&Host> = db.hosts.values().collect();
@@ -104,6 +111,12 @@ pub fn run_tui(db: &mut Database) {
             if let Some(ref f) = h.folder {
                 if !all_folders.contains(f) {
                     all_folders.push(f.clone());
+                }
+                // Ensure parent folder exists for sub-folders
+                if let Some(parent) = f.split('/').next() {
+                    if f.contains('/') && !all_folders.contains(&parent.to_string()) {
+                        all_folders.push(parent.to_string());
+                    }
                 }
             }
         }
@@ -319,9 +332,7 @@ pub fn run_tui(db: &mut Database) {
                     if !matches!(delete_mode, DeleteMode::None) {
                         match k.code {
                             KeyCode::Left | KeyCode::Up => {
-                                if delete_button_index > 0 {
-                                    delete_button_index -= 1;
-                                }
+                                delete_button_index = delete_button_index.saturating_sub(1);
                             }
                             KeyCode::Right | KeyCode::Down | KeyCode::Tab => {
                                 let max = match delete_mode {
@@ -345,7 +356,7 @@ pub fn run_tui(db: &mut Database) {
                                         if delete_button_index == 0 {
                                             let deleted_name = name.clone();
                                             db.hosts.remove(name);
-                                            save_db(db);
+                                            save_and_export(db, &app_config);
                                             items = db.hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
@@ -359,14 +370,18 @@ pub fn run_tui(db: &mut Database) {
                                     DeleteMode::EmptyFolder { name } => {
                                         if delete_button_index == 0 {
                                             let deleted_name = name.clone();
-                                            collapsed.remove(name);
-                                            db.folders.retain(|f| f != name);
+                                            let prefix = format!("{}/", name);
+                                            // Remove this folder + sub-folders from collapsed
+                                            collapsed.retain(|k, _| k != name && !k.starts_with(&prefix));
+                                            db.folders.retain(|f| f != name && !f.starts_with(&prefix));
                                             for h in db.hosts.values_mut() {
-                                                if h.folder.as_deref() == Some(name.as_str()) {
-                                                    h.folder = None;
+                                                if let Some(ref f) = h.folder {
+                                                    if f == name || f.starts_with(&prefix) {
+                                                        h.folder = None;
+                                                    }
                                                 }
                                             }
-                                            save_db(db);
+                                            save_and_export(db, &app_config);
                                             items = db.hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
@@ -379,26 +394,37 @@ pub fn run_tui(db: &mut Database) {
                                     }
                                     DeleteMode::FolderWithHosts { name, .. } => {
                                         let deleted_name = name.clone();
+                                        let prefix = format!("{}/", name);
                                         match delete_button_index {
                                             0 => {
-                                                collapsed.remove(name);
-                                                db.hosts.retain(|_, h| h.folder.as_deref() != Some(name.as_str()));
-                                                db.folders.retain(|f| f != name);
+                                                // Delete folder + sub-folders + all hosts inside
+                                                collapsed.retain(|k, _| k != name && !k.starts_with(&prefix));
+                                                db.hosts.retain(|_, h| {
+                                                    if let Some(ref f) = h.folder {
+                                                        f != name && !f.starts_with(&prefix)
+                                                    } else {
+                                                        true
+                                                    }
+                                                });
+                                                db.folders.retain(|f| f != name && !f.starts_with(&prefix));
                                                 toast = Some(Toast::success(format!("Deleted folder & hosts: {}", deleted_name)));
                                             }
                                             1 => {
-                                                collapsed.remove(name);
+                                                // Delete folder + sub-folders, move hosts to root
+                                                collapsed.retain(|k, _| k != name && !k.starts_with(&prefix));
                                                 for h in db.hosts.values_mut() {
-                                                    if h.folder.as_deref() == Some(name.as_str()) {
-                                                        h.folder = None;
+                                                    if let Some(ref f) = h.folder.clone() {
+                                                        if f == name || f.starts_with(&prefix) {
+                                                            h.folder = None;
+                                                        }
                                                     }
                                                 }
-                                                db.folders.retain(|f| f != name);
+                                                db.folders.retain(|f| f != name && !f.starts_with(&prefix));
                                                 toast = Some(Toast::success(format!("Deleted folder: {}", deleted_name)));
                                             }
                                             _ => { /* Cancel */ }
                                         }
-                                        save_db(db);
+                                        save_and_export(db, &app_config);
                                         items = db.hosts.values().collect();
                                             items.sort_by(|a, b| a.name.cmp(&b.name));
                                             filtered = apply_filter(&filter, &items);
@@ -505,11 +531,11 @@ pub fn run_tui(db: &mut Database) {
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
                                                 items = db.hosts.values().collect();
-                                            items.sort_by(|a, b| a.name.cmp(&b.name));
-                                            filtered = apply_filter(&filter, &items);
-                                            selected = 0;
-                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
-                                                run_tui(&mut db.clone());
+                                                items.sort_by(|a, b| a.name.cmp(&b.name));
+                                                filtered = apply_filter(&filter, &items);
+                                                selected = 0;
+                                                list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                                let _ = terminal.clear();
                                             }
                                         }
                                         'r' => {
@@ -519,17 +545,15 @@ pub fn run_tui(db: &mut Database) {
                                                 let _ = disable_raw_mode();
                                                 let _ = execute!(stdout(), LeaveAlternateScreen);
                                                 run_folder_rename_form(db, &folder_name);
-                                                // Update collapsed map with new name
-                                                if let Some(was_collapsed) = collapsed.remove(&folder_name) {
-                                                    // Find the new folder name
-                                                    for f in &db.folders {
-                                                        if !collapsed.contains_key(f) {
-                                                            collapsed.insert(f.clone(), was_collapsed);
-                                                            break;
-                                                        }
-                                                    }
+                                                // Rebuild collapsed map: keep states for folders that still exist
+                                                let old_collapsed = collapsed.clone();
+                                                collapsed.clear();
+                                                for f in &db.folders {
+                                                    let state = old_collapsed.get(f).copied()
+                                                        .unwrap_or(true);
+                                                    collapsed.insert(f.clone(), state);
                                                 }
-                                                save_db(db);
+                                                save_and_export(db, &app_config);
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
                                                 items = db.hosts.values().collect();
@@ -537,7 +561,7 @@ pub fn run_tui(db: &mut Database) {
                                                 filtered = apply_filter(&filter, &items);
                                                 selected = 0;
                                                 list_state.select(if filtered.is_empty() { None } else { Some(0) });
-                                                run_tui(&mut db.clone());
+                                                let _ = terminal.clear();
                                             }
                                         }
                                         'd' => {
@@ -549,8 +573,15 @@ pub fn run_tui(db: &mut Database) {
                                                         delete_button_index = 0;
                                                     }
                                                     Row::Folder { name: folder_name, .. } => {
+                                                        let prefix = format!("{}/", folder_name);
                                                         let count = db.hosts.values()
-                                                            .filter(|h| h.folder.as_deref() == Some(folder_name.as_str()))
+                                                            .filter(|h| {
+                                                                if let Some(ref f) = h.folder {
+                                                                    f == folder_name || f.starts_with(&prefix)
+                                                                } else {
+                                                                    false
+                                                                }
+                                                            })
                                                             .count();
                                                         delete_button_index = 0;
                                                         if count == 0 {
@@ -589,7 +620,7 @@ pub fn run_tui(db: &mut Database) {
                                                 );
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
-                                                run_tui(&mut db.clone());
+                                                let _ = terminal.clear();
                                             }
                                         }
                                         'a' => {
@@ -613,7 +644,7 @@ pub fn run_tui(db: &mut Database) {
                                             filtered = apply_filter(&filter, &items);
                                             selected = 0;
                                             list_state.select(if filtered.is_empty() { None } else { Some(0) });
-                                            run_tui(&mut db.clone());
+                                            let _ = terminal.clear();
                                         }
                                         _ => {
                                             input_mode = true;
@@ -648,9 +679,19 @@ pub fn run_tui(db: &mut Database) {
                                                     app_config.default_port = port;
                                                     app_config.default_username = settings_state.default_username.trim().to_string();
                                                     app_config.default_identity_file = settings_state.default_identity_file.trim().to_string();
+                                                    app_config.export_path = settings_state.export_path.trim().to_string();
                                                     save_settings(&app_config);
                                                     settings_state.dirty = false;
-                                                    toast = Some(Toast::success("Settings saved!"));
+                                                    // Auto-export if export_path is set
+                                                    if !app_config.export_path.is_empty() {
+                                                        if let Err(e) = crate::config::export::export_ssh_config(db, &app_config.export_path) {
+                                                            toast = Some(Toast::error(format!("Export failed: {e}")));
+                                                        } else {
+                                                            toast = Some(Toast::success("Settings saved & exported!"));
+                                                        }
+                                                    } else {
+                                                        toast = Some(Toast::success("Settings saved!"));
+                                                    }
                                                 }
                                                 Err(_) => {
                                                     toast = Some(Toast::error("Invalid port number"));
@@ -803,19 +844,28 @@ fn apply_folder_form(db: &mut Database, state: &mut FolderFormState) -> Result<(
 
     let original = state.original_name.clone();
     let new_str = new_name.to_string();
+    let old_prefix = format!("{}/", original);
 
     for f in db.folders.iter_mut() {
         if f == &original {
             *f = new_str.clone();
+        } else if f.starts_with(&old_prefix) {
+            // Update sub-folder paths: "OldParent/Child" → "NewParent/Child"
+            *f = format!("{}/{}", new_str, &f[old_prefix.len()..]);
         }
     }
     for h in db.hosts.values_mut() {
-        if h.folder.as_deref() == Some(original.as_str()) {
-            h.folder = Some(new_str.clone());
+        if let Some(ref f) = h.folder.clone() {
+            if f == &original {
+                h.folder = Some(new_str.clone());
+            } else if f.starts_with(&old_prefix) {
+                h.folder = Some(format!("{}/{}", new_str, &f[old_prefix.len()..]));
+            }
         }
     }
 
-    save_db(db);
+    let cfg = load_settings();
+    save_and_export(db, &cfg);
     Ok(())
 }
 
@@ -1107,7 +1157,8 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
         db.hosts.insert(name.to_string(), host_obj);
     }
 
-    save_db(db);
+    let cfg = load_settings();
+    save_and_export(db, &cfg);
     Ok(())
 }
 

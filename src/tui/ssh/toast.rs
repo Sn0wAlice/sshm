@@ -31,7 +31,7 @@ impl Toast {
 }
 
 pub fn render_toast(f: &mut ratatui::Frame, screen: Rect, toast: &Toast, theme: &Theme) {
-    let msg_width = (toast.message.len() as u16 + 6).min(50).max(12);
+    let msg_width = (toast.message.len() as u16 + 6).clamp(12, 50);
     let toast_height: u16 = 3;
 
     let x = screen.width.saturating_sub(msg_width + 1);
