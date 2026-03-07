@@ -1,6 +1,6 @@
 [package]
 name = "sshm"
-version = "1.0.4"
+version = "1.1.0"
 edition = "2021"
 description = "Fast, modern SSH host manager for the terminal"
 authors = ["Sn0wAlice"]
