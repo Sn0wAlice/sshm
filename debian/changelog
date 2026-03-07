@@ -1,0 +1,16 @@
+sshm (1.0.4) stable; urgency=medium
+
+  * Host reachability check (TCP ping) with colored status
+  * Nested folders support (2 levels)
+  * SSH config export with auto-export on save
+  * Help tab with examples and CLI quick reference
+  * Theme system with presets and custom colors
+  * Port forwarding with live tunnel display
+
+ -- Sn0wAlice <github@sn0w.io>  Fri, 07 Mar 2026 00:00:00 +0000
+
+sshm (1.0.3) stable; urgency=medium
+
+  * Initial packaged release
+
+ -- Sn0wAlice <github@sn0w.io>  Thu, 01 Jan 2026 00:00:00 +0000

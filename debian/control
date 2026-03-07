@@ -1,0 +1,12 @@
+Package: sshm
+Version: ${VERSION}
+Section: utils
+Priority: optional
+Architecture: ${ARCH}
+Maintainer: Sn0wAlice <github@sn0w.io>
+Homepage: https://github.com/Sn0wAlice/sshm
+Description: Fast, modern SSH host manager for the terminal
+ SSHM is a terminal UI application to manage, organize, and connect
+ to your SSH hosts. Features include fuzzy search, nested folders,
+ host reachability checks, port forwarding, theme customization,
+ and export to ~/.ssh/config format.

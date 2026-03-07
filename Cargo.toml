@@ -2,6 +2,12 @@
 name = "sshm"
 version = "1.0.4"
 edition = "2021"
+description = "Fast, modern SSH host manager for the terminal"
+authors = ["Sn0wAlice"]
+license = "Apache-2.0"
+repository = "https://github.com/Sn0wAlice/sshm"
+homepage = "https://github.com/Sn0wAlice/sshm"
+readme = "README.md"
 
 [dependencies]
 serde = { version = "1.0.219", features = ["derive"] }
