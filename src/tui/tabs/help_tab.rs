@@ -58,7 +58,15 @@ const HELP_TEXT: &str = r#"
   d              Delete the selected host or folder
   r              Rename the selected folder
   p              Port forwarding (SSH tunnel)
+  c              Check host reachability (TCP ping)
   i              Manage identity file for the selected host
+
+  ─── Host Status Check ──────────────────────────
+
+  Press 'c' on any host to perform a TCP connection check.
+  The host text turns green (reachable) or red (unreachable).
+  Status is also shown in the Details panel and as a toast.
+  The colored dot (●) persists until you close the TUI.
 
   ─── Fuzzy Search ─────────────────────────────
 

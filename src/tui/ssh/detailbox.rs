@@ -1,15 +1,22 @@
+use std::collections::HashMap;
 use crate::models::{tags_to_string, Database};
-use crate::tui::app::Row;
+use crate::tui::app::{HostStatus, Row};
 use ratatui::prelude::Style;
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &mut ratatui::Frame<'_>, hchunks: &[ratatui::layout::Rect], theme: &crate::tui::theme::Theme, db: &Database) {
+#[allow(clippy::too_many_arguments)]
+pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &mut ratatui::Frame<'_>, hchunks: &[ratatui::layout::Rect], theme: &crate::tui::theme::Theme, db: &Database, host_status: &HashMap<String, HostStatus>) {
     if let Some(sel) = (last_rows_len > 0).then_some(selected) {
         if let Some(row) = rows.get(sel) {
             match row {
                 Row::Host(h) => {
+                    let status_line = match host_status.get(&h.name) {
+                        Some(HostStatus::Reachable) => "Status: ● reachable",
+                        Some(HostStatus::Unreachable) => "Status: ● unreachable",
+                        None => "Status: — not checked",
+                    };
                     let detail = format!(
-                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}",
+                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n{}",
                         h.name,
                         h.username,
                         h.host,
@@ -17,13 +24,21 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         tags_to_string(&h.tags),
                         h.identity_file.as_deref().unwrap_or_default(),
                         h.proxy_jump.as_deref().unwrap_or_default(),
-                        h.folder.as_deref().unwrap_or("-")
+                        h.folder.as_deref().unwrap_or("-"),
+                        status_line,
                     );
+
+                    let border_color = match host_status.get(&h.name) {
+                        Some(HostStatus::Reachable) => theme.success,
+                        Some(HostStatus::Unreachable) => theme.error,
+                        None => theme.accent,
+                    };
+
                     let p = Paragraph::new(detail).block(
                         Block::default()
                             .title("Details")
                             .borders(Borders::ALL)
-                            .border_style(Style::default().fg(theme.accent))
+                            .border_style(Style::default().fg(border_color))
                             .style(Style::default().bg(theme.bg).fg(theme.fg)),
                     );
                     f.render_widget(p, hchunks[1]);

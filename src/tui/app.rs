@@ -14,7 +14,9 @@ use ratatui::{
     },
     Terminal,
 };
+use std::collections::HashMap;
 use std::io::stdout;
+use std::net::TcpStream;
 use std::time::Duration;
 use crate::tui::ssh::toast::Toast;
 use crate::config::io::save_db;
@@ -43,6 +45,12 @@ pub enum DeleteMode {
     Host { name: String },
     EmptyFolder { name: String },
     FolderWithHosts { name: String, host_count: usize },
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum HostStatus {
+    Reachable,
+    Unreachable,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -140,6 +148,9 @@ pub fn run_tui(db: &mut Database) {
     // Toast notification
     let mut toast: Option<Toast> = None;
 
+    // Host reachability status (name → status)
+    let mut host_status: HashMap<String, HostStatus> = HashMap::new();
+
     enable_raw_mode().ok();
     execute!(stdout(), EnterAlternateScreen).ok();
     let backend = CrosstermBackend::new(stdout());
@@ -221,7 +232,7 @@ pub fn run_tui(db: &mut Database) {
                         }
 
                         // ----- Render list -----
-                        let list_items: Vec<ListItem> = crate::tui::ssh::listitems::get_item_list(&rows);
+                        let list_items: Vec<ListItem> = crate::tui::ssh::listitems::get_item_list(&rows, &host_status, &theme);
 
                         let list_title = "Hosts (↑/↓ / filter)".to_string();
                         let list = List::new(list_items)
@@ -249,7 +260,7 @@ pub fn run_tui(db: &mut Database) {
 
                         // ----- Details (Host or Folder) -----
                         crate::tui::ssh::detailbox::show_detail_box(
-                            last_rows_len, selected, &rows, f, &hchunks, &theme, db,
+                            last_rows_len, selected, &rows, f, &hchunks, &theme, db, &host_status,
                         );
 
                         // ----- Delete confirmation modal -----
@@ -594,6 +605,48 @@ pub fn run_tui(db: &mut Database) {
                                                         }
                                                     }
                                                 }
+                                            }
+                                        }
+                                        'c' => {
+                                            let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
+                                            if let Some(Row::Host(h)) = rows.get(selected) {
+                                                let name = h.name.clone();
+                                                let addr = format!("{}:{}", h.host, h.port);
+                                                // TCP connect with 3-second timeout
+                                                let status = match addr.parse::<std::net::SocketAddr>() {
+                                                    Ok(sock) => {
+                                                        match TcpStream::connect_timeout(&sock, Duration::from_secs(3)) {
+                                                            Ok(_) => HostStatus::Reachable,
+                                                            Err(_) => HostStatus::Unreachable,
+                                                        }
+                                                    }
+                                                    Err(_) => {
+                                                        // hostname — resolve then try
+                                                        use std::net::ToSocketAddrs;
+                                                        match addr.to_socket_addrs() {
+                                                            Ok(mut addrs) => {
+                                                                if let Some(sock) = addrs.next() {
+                                                                    match TcpStream::connect_timeout(&sock, Duration::from_secs(3)) {
+                                                                        Ok(_) => HostStatus::Reachable,
+                                                                        Err(_) => HostStatus::Unreachable,
+                                                                    }
+                                                                } else {
+                                                                    HostStatus::Unreachable
+                                                                }
+                                                            }
+                                                            Err(_) => HostStatus::Unreachable,
+                                                        }
+                                                    }
+                                                };
+                                                let msg = match status {
+                                                    HostStatus::Reachable => format!("{} is reachable ✓", name),
+                                                    HostStatus::Unreachable => format!("{} is unreachable ✗", name),
+                                                };
+                                                toast = Some(match status {
+                                                    HostStatus::Reachable => Toast::success(msg),
+                                                    HostStatus::Unreachable => Toast::error(msg),
+                                                });
+                                                host_status.insert(name, status);
                                             }
                                         }
                                         'p' => {

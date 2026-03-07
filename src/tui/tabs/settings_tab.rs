@@ -138,6 +138,11 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
     } else {
         Style::default().fg(theme.accent)
     };
-    let save = Paragraph::new("  [ Save ]").style(save_style);
+    let save = Paragraph::new(Line::from(vec![
+        Span::raw("  "),
+        Span::styled("[ Save ]", save_style),
+        Span::raw("  "),
+        Span::styled("[ Esc = Reset ]", Style::default().fg(theme.muted)),
+    ]));
     f.render_widget(save, chunks[save_idx]);
 }
