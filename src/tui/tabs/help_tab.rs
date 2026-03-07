@@ -61,12 +61,23 @@ const HELP_TEXT: &str = r#"
   c              Check host reachability (TCP ping)
   i              Manage identity file for the selected host
 
+  Examples:
+    • Select "web-prod" → Enter    → opens ssh root@10.0.1.5
+    • Select "web-prod" → e        → edit name, host, port, user, tags…
+    • Select a folder   → a        → new host is created inside that folder
+    • Select "old-box"  → d        → confirmation modal, then deleted
+
   ─── Host Status Check ──────────────────────────
 
   Press 'c' on any host to perform a TCP connection check.
   The host text turns green (reachable) or red (unreachable).
-  Status is also shown in the Details panel and as a toast.
-  The colored dot (●) persists until you close the TUI.
+  A colored dot (●) appears next to checked hosts.
+  The Details panel border also changes color.
+
+  Examples:
+    • Select "web-prod" → c → turns green if port 22 responds
+    • Select "old-box"  → c → turns red if host is down or filtered
+    • Check several hosts in a row to get a quick status overview
 
   ─── Fuzzy Search ─────────────────────────────
 
@@ -81,11 +92,19 @@ const HELP_TEXT: &str = r#"
 
   Esc            Clear filter and return to full list
 
+  Examples:
+    • /prod             → matches "web-prod", "db-prod", "prod-api"
+    • /10.0             → matches any host with IP starting with 10.0
+    • /host:192.168     → only matches hostnames containing "192.168"
+    • /tag:docker       → only matches hosts tagged "docker"
+    • /user:deploy      → only matches hosts with username "deploy"
+    • /name:api         → only matches host aliases containing "api"
+    • /web              → fuzzy: matches "web-prod", "website", "aweb"
+
   ─── Folders ──────────────────────────────────
 
   Hosts can be organized into collapsible folders.
   Folders support up to 2 levels of nesting using "/" notation.
-  Example: "Production/Web", "Production/DB", "Staging".
   Folders start collapsed by default.
 
   Enter          Expand or collapse a folder
@@ -93,10 +112,21 @@ const HELP_TEXT: &str = r#"
   d (on folder)  Delete the folder (with options for hosts)
   r (on folder)  Rename the folder
 
-  Nested folders:
-    • Set a host's folder to "Parent/Child" to create a sub-folder
-    • Collapsing a parent hides all its sub-folders and hosts
-    • Deleting a parent also removes its sub-folders
+  Examples:
+    Folder structure with 2 levels:
+
+    ▸ Production           ← top-level folder (collapsed)
+    ▾ Staging              ← top-level folder (expanded)
+        ▸ Staging/Web      ← sub-folder (collapsed)
+        ▾ Staging/DB       ← sub-folder (expanded)
+            db-staging-1   ← host inside Staging/DB
+            db-staging-2
+        api-staging        ← host directly in Staging
+
+    • Set folder to "Production"     → host goes in Production
+    • Set folder to "Production/Web" → host goes in sub-folder
+    • Rename "Staging" to "QA"       → all sub-folders update too
+    • Delete "Production"            → removes all sub-folders inside
 
   ─── Port Forwarding ─────────────────────────
 
@@ -104,10 +134,14 @@ const HELP_TEXT: &str = r#"
   Enter the local port and remote port, then start.
   The tunnel runs with a live animated display.
 
-  Example: local 8080 → remote 80
-  This forwards localhost:8080 to remote-host:80.
-
   Press Esc, Enter, or 'q' to stop the tunnel.
+
+  Examples:
+    • local 8080 → remote 80     Access remote HTTP on localhost:8080
+    • local 5432 → remote 5432   Tunnel to a remote PostgreSQL
+    • local 3306 → remote 3306   Tunnel to a remote MySQL
+    • local 6379 → remote 6379   Tunnel to a remote Redis
+    • local 9090 → remote 443    Access remote HTTPS on localhost:9090
 
   ─── Settings Tab ─────────────────────────────
 
@@ -115,16 +149,22 @@ const HELP_TEXT: &str = r#"
     • Default port (default: 22)
     • Default username (default: root)
     • Default identity file
-    • Export path — path where the host database is automatically
-      exported in ~/.ssh/config format on every save.
-      Leave empty to disable auto-export.
-      Supports ~ expansion (e.g. ~/my-ssh-config).
-      You can also export manually with: sshm export [path]
+    • Export path
 
   ↑/↓ or Tab     Navigate fields
   Type           Edit the selected field
   Enter          Save settings
   Esc            Reset to saved values
+
+  Export path:
+    Automatically exports all hosts in ~/.ssh/config format on save.
+    Leave empty to disable. Supports ~ expansion.
+
+  Examples:
+    • Export path: ~/.ssh/config           → overwrites your SSH config
+    • Export path: ~/my-ssh-config         → safe separate file
+    • Export path: /tmp/ssh_hosts          → temp export for testing
+    • Empty                                → auto-export disabled
 
   ─── Theme Tab ────────────────────────────────
 
@@ -135,12 +175,47 @@ const HELP_TEXT: &str = r#"
                    Background, Foreground, Accent, Muted, Error, Success
   [ Save Custom ]  Apply your custom colors
 
+  Examples:
+    • Background: #1a1b26     Dark background (Tokyo Night style)
+    • Foreground: #c0caf5     Light text
+    • Accent:     #7aa2f7     Blue highlights
+    • Muted:      #565f89     Dimmed hints
+    • Error:      #f7768e     Red for errors and unreachable hosts
+    • Success:    #9ece6a     Green for success and reachable hosts
+
+  ─── CLI Quick Reference ────────────────────────
+
+  sshm                              Launch the TUI (default)
+  sshm list                         List all hosts
+  sshm list --filter "prod"         List hosts matching "prod"
+  sshm connect myserver             SSH into "myserver"
+  sshm c myserver                   Short alias for connect
+  sshm c myserver -L 8080:localhost:80
+                                    Connect with local port forward
+  sshm c myserver -i ~/.ssh/id_rsa  Connect with specific key
+  sshm c myserver -J jumphost       Connect via jump host
+  sshm create                       Add a new host interactively
+  sshm edit                         Edit a host interactively
+  sshm delete                       Delete a host interactively
+  sshm tag add myserver web,prod    Add tags "web" and "prod"
+  sshm tag del myserver old         Remove tag "old"
+  sshm export ~/ssh-backup          Export hosts as SSH config
+  sshm export                       Export using configured path
+  sshm load_local_conf              Import hosts from ~/.ssh/config
+  sshm add-identity myserver        Push your pubkey to a host
+  sshm add-identity myserver --pub ~/.ssh/id_ed25519.pub
+                                    Push a specific public key
+  sshm help                         Show CLI help
+
   ─── Tips ─────────────────────────────────────
 
   • The help bar at the bottom shows available keys for the current context
   • Toast notifications appear briefly after actions (save, delete, etc.)
   • Delete confirmations use a modal popup with keyboard navigation
   • All data is stored locally in ~/.config/sshm/
+  • You can import your existing ~/.ssh/config with: sshm load_local_conf
+  • Tags let you group hosts logically (e.g. "docker", "prod", "gpu")
+  • Use 'c' on multiple hosts to quickly audit which ones are alive
 
   ─── Thanks ─────────────────────────────────────
   All the crazy people who force me to update this shit:
