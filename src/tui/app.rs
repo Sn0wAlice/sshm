@@ -31,6 +31,9 @@ use crate::tui::tabs::tab_bar::draw_tab_bar;
 use crate::tui::tabs::settings_tab::{self, SettingsFormState, SettingsAction};
 use crate::tui::tabs::theme_tab::{self, ThemeTabState, ThemeAction};
 use crate::tui::tabs::help_tab::{self, HelpTabState};
+use crate::tui::tabs::identities_tab::{
+    self, handle_identities_event, IdentitiesAction, IdentitiesTabState,
+};
 
 use crate::tui::ssh::folder_form_state::FolderFormState;
 use crate::tui::ssh::host_form_state::HostFormState;
@@ -60,6 +63,7 @@ pub enum HostStatus {
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum ActiveTab {
     Hosts,
+    Identities,
     Settings,
     Theme,
     Help,
@@ -68,7 +72,8 @@ pub enum ActiveTab {
 impl ActiveTab {
     pub fn next(self) -> Self {
         match self {
-            Self::Hosts => Self::Settings,
+            Self::Hosts => Self::Identities,
+            Self::Identities => Self::Settings,
             Self::Settings => Self::Theme,
             Self::Theme => Self::Help,
             Self::Help => Self::Hosts,
@@ -77,7 +82,8 @@ impl ActiveTab {
     pub fn prev(self) -> Self {
         match self {
             Self::Hosts => Self::Help,
-            Self::Settings => Self::Hosts,
+            Self::Identities => Self::Hosts,
+            Self::Settings => Self::Identities,
             Self::Theme => Self::Settings,
             Self::Help => Self::Theme,
         }
@@ -85,9 +91,10 @@ impl ActiveTab {
     pub fn index(self) -> usize {
         match self {
             Self::Hosts => 0,
-            Self::Settings => 1,
-            Self::Theme => 2,
-            Self::Help => 3,
+            Self::Identities => 1,
+            Self::Settings => 2,
+            Self::Theme => 3,
+            Self::Help => 4,
         }
     }
 }
@@ -176,6 +183,80 @@ fn spawn_health_worker(
     });
 }
 
+/// Interactive "generate key" flow driven by `inquire`. Returns the path
+/// of the freshly created private key, or `None` if the user cancelled.
+fn run_generate_key_flow() -> std::io::Result<Option<std::path::PathBuf>> {
+    use inquire::{Password, Select, Text};
+    println!();
+    let Ok(key_type) = Select::new("Key type:", vec!["ed25519", "rsa"]).prompt() else {
+        return Ok(None);
+    };
+    let default_name = match key_type {
+        "rsa" => "id_rsa",
+        _ => "id_ed25519",
+    };
+    let Some(home) = dirs::home_dir() else {
+        return Err(std::io::Error::other("no HOME dir"));
+    };
+    let default_path = home.join(".ssh").join(default_name);
+    let Ok(path_str) = Text::new("File path:")
+        .with_default(&default_path.display().to_string())
+        .prompt()
+    else {
+        return Ok(None);
+    };
+    let path = std::path::PathBuf::from(shellexpand::tilde(&path_str).to_string());
+    if path.exists() {
+        eprintln!("{} already exists — aborting.", path.display());
+        return Ok(None);
+    }
+    let default_comment = format!(
+        "{}@{}",
+        std::env::var("USER").unwrap_or_else(|_| "user".to_string()),
+        hostname_best_effort()
+    );
+    let Ok(comment) = Text::new("Comment:")
+        .with_default(&default_comment)
+        .prompt()
+    else {
+        return Ok(None);
+    };
+    let passphrase = Password::new("Passphrase (empty for none):")
+        .with_display_mode(inquire::PasswordDisplayMode::Masked)
+        .without_confirmation()
+        .prompt()
+        .unwrap_or_default();
+    crate::ssh::keys::generate_key(key_type, &path, &comment, &passphrase)?;
+    Ok(Some(path))
+}
+
+/// Interactive "clean known_hosts" flow. Asks the user for a hostname,
+/// shells out to `ssh-keygen -R <host>`, and returns the hostname on
+/// success for the caller's toast.
+fn run_known_hosts_clean_flow() -> std::io::Result<Option<String>> {
+    use inquire::Text;
+    println!();
+    let Ok(host) = Text::new("Hostname to remove from known_hosts:").prompt() else {
+        return Ok(None);
+    };
+    let host = host.trim().to_string();
+    if host.is_empty() {
+        return Ok(None);
+    }
+    crate::ssh::known_hosts::remove_known_host(&host)?;
+    Ok(Some(host))
+}
+
+fn hostname_best_effort() -> String {
+    std::process::Command::new("hostname")
+        .output()
+        .ok()
+        .and_then(|o| String::from_utf8(o.stdout).ok())
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "localhost".to_string())
+}
+
 pub fn run_tui(db: &mut Database) {
     // Source items
     let mut sort_mode: SortMode = SortMode::Name;
@@ -226,6 +307,7 @@ pub fn run_tui(db: &mut Database) {
     let mut settings_state = SettingsFormState::from_config(&app_config);
     let mut theme_state = ThemeTabState::new(&theme::load());
     let mut help_state = HelpTabState::new();
+    let mut identities_state = IdentitiesTabState::new();
 
     // Toast notification
     let mut toast: Option<Toast> = None;
@@ -387,6 +469,9 @@ pub fn run_tui(db: &mut Database) {
                         // ----- Delete confirmation modal -----
                         crate::tui::ssh::deletebox::show_delete_box(&delete_mode, delete_button_index, f, size, &theme);
                     }
+                    ActiveTab::Identities => {
+                        identities_tab::draw_identities_tab(f, vchunks[1], &identities_state, &theme);
+                    }
                     ActiveTab::Settings => {
                         settings_tab::draw_settings_tab(f, vchunks[1], &settings_state, &theme);
                     }
@@ -417,6 +502,7 @@ pub fn run_tui(db: &mut Database) {
                             }
                         }
                     }
+                    ActiveTab::Identities => HelpContext::IdentitiesTab,
                     ActiveTab::Settings => HelpContext::SettingsTab,
                     ActiveTab::Theme => HelpContext::ThemeTab,
                     ActiveTab::Help => HelpContext::HelpTab,
@@ -443,6 +529,7 @@ pub fn run_tui(db: &mut Database) {
                     // --- Global: tab navigation when not editing ---
                     let tab_nav_allowed = match active_tab {
                         ActiveTab::Hosts => !input_mode && matches!(delete_mode, DeleteMode::None),
+                        ActiveTab::Identities => true,
                         ActiveTab::Settings => !settings_state.is_editing_field(),
                         ActiveTab::Theme => !theme_state.is_editing_custom_field(),
                         ActiveTab::Help => true,
@@ -870,6 +957,119 @@ pub fn run_tui(db: &mut Database) {
                         }
                     }
                         } // ActiveTab::Hosts
+
+                        ActiveTab::Identities => {
+                            match handle_identities_event(k.code, &mut identities_state) {
+                                IdentitiesAction::None => {}
+                                IdentitiesAction::Refresh => {
+                                    identities_state.refresh();
+                                    toast = Some(Toast::success("Keys refreshed"));
+                                }
+                                IdentitiesAction::Generate => {
+                                    let _ = disable_raw_mode();
+                                    let _ = execute!(stdout(), LeaveAlternateScreen);
+                                    match run_generate_key_flow() {
+                                        Ok(Some(path)) => {
+                                            identities_state.refresh();
+                                            toast = Some(Toast::success(format!(
+                                                "Generated {}",
+                                                path.display()
+                                            )));
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            toast = Some(Toast::error(format!(
+                                                "Generate failed: {e}"
+                                            )));
+                                        }
+                                    }
+                                    let _ = enable_raw_mode();
+                                    let _ = execute!(stdout(), EnterAlternateScreen);
+                                    let _ = terminal.clear();
+                                }
+                                IdentitiesAction::Push => {
+                                    if let Some(k) = identities_state.selected_key() {
+                                        let pub_path = k.public.clone();
+                                        let _ = disable_raw_mode();
+                                        let _ = execute!(stdout(), LeaveAlternateScreen);
+                                        crate::ssh::add_identity::cmd_add_identity(
+                                            &db.hosts,
+                                            None,
+                                            &[
+                                                "--pub".to_string(),
+                                                pub_path.display().to_string(),
+                                            ],
+                                        );
+                                        let _ = enable_raw_mode();
+                                        let _ = execute!(stdout(), EnterAlternateScreen);
+                                        let _ = terminal.clear();
+                                    } else {
+                                        toast = Some(Toast::error("No key selected"));
+                                    }
+                                }
+                                IdentitiesAction::AgentAdd => {
+                                    if let Some(k) = identities_state.selected_key() {
+                                        let path = k.private.clone();
+                                        let _ = disable_raw_mode();
+                                        let _ = execute!(stdout(), LeaveAlternateScreen);
+                                        let res = crate::ssh::agent::agent_add(&path);
+                                        let _ = enable_raw_mode();
+                                        let _ = execute!(stdout(), EnterAlternateScreen);
+                                        let _ = terminal.clear();
+                                        match res {
+                                            Ok(()) => {
+                                                identities_state.refresh();
+                                                toast = Some(Toast::success("Added to ssh-agent"));
+                                            }
+                                            Err(e) => {
+                                                toast = Some(Toast::error(format!(
+                                                    "ssh-add failed: {e}"
+                                                )));
+                                            }
+                                        }
+                                    }
+                                }
+                                IdentitiesAction::AgentRemove => {
+                                    if let Some(k) = identities_state.selected_key() {
+                                        let path = k.private.clone();
+                                        match crate::ssh::agent::agent_remove(&path) {
+                                            Ok(()) => {
+                                                identities_state.refresh();
+                                                toast = Some(Toast::success(
+                                                    "Removed from ssh-agent",
+                                                ));
+                                            }
+                                            Err(e) => {
+                                                toast = Some(Toast::error(format!(
+                                                    "ssh-add -d failed: {e}"
+                                                )));
+                                            }
+                                        }
+                                    }
+                                }
+                                IdentitiesAction::KnownHostsClean => {
+                                    let _ = disable_raw_mode();
+                                    let _ = execute!(stdout(), LeaveAlternateScreen);
+                                    match run_known_hosts_clean_flow() {
+                                        Ok(Some(host)) => {
+                                            toast = Some(Toast::success(format!(
+                                                "Removed {} from known_hosts",
+                                                host
+                                            )));
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            toast = Some(Toast::error(format!(
+                                                "known_hosts clean failed: {e}"
+                                            )));
+                                        }
+                                    }
+                                    let _ = enable_raw_mode();
+                                    let _ = execute!(stdout(), EnterAlternateScreen);
+                                    let _ = terminal.clear();
+                                }
+                            }
+                        }
 
                         ActiveTab::Settings => {
                             match k.code {

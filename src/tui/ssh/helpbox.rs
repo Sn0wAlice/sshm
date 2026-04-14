@@ -10,6 +10,7 @@ pub enum HelpContext {
     SettingsTab,
     ThemeTab,
     HelpTab,
+    IdentitiesTab,
     Empty,
 }
 
@@ -35,6 +36,9 @@ pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static
         }
         HelpContext::HelpTab => {
             "↑↓ scroll │ PageUp/PageDn fast scroll │ Home top │ ←→ tab │ q quit"
+        }
+        HelpContext::IdentitiesTab => {
+            "↑↓ move │ g generate │ p push │ a agent-add │ x agent-del │ K known-hosts │ r refresh │ ←→ tab │ q quit"
         }
         HelpContext::Empty => {
             "a add host │ q quit │ ←→ tab"

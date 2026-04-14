@@ -3,7 +3,7 @@ use ratatui::widgets::Paragraph;
 use crate::tui::theme::Theme;
 
 pub fn draw_tab_bar(f: &mut Frame, area: Rect, active_index: usize, theme: &Theme) {
-    let titles = ["Hosts", "Settings", "Theme", "Help"];
+    let titles = ["Hosts", "Identities", "Settings", "Theme", "Help"];
     let divider = " │ ";
 
     // Build the tab label portion: " Hosts │ Settings │ Theme "
