@@ -1,22 +1,22 @@
 class Sshm < Formula
   desc "Fast, modern SSH host manager for the terminal"
   homepage "https://github.com/Sn0wAlice/sshm"
-  version "1.1.0"
+  version "1.2.0"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-darwin-arm64.tar.gz"
-      sha256 "1230e059938327b895a355bb948e8215e7cbbf1a651aef36b0a41c6e5bfb3da4"
+      sha256 "8914d72087103de88d7912a0e163e98abb073c2cb4763c79b955c05a25a4d785"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-linux-amd64.tar.gz"
-      sha256 "86f1b16dafdb8f39797667d73df5b3818f5d4d084c635486ca2a92d402192474"
+      sha256 "415734a01ff0e3069b7e8c890bcee76508eff24d7e2e50d8d7c3b00805a146d6"
     elsif Hardware::CPU.arm?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-linux-arm64.tar.gz"
-      sha256 "031e70e27fcbd730c552fffb1cc43a9e0b6a44cffffdf3d4e05d61c64a49b7b4"
+      sha256 "9bd5b041989c6552ff65b994ba15f0037d81ae7ecdb5eaa7b73538d863244146"
     end
   end
 
