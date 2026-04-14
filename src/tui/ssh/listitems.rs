@@ -35,7 +35,7 @@ pub fn get_item_list<'a>(rows: &[Row], host_status: &HashMap<String, HostStatus>
 
                 // Color based on reachability status
                 let name_style = match host_status.get(&h.name) {
-                    Some(HostStatus::Reachable) => {
+                    Some(HostStatus::Reachable { .. }) => {
                         Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
                     }
                     Some(HostStatus::Unreachable) => {
@@ -45,15 +45,15 @@ pub fn get_item_list<'a>(rows: &[Row], host_status: &HashMap<String, HostStatus>
                 };
 
                 let host_style = match host_status.get(&h.name) {
-                    Some(HostStatus::Reachable) => Style::default().fg(theme.success),
+                    Some(HostStatus::Reachable { .. }) => Style::default().fg(theme.success),
                     Some(HostStatus::Unreachable) => Style::default().fg(theme.error),
                     None => Style::default(),
                 };
 
-                let status_icon = match host_status.get(&h.name) {
-                    Some(HostStatus::Reachable) => " ●",
-                    Some(HostStatus::Unreachable) => " ●",
-                    None => "",
+                let status_suffix: String = match host_status.get(&h.name) {
+                    Some(HostStatus::Reachable { latency_ms }) => format!(" ● {}ms", latency_ms),
+                    Some(HostStatus::Unreachable) => " ●".to_string(),
+                    None => String::new(),
                 };
 
                 let mut spans = vec![Span::raw(indent)];
@@ -66,11 +66,11 @@ pub fn get_item_list<'a>(rows: &[Row], host_status: &HashMap<String, HostStatus>
                 spans.push(Span::styled(h.name.clone(), name_style));
                 spans.push(Span::styled(format!("  {}", h.host), host_style));
 
-                if !status_icon.is_empty() {
+                if !status_suffix.is_empty() {
                     spans.push(Span::styled(
-                        status_icon.to_string(),
+                        status_suffix,
                         match host_status.get(&h.name) {
-                            Some(HostStatus::Reachable) => Style::default().fg(theme.success),
+                            Some(HostStatus::Reachable { .. }) => Style::default().fg(theme.success),
                             Some(HostStatus::Unreachable) => Style::default().fg(theme.error),
                             _ => Style::default(),
                         },

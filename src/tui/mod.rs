@@ -4,3 +4,4 @@ pub mod char;
 pub mod theme;
 pub mod ssh;
 pub mod tabs;
+pub mod health;

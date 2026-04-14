@@ -10,10 +10,12 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
         if let Some(row) = rows.get(sel) {
             match row {
                 Row::Host(h) => {
-                    let status_line = match host_status.get(&h.name) {
-                        Some(HostStatus::Reachable) => "Status: ● reachable",
-                        Some(HostStatus::Unreachable) => "Status: ● unreachable",
-                        None => "Status: — not checked",
+                    let status_line: String = match host_status.get(&h.name) {
+                        Some(HostStatus::Reachable { latency_ms }) => {
+                            format!("Status: ● reachable ({} ms)", latency_ms)
+                        }
+                        Some(HostStatus::Unreachable) => "Status: ● unreachable".to_string(),
+                        None => "Status: — not checked".to_string(),
                     };
                     let name_display = if h.favorite {
                         format!("★ {}", h.name)
@@ -37,7 +39,7 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                     );
 
                     let border_color = match host_status.get(&h.name) {
-                        Some(HostStatus::Reachable) => theme.success,
+                        Some(HostStatus::Reachable { .. }) => theme.success,
                         Some(HostStatus::Unreachable) => theme.error,
                         None => theme.accent,
                     };

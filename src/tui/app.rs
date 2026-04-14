@@ -17,8 +17,11 @@ use ratatui::{
 };
 use std::collections::HashMap;
 use std::io::stdout;
-use std::net::TcpStream;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc;
+use std::sync::{Arc, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
 use crate::tui::ssh::toast::Toast;
 use crate::config::io::save_db;
 use crate::config::settings::{load_settings, save_settings, AppConfig};
@@ -50,7 +53,7 @@ pub enum DeleteMode {
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum HostStatus {
-    Reachable,
+    Reachable { latency_ms: u32 },
     Unreachable,
 }
 
@@ -94,6 +97,83 @@ fn save_and_export(db: &Database, app_config: &AppConfig) {
     if !app_config.export_path.is_empty() {
         let _ = crate::config::export::export_ssh_config(db, &app_config.export_path);
     }
+}
+
+/// Shared list of probe targets (name, host, port) used by the background
+/// health worker.
+type HealthTargets = Arc<Mutex<Vec<(String, String, u16)>>>;
+
+/// RAII guard that signals the background health worker to stop as soon as
+/// `run_tui` returns (from any exit path).
+struct WorkerGuard(Arc<AtomicBool>);
+impl Drop for WorkerGuard {
+    fn drop(&mut self) {
+        self.0.store(true, Ordering::Relaxed);
+    }
+}
+
+/// Refresh the shared target list from the current database.
+fn sync_health_targets(targets: &HealthTargets, db: &Database) {
+    if let Ok(mut t) = targets.lock() {
+        t.clear();
+        for h in db.hosts.values() {
+            t.push((h.name.clone(), h.host.clone(), h.port));
+        }
+    }
+}
+
+/// Spawn the detached background worker that periodically probes every
+/// known host and streams results back through `result_tx`. The worker
+/// exits within one tick of `stop` being set to `true`.
+fn spawn_health_worker(
+    targets: HealthTargets,
+    stop: Arc<AtomicBool>,
+    enabled: Arc<AtomicBool>,
+    result_tx: mpsc::Sender<(String, HostStatus)>,
+    interval: Duration,
+    probe_timeout: Duration,
+) {
+    thread::spawn(move || {
+        // Force an immediate first pass by pretending we're due.
+        let mut next_pass = Instant::now();
+        loop {
+            if stop.load(Ordering::Relaxed) {
+                break;
+            }
+            if !enabled.load(Ordering::Relaxed) {
+                // Disabled: sleep and re-check, don't probe anything. When
+                // re-enabled, probe immediately on next tick.
+                next_pass = Instant::now();
+                thread::sleep(Duration::from_millis(250));
+                continue;
+            }
+            if Instant::now() >= next_pass {
+                let snapshot: Vec<(String, String, u16)> = match targets.lock() {
+                    Ok(guard) => guard.clone(),
+                    Err(_) => break,
+                };
+                for (name, host, port) in snapshot {
+                    if stop.load(Ordering::Relaxed) {
+                        return;
+                    }
+                    // Detach each probe so a slow host doesn't hold up
+                    // the rest of the list.
+                    let tx = result_tx.clone();
+                    let probe_stop = Arc::clone(&stop);
+                    thread::spawn(move || {
+                        if probe_stop.load(Ordering::Relaxed) {
+                            return;
+                        }
+                        let status = crate::tui::health::probe_host(&host, port, probe_timeout);
+                        let _ = tx.send((name, status));
+                    });
+                }
+                next_pass = Instant::now() + interval;
+            }
+            // Responsive sleep so shutdown takes effect quickly.
+            thread::sleep(Duration::from_millis(250));
+        }
+    });
 }
 
 pub fn run_tui(db: &mut Database) {
@@ -153,6 +233,24 @@ pub fn run_tui(db: &mut Database) {
     // Host reachability status (name → status)
     let mut host_status: HashMap<String, HostStatus> = HashMap::new();
 
+    // --- Background health worker ---
+    // Shared list of (name, host, port) targets; updated whenever the
+    // host list changes so the worker always probes the current set.
+    let health_targets: HealthTargets = Arc::new(Mutex::new(Vec::new()));
+    sync_health_targets(&health_targets, db);
+    let (health_tx, health_rx) = mpsc::channel::<(String, HostStatus)>();
+    let health_stop = Arc::new(AtomicBool::new(false));
+    let health_enabled = Arc::new(AtomicBool::new(app_config.auto_health_check));
+    let _health_guard = WorkerGuard(Arc::clone(&health_stop));
+    spawn_health_worker(
+        Arc::clone(&health_targets),
+        Arc::clone(&health_stop),
+        Arc::clone(&health_enabled),
+        health_tx,
+        Duration::from_secs(30),
+        Duration::from_millis(1500),
+    );
+
     enable_raw_mode().ok();
     execute!(stdout(), EnterAlternateScreen).ok();
     let backend = CrosstermBackend::new(stdout());
@@ -162,6 +260,27 @@ pub fn run_tui(db: &mut Database) {
         // Expire toast
         if toast.as_ref().is_some_and(|t| t.is_expired()) {
             toast = None;
+        }
+
+        // Sync the worker's enabled flag with the current config and clear
+        // any stale health data when the feature is turned off.
+        let auto_enabled = app_config.auto_health_check;
+        if health_enabled.load(Ordering::Relaxed) != auto_enabled {
+            health_enabled.store(auto_enabled, Ordering::Relaxed);
+            if !auto_enabled {
+                host_status.clear();
+            }
+        }
+        if auto_enabled {
+            // Drain pending health-check results from the background worker.
+            while let Ok((name, status)) = health_rx.try_recv() {
+                host_status.insert(name, status);
+            }
+            // Keep the worker's target list in sync with the current DB.
+            sync_health_targets(&health_targets, db);
+        } else {
+            // Discard any results produced before the user disabled the feature.
+            while health_rx.try_recv().is_ok() {}
         }
         // --- Draw ---
         terminal
@@ -626,39 +745,19 @@ pub fn run_tui(db: &mut Database) {
                                             let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
                                             if let Some(Row::Host(h)) = rows.get(selected) {
                                                 let name = h.name.clone();
-                                                let addr = format!("{}:{}", h.host, h.port);
-                                                // TCP connect with 3-second timeout
-                                                let status = match addr.parse::<std::net::SocketAddr>() {
-                                                    Ok(sock) => {
-                                                        match TcpStream::connect_timeout(&sock, Duration::from_secs(3)) {
-                                                            Ok(_) => HostStatus::Reachable,
-                                                            Err(_) => HostStatus::Unreachable,
-                                                        }
-                                                    }
-                                                    Err(_) => {
-                                                        // hostname — resolve then try
-                                                        use std::net::ToSocketAddrs;
-                                                        match addr.to_socket_addrs() {
-                                                            Ok(mut addrs) => {
-                                                                if let Some(sock) = addrs.next() {
-                                                                    match TcpStream::connect_timeout(&sock, Duration::from_secs(3)) {
-                                                                        Ok(_) => HostStatus::Reachable,
-                                                                        Err(_) => HostStatus::Unreachable,
-                                                                    }
-                                                                } else {
-                                                                    HostStatus::Unreachable
-                                                                }
-                                                            }
-                                                            Err(_) => HostStatus::Unreachable,
-                                                        }
-                                                    }
-                                                };
+                                                let status = crate::tui::health::probe_host(
+                                                    &h.host,
+                                                    h.port,
+                                                    Duration::from_secs(3),
+                                                );
                                                 let msg = match status {
-                                                    HostStatus::Reachable => format!("{} is reachable ✓", name),
+                                                    HostStatus::Reachable { latency_ms } => {
+                                                        format!("{} is reachable ✓ ({} ms)", name, latency_ms)
+                                                    }
                                                     HostStatus::Unreachable => format!("{} is unreachable ✗", name),
                                                 };
                                                 toast = Some(match status {
-                                                    HostStatus::Reachable => Toast::success(msg),
+                                                    HostStatus::Reachable { .. } => Toast::success(msg),
                                                     HostStatus::Unreachable => Toast::error(msg),
                                                 });
                                                 host_status.insert(name, status);
@@ -786,6 +885,7 @@ pub fn run_tui(db: &mut Database) {
                                                     app_config.default_username = settings_state.default_username.trim().to_string();
                                                     app_config.default_identity_file = settings_state.default_identity_file.trim().to_string();
                                                     app_config.export_path = settings_state.export_path.trim().to_string();
+                                                    app_config.auto_health_check = settings_state.auto_health_check;
                                                     save_settings(&app_config);
                                                     settings_state.dirty = false;
                                                     // Auto-export if export_path is set

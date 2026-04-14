@@ -9,9 +9,13 @@ pub struct SettingsFormState {
     pub default_username: String,
     pub default_identity_file: String,
     pub export_path: String,
+    pub auto_health_check: bool,
     pub selected_field: usize,
     pub dirty: bool,
 }
+
+/// Index of the boolean `auto_health_check` field in the form.
+const AUTO_HEALTH_FIELD: usize = 4;
 
 impl SettingsFormState {
     pub fn from_config(config: &AppConfig) -> Self {
@@ -20,12 +24,13 @@ impl SettingsFormState {
             default_username: config.default_username.clone(),
             default_identity_file: config.default_identity_file.clone(),
             export_path: config.export_path.clone(),
+            auto_health_check: config.auto_health_check,
             selected_field: 0,
             dirty: false,
         }
     }
 
-    pub fn fields_count() -> usize { 4 }
+    pub fn fields_count() -> usize { 5 }
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
@@ -63,6 +68,16 @@ impl SettingsFormState {
         }
     }
 
+    pub fn toggle_bool(&mut self) -> bool {
+        if self.selected_field == AUTO_HEALTH_FIELD {
+            self.auto_health_check = !self.auto_health_check;
+            self.dirty = true;
+            true
+        } else {
+            false
+        }
+    }
+
     pub fn is_editing_field(&self) -> bool {
         self.dirty && self.selected_field < Self::fields_count()
     }
@@ -80,8 +95,23 @@ pub fn handle_settings_event(key: KeyCode, state: &mut SettingsFormState) -> Set
         KeyCode::Enter => {
             if state.selected_field == SettingsFormState::fields_count() {
                 SettingsAction::Save
+            } else if state.selected_field == AUTO_HEALTH_FIELD {
+                state.toggle_bool();
+                SettingsAction::None
             } else {
                 state.next_field();
+                SettingsAction::None
+            }
+        }
+        KeyCode::Left | KeyCode::Right => {
+            state.toggle_bool();
+            SettingsAction::None
+        }
+        KeyCode::Char(' ') => {
+            if state.toggle_bool() {
+                SettingsAction::None
+            } else {
+                state.push_char(' ');
                 SettingsAction::None
             }
         }
@@ -101,8 +131,18 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let labels = ["Default Port", "Default Username", "Default Identity File", "Export Path"];
-    let values = [&state.default_port, &state.default_username, &state.default_identity_file, &state.export_path];
+    let labels = [
+        "Default Port",
+        "Default Username",
+        "Default Identity File",
+        "Export Path",
+    ];
+    let values = [
+        &state.default_port,
+        &state.default_username,
+        &state.default_identity_file,
+        &state.export_path,
+    ];
 
     let mut constraints: Vec<Constraint> = Vec::new();
     for _ in 0..SettingsFormState::fields_count() {
@@ -129,6 +169,21 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
         let text = format!("  {}: {}{}", label, value, cursor);
         let p = Paragraph::new(text).style(style);
         f.render_widget(p, chunks[i]);
+    }
+
+    // Boolean field: Auto health check
+    {
+        let is_selected = state.selected_field == AUTO_HEALTH_FIELD;
+        let style = if is_selected {
+            Style::default().fg(theme.accent)
+        } else {
+            Style::default().fg(theme.fg)
+        };
+        let value = if state.auto_health_check { "[x] on" } else { "[ ] off" };
+        let hint = if is_selected { "  (Space/←/→/Enter to toggle)" } else { "" };
+        let text = format!("  Auto Health Check: {}{}", value, hint);
+        let p = Paragraph::new(text).style(style);
+        f.render_widget(p, chunks[AUTO_HEALTH_FIELD]);
     }
 
     // Save button

@@ -12,10 +12,15 @@ pub struct AppConfig {
     pub default_identity_file: String,
     #[serde(default)]
     pub export_path: String,
+    /// Auto-refresh reachability/latency for every host in the background.
+    /// Enabled by default; user can turn it off from the Settings tab.
+    #[serde(default = "default_auto_health_check")]
+    pub auto_health_check: bool,
 }
 
 fn default_port() -> u16 { 22 }
 fn default_username() -> String { "root".to_string() }
+fn default_auto_health_check() -> bool { true }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -24,6 +29,7 @@ impl Default for AppConfig {
             default_username: "root".to_string(),
             default_identity_file: String::new(),
             export_path: String::new(),
+            auto_health_check: true,
         }
     }
 }
