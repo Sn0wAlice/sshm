@@ -27,6 +27,15 @@ pub struct Host {
     /// Peut être None (pas de dossier)
     #[serde(default)]
     pub folder: Option<String>,
+    /// Timestamp RFC3339 UTC de la dernière connexion réussie.
+    #[serde(default)]
+    pub last_connected_at: Option<String>,
+    /// Nombre total de connexions depuis ce gestionnaire.
+    #[serde(default)]
+    pub use_count: u32,
+    /// Marqueur "favori" (affiché en tête de liste via tri dédié).
+    #[serde(default)]
+    pub favorite: bool,
 }
 
 /// Base de données de l'application (hosts + dossiers)

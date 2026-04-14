@@ -22,6 +22,7 @@ regex = "1.11.1"
 fuzzy-matcher = "0.3"
 shellexpand = "3"
 toml = "0.9.10"
+chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 openssl = { version = "0.10", features = ["vendored"], optional = true }
 
 [features]

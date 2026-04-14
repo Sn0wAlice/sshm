@@ -56,11 +56,15 @@ pub fn get_item_list<'a>(rows: &[Row], host_status: &HashMap<String, HostStatus>
                     None => "",
                 };
 
-                let mut spans = vec![
-                    Span::raw(indent),
-                    Span::styled(h.name.clone(), name_style),
-                    Span::styled(format!("  {}", h.host), host_style),
-                ];
+                let mut spans = vec![Span::raw(indent)];
+                if h.favorite {
+                    spans.push(Span::styled(
+                        "★ ".to_string(),
+                        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    ));
+                }
+                spans.push(Span::styled(h.name.clone(), name_style));
+                spans.push(Span::styled(format!("  {}", h.host), host_style));
 
                 if !status_icon.is_empty() {
                     spans.push(Span::styled(

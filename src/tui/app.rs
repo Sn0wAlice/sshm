@@ -1,4 +1,5 @@
 use crate::filter::apply_filter;
+use crate::history::{record_connection, sort_items, SortMode};
 use crate::models::{Database, Host};
 use crate::util::clear_console;
 use crossterm::{
@@ -97,8 +98,9 @@ fn save_and_export(db: &Database, app_config: &AppConfig) {
 
 pub fn run_tui(db: &mut Database) {
     // Source items
+    let mut sort_mode: SortMode = SortMode::Name;
     let mut items: Vec<&Host> = db.hosts.values().collect();
-    items.sort_by(|a, b| a.name.cmp(&b.name));
+    sort_items(&mut items, sort_mode);
 
     // Filter state
     let mut filter = String::new();
@@ -369,7 +371,7 @@ pub fn run_tui(db: &mut Database) {
                                             db.hosts.remove(name);
                                             save_and_export(db, &app_config);
                                             items = db.hosts.values().collect();
-                                            items.sort_by(|a, b| a.name.cmp(&b.name));
+                                            sort_items(&mut items, sort_mode);
                                             filtered = apply_filter(&filter, &items);
                                             selected = 0;
                                             list_state.select(if filtered.is_empty() { None } else { Some(0) });
@@ -394,7 +396,7 @@ pub fn run_tui(db: &mut Database) {
                                             }
                                             save_and_export(db, &app_config);
                                             items = db.hosts.values().collect();
-                                            items.sort_by(|a, b| a.name.cmp(&b.name));
+                                            sort_items(&mut items, sort_mode);
                                             filtered = apply_filter(&filter, &items);
                                             selected = 0;
                                             list_state.select(if filtered.is_empty() { None } else { Some(0) });
@@ -437,7 +439,7 @@ pub fn run_tui(db: &mut Database) {
                                         }
                                         save_and_export(db, &app_config);
                                         items = db.hosts.values().collect();
-                                            items.sort_by(|a, b| a.name.cmp(&b.name));
+                                            sort_items(&mut items, sort_mode);
                                             filtered = apply_filter(&filter, &items);
                                             selected = 0;
                                             list_state.select(if filtered.is_empty() { None } else { Some(0) });
@@ -503,22 +505,35 @@ pub fn run_tui(db: &mut Database) {
                                 if input_mode {
                                     input_mode = false;
                                 } else {
-                                    let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
-                                    if let Some(row) = rows.get(selected) {
-                                        match row {
-                                            Row::Folder { name, collapsed: is_c } => {
-                                                collapsed.insert(name.clone(), !is_c);
-                                            }
-                                            Row::Host(h) => {
-                                                let _ = disable_raw_mode();
-                                                let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                crate::ssh::client::launch_ssh(h, None);
-                                                let _ = enable_raw_mode();
-                                                let _ = execute!(stdout(), EnterAlternateScreen);
-                                                clear_console();
-                                                return;
+                                    let mut launched_host: Option<String> = None;
+                                    {
+                                        let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
+                                        if let Some(row) = rows.get(selected) {
+                                            match row {
+                                                Row::Folder { name, collapsed: is_c } => {
+                                                    collapsed.insert(name.clone(), !is_c);
+                                                }
+                                                Row::Host(h) => {
+                                                    let _ = disable_raw_mode();
+                                                    let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                    crate::ssh::client::launch_ssh(h, None);
+                                                    let _ = enable_raw_mode();
+                                                    let _ = execute!(stdout(), EnterAlternateScreen);
+                                                    clear_console();
+                                                    launched_host = Some(h.name.clone());
+                                                }
                                             }
                                         }
+                                    }
+                                    if let Some(name) = launched_host {
+                                        // Drop borrows into db before mutating.
+                                        filtered.clear();
+                                        items.clear();
+                                        if let Some(h) = db.hosts.get_mut(&name) {
+                                            record_connection(h);
+                                        }
+                                        save_db(db);
+                                        return;
                                     }
                                 }
                             }
@@ -542,7 +557,7 @@ pub fn run_tui(db: &mut Database) {
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
                                                 items = db.hosts.values().collect();
-                                                items.sort_by(|a, b| a.name.cmp(&b.name));
+                                                sort_items(&mut items, sort_mode);
                                                 filtered = apply_filter(&filter, &items);
                                                 selected = 0;
                                                 list_state.select(if filtered.is_empty() { None } else { Some(0) });
@@ -568,7 +583,7 @@ pub fn run_tui(db: &mut Database) {
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
                                                 items = db.hosts.values().collect();
-                                                items.sort_by(|a, b| a.name.cmp(&b.name));
+                                                sort_items(&mut items, sort_mode);
                                                 filtered = apply_filter(&filter, &items);
                                                 selected = 0;
                                                 list_state.select(if filtered.is_empty() { None } else { Some(0) });
@@ -676,6 +691,44 @@ pub fn run_tui(db: &mut Database) {
                                                 let _ = terminal.clear();
                                             }
                                         }
+                                        's' => {
+                                            sort_mode = sort_mode.next();
+                                            sort_items(&mut items, sort_mode);
+                                            filtered = apply_filter(&filter, &items);
+                                            selected = 0;
+                                            list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                            toast = Some(Toast::success(format!(
+                                                "Sort: {}",
+                                                sort_mode.label()
+                                            )));
+                                        }
+                                        'f' => {
+                                            let target: Option<String> = {
+                                                let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
+                                                rows.get(selected).and_then(|r| match r {
+                                                    Row::Host(h) => Some(h.name.clone()),
+                                                    _ => None,
+                                                })
+                                            };
+                                            if let Some(name) = target {
+                                                filtered.clear();
+                                                items.clear();
+                                                let mut new_state = false;
+                                                if let Some(h) = db.hosts.get_mut(&name) {
+                                                    h.favorite = !h.favorite;
+                                                    new_state = h.favorite;
+                                                }
+                                                save_db(db);
+                                                items = db.hosts.values().collect();
+                                                sort_items(&mut items, sort_mode);
+                                                filtered = apply_filter(&filter, &items);
+                                                toast = Some(Toast::success(format!(
+                                                    "{} {}",
+                                                    name,
+                                                    if new_state { "★ favorited" } else { "unfavorited" }
+                                                )));
+                                            }
+                                        }
                                         'a' => {
                                             // Determine folder context from selected row
                                             let folder_ctx = {
@@ -693,7 +746,7 @@ pub fn run_tui(db: &mut Database) {
                                             let _ = enable_raw_mode();
                                             let _ = execute!(stdout(), EnterAlternateScreen);
                                             items = db.hosts.values().collect();
-                                            items.sort_by(|a, b| a.name.cmp(&b.name));
+                                            sort_items(&mut items, sort_mode);
                                             filtered = apply_filter(&filter, &items);
                                             selected = 0;
                                             list_state.select(if filtered.is_empty() { None } else { Some(0) });
@@ -1183,6 +1236,12 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
 
     if state.is_edit {
         if let Some(orig_name) = &state.original_name {
+            // Preserve history metadata across an edit (the edit form doesn't expose these).
+            let (last_connected_at, use_count, favorite) = db
+                .hosts
+                .get(orig_name)
+                .map(|h| (h.last_connected_at.clone(), h.use_count, h.favorite))
+                .unwrap_or((None, 0, false));
             db.hosts.remove(orig_name);
             let new_host = Host {
                 name: name.to_string(),
@@ -1193,6 +1252,9 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
                 proxy_jump,
                 folder,
                 tags,
+                last_connected_at,
+                use_count,
+                favorite,
             };
             db.hosts.insert(new_host.name.clone(), new_host);
         }
@@ -1206,6 +1268,9 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
             proxy_jump,
             folder,
             tags,
+            last_connected_at: None,
+            use_count: 0,
+            favorite: false,
         };
         db.hosts.insert(name.to_string(), host_obj);
     }

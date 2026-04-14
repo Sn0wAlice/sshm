@@ -15,9 +15,15 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         Some(HostStatus::Unreachable) => "Status: ● unreachable",
                         None => "Status: — not checked",
                     };
+                    let name_display = if h.favorite {
+                        format!("★ {}", h.name)
+                    } else {
+                        h.name.clone()
+                    };
+                    let last_used = crate::history::format_last_used(h.last_connected_at.as_deref());
                     let detail = format!(
-                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n{}",
-                        h.name,
+                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\nLast used: {}\nUses: {}\n{}",
+                        name_display,
                         h.username,
                         h.host,
                         h.port,
@@ -25,6 +31,8 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         h.identity_file.as_deref().unwrap_or_default(),
                         h.proxy_jump.as_deref().unwrap_or_default(),
                         h.folder.as_deref().unwrap_or("-"),
+                        last_used,
+                        h.use_count,
                         status_line,
                     );
 

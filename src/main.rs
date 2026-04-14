@@ -22,7 +22,13 @@ fn main() {
         Some("connect") | Some("c") => {
             let name = args.get(2).cloned();
             let extras: Vec<String> = if name.is_some() { args[3..].to_vec() } else { args[2..].to_vec() };
-            commands::connect::connect_host(&db.hosts, name, &extras);
+            let launched = commands::connect::connect_host(&db.hosts, name, &extras);
+            if let Some(connected) = launched {
+                if let Some(host) = db.hosts.get_mut(&connected) {
+                    sshm::history::record_connection(host);
+                    save_db(&db);
+                }
+            }
         }
         Some("create") => commands::crud::create(&mut db, None),
         Some("delete") => commands::crud::delete(&mut db),

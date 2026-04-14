@@ -51,7 +51,19 @@ pub fn create_host(hosts: &mut HashMap<String, Host>, current_folder: Option<Str
     };
 
     let folder = current_folder.clone();
-    hosts.insert(name.clone(), Host { name: name.clone(), host, port, username, identity_file, proxy_jump, folder, tags });
+    hosts.insert(name.clone(), Host {
+        name: name.clone(),
+        host,
+        port,
+        username,
+        identity_file,
+        proxy_jump,
+        folder,
+        tags,
+        last_connected_at: None,
+        use_count: 0,
+        favorite: false,
+    });
 }
 
 /// Delete either a Host or a Folder (when deleting a folder, move its hosts to root).

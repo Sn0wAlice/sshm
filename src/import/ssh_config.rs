@@ -46,6 +46,9 @@ pub fn import_ssh_config(hosts: &mut HashMap<String, Host>) {
             proxy_jump,
             tags: Some(vec!["ssh_config".to_string()]),
             folder: None,
+            last_connected_at: None,
+            use_count: 0,
+            favorite: false,
         });
     }
 }
