@@ -1,10 +1,15 @@
+use std::collections::HashMap;
 use std::io::stdout;
 use std::process::Command;
 use crossterm::{terminal::disable_raw_mode, cursor::Show, execute};
 use crate::models::Host;
+use crate::ssh::proxy::resolve_proxy_jump;
 
 /// Construit et exécute la commande ssh en combinant Host + overrides CLI.
-pub fn launch_ssh(h: &Host, overrides: Option<&[String]>) {
+///
+/// `all_hosts` est utilisé pour résoudre une chaîne `proxy_jump` multi-hop
+/// dont les entrées peuvent être des noms d'hôtes sauvegardés.
+pub fn launch_ssh(h: &Host, all_hosts: &HashMap<String, Host>, overrides: Option<&[String]>) {
 
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), Show);
@@ -15,10 +20,14 @@ pub fn launch_ssh(h: &Host, overrides: Option<&[String]>) {
         .arg(h.port.to_string());
 
     if let Some(id) = &h.identity_file {
-        cmd.arg("-i").arg(id);
+        if !id.is_empty() {
+            cmd.arg("-i").arg(id);
+        }
     }
     if let Some(j) = &h.proxy_jump {
-        cmd.arg("-J").arg(j);
+        if let Some(resolved) = resolve_proxy_jump(j, all_hosts) {
+            cmd.arg("-J").arg(resolved);
+        }
     }
     if let Some(args) = overrides {
         cmd.args(args);

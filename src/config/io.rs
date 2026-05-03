@@ -66,6 +66,9 @@ pub fn load_db() -> Database {
                         let last_connected_at = e.get("last_connected_at").and_then(|x| x.as_str()).map(|s| s.to_string());
                         let use_count = e.get("use_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
                         let favorite = e.get("favorite").and_then(|x| x.as_bool()).unwrap_or(false);
+                        let tunnels = e.get("tunnels")
+                            .and_then(|x| serde_json::from_value(x.clone()).ok())
+                            .unwrap_or_default();
 
                         if !host.is_empty() {
                             migrated.insert(alias.clone(), Host {
@@ -80,6 +83,7 @@ pub fn load_db() -> Database {
                                 last_connected_at,
                                 use_count,
                                 favorite,
+                                tunnels,
                             });
                         }
                     }

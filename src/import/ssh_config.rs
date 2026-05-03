@@ -49,6 +49,7 @@ pub fn import_ssh_config(hosts: &mut HashMap<String, Host>) {
             last_connected_at: None,
             use_count: 0,
             favorite: false,
+            tunnels: vec![],
         });
     }
 }

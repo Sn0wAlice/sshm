@@ -24,7 +24,7 @@ pub fn connect_host(
     };
 
     if let Some(h) = hosts.get(&name) {
-        launch_ssh(h, Some(extra));
+        launch_ssh(h, hosts, Some(extra));
         return Some(h.name.clone());
     }
     let matching: Vec<&Host> = hosts.values().filter(|h| h.name.contains(&name)).collect();
@@ -35,7 +35,7 @@ pub fn connect_host(
         }
         1 => {
             let h = matching[0];
-            launch_ssh(h, Some(extra));
+            launch_ssh(h, hosts, Some(extra));
             Some(h.name.clone())
         }
         _ => {

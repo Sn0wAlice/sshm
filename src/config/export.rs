@@ -1,6 +1,6 @@
 use std::fs;
 use std::path::Path;
-use crate::models::Database;
+use crate::models::{Database, TunnelKind};
 
 /// Export the host database as an SSH config file.
 pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<(), String> {
@@ -39,6 +39,26 @@ pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<(), String> {
         if let Some(ref pj) = host.proxy_jump {
             if !pj.is_empty() {
                 content.push_str(&format!("    ProxyJump {}\n", pj));
+            }
+        }
+        for t in &host.tunnels {
+            let target_host = if t.remote_host.is_empty() { "localhost" } else { t.remote_host.as_str() };
+            match t.kind {
+                TunnelKind::Local => {
+                    content.push_str(&format!(
+                        "    LocalForward {} {}:{}\n",
+                        t.local_port, target_host, t.remote_port
+                    ));
+                }
+                TunnelKind::Remote => {
+                    content.push_str(&format!(
+                        "    RemoteForward {} {}:{}\n",
+                        t.local_port, target_host, t.remote_port
+                    ));
+                }
+                TunnelKind::Dynamic => {
+                    content.push_str(&format!("    DynamicForward {}\n", t.local_port));
+                }
             }
         }
     }

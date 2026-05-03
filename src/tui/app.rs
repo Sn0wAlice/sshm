@@ -720,13 +720,14 @@ pub fn run_tui(db: &mut Database) {
                                                     collapsed.insert(name.clone(), !is_c);
                                                 }
                                                 Row::Host(h) => {
+                                                    let host_clone = (*h).clone();
                                                     let _ = disable_raw_mode();
                                                     let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                    crate::ssh::client::launch_ssh(h, None);
+                                                    crate::ssh::client::launch_ssh(&host_clone, &db.hosts, None);
                                                     let _ = enable_raw_mode();
                                                     let _ = execute!(stdout(), EnterAlternateScreen);
                                                     clear_console();
-                                                    launched_host = Some(h.name.clone());
+                                                    launched_host = Some(host_clone.name.clone());
                                                 }
                                             }
                                         }
@@ -852,13 +853,29 @@ pub fn run_tui(db: &mut Database) {
                                         }
                                         'p' => {
                                             let rows = build_rows(db, &items, &filtered, &filter, &collapsed);
-                                            if let Some(Row::Host(h)) = rows.get(selected) {
+                                            let host_clone = if let Some(Row::Host(h)) = rows.get(selected) {
+                                                Some((*h).clone())
+                                            } else { None };
+                                            drop(rows);
+                                            if let Some(host_clone) = host_clone {
                                                 let _ = disable_raw_mode();
                                                 let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                crate::tui::ssh::portforward::run_port_forward(h);
+                                                let updated = crate::tui::ssh::portforward::run_port_forward(
+                                                    &host_clone,
+                                                    &db.hosts,
+                                                );
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
                                                 let _ = terminal.clear();
+                                                if let Some(new_tunnels) = updated {
+                                                    if let Some(host) = db.hosts.get_mut(&host_clone.name) {
+                                                        host.tunnels = new_tunnels;
+                                                    }
+                                                    save_db(db);
+                                                    items = db.hosts.values().collect();
+                                                    sort_items(&mut items, sort_mode);
+                                                    filtered = apply_filter(&filter, &items);
+                                                }
                                             }
                                         }
                                         'i' => {
@@ -1453,7 +1470,12 @@ fn draw_host_form(
 
     f.render_widget(actions, chunks[8]);
 
-    let help = Paragraph::new(Line::from(vec![Span::raw("Tab/Shift+Tab or ↑/↓ to move • Type to edit • Enter to save when [ Save ] is selected • Esc to cancel")]))
+    let pj_hint = if state.selected_field == 5 {
+        "ProxyJump: comma-separated multi-hop, e.g. \"bastion1,bastion2\". Each entry can be a saved host name (auto-resolved) or user@host[:port]."
+    } else {
+        "Tab/Shift+Tab or ↑/↓ to move • Type to edit • Enter to save when [ Save ] is selected • Esc to cancel"
+    };
+    let help = Paragraph::new(Line::from(vec![Span::raw(pj_hint)]))
         .style(Style::default().fg(theme.muted));
     let help_area = Rect {
         x: inner.x,
@@ -1537,11 +1559,11 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
     if state.is_edit {
         if let Some(orig_name) = &state.original_name {
             // Preserve history metadata across an edit (the edit form doesn't expose these).
-            let (last_connected_at, use_count, favorite) = db
+            let (last_connected_at, use_count, favorite, tunnels) = db
                 .hosts
                 .get(orig_name)
-                .map(|h| (h.last_connected_at.clone(), h.use_count, h.favorite))
-                .unwrap_or((None, 0, false));
+                .map(|h| (h.last_connected_at.clone(), h.use_count, h.favorite, h.tunnels.clone()))
+                .unwrap_or((None, 0, false, vec![]));
             db.hosts.remove(orig_name);
             let new_host = Host {
                 name: name.to_string(),
@@ -1555,6 +1577,7 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
                 last_connected_at,
                 use_count,
                 favorite,
+                tunnels,
             };
             db.hosts.insert(new_host.name.clone(), new_host);
         }
@@ -1571,6 +1594,7 @@ fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), Strin
             last_connected_at: None,
             use_count: 0,
             favorite: false,
+            tunnels: vec![],
         };
         db.hosts.insert(name.to_string(), host_obj);
     }

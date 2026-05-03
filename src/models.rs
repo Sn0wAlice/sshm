@@ -1,7 +1,57 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Représente une entrée d’hôte SSH (schéma v2).
+/// Type de tunnel SSH.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum TunnelKind {
+    /// `-L` Local forward: localhost:local_port -> remote:remote_port (via SSH host)
+    Local,
+    /// `-R` Remote forward: remote:remote_port -> localhost:local_port
+    Remote,
+    /// `-D` Dynamic SOCKS proxy on localhost:local_port
+    Dynamic,
+}
+
+impl TunnelKind {
+    pub fn label(&self) -> &'static str {
+        match self {
+            TunnelKind::Local => "Local (-L)",
+            TunnelKind::Remote => "Remote (-R)",
+            TunnelKind::Dynamic => "Dynamic SOCKS (-D)",
+        }
+    }
+    pub fn short(&self) -> &'static str {
+        match self {
+            TunnelKind::Local => "L",
+            TunnelKind::Remote => "R",
+            TunnelKind::Dynamic => "D",
+        }
+    }
+}
+
+impl Default for TunnelKind {
+    fn default() -> Self { TunnelKind::Local }
+}
+
+/// Définition d'un tunnel SSH sauvegardable.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct Tunnel {
+    /// Libellé court (ex : "Postgres prod").
+    #[serde(default)]
+    pub label: String,
+    #[serde(default)]
+    pub kind: TunnelKind,
+    /// Port côté local (Local/Dynamic) ou côté remote-bind (Remote).
+    pub local_port: u16,
+    /// Port distant cible (Local/Remote). Ignoré pour Dynamic.
+    #[serde(default)]
+    pub remote_port: u16,
+    /// Hôte distant cible (Local/Remote). Vide => `localhost` côté remote.
+    #[serde(default)]
+    pub remote_host: String,
+}
+
+/// Représente une entrée d'hôte SSH (schéma v2).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Host {
     /// Alias (clé logique)
@@ -11,13 +61,15 @@ pub struct Host {
     /// Port SSH (par défaut 22)
     #[serde(default = "default_port")]
     pub port: u16,
-    /// Nom d’utilisateur SSH
+    /// Nom d'utilisateur SSH
     #[serde(default = "default_username")]
     pub username: String,
     /// Chemin vers la clé privée (ex: ~/.ssh/id_ed25519)
     #[serde(default)]
     pub identity_file: Option<String>,
-    /// ProxyJump éventuel (ex: "bastion.example.com:22")
+    /// ProxyJump éventuel. Peut être une chaîne multi-hop séparée par des virgules
+    /// (ex: "bastion1,bastion2"). Chaque entrée peut être un nom d'hôte sauvegardé
+    /// dans sshm — il sera alors résolu en `user@host:port` au lancement.
     #[serde(default)]
     pub proxy_jump: Option<String>,
     /// Tags pour filtrage/organisation
@@ -36,6 +88,9 @@ pub struct Host {
     /// Marqueur "favori" (affiché en tête de liste via tri dédié).
     #[serde(default)]
     pub favorite: bool,
+    /// Tunnels persistants associés à cet hôte.
+    #[serde(default)]
+    pub tunnels: Vec<Tunnel>,
 }
 
 /// Base de données de l'application (hosts + dossiers)
@@ -51,7 +106,7 @@ pub struct Database {
 fn default_port() -> u16 { 22 }
 fn default_username() -> String { "root".to_string() }
 
-/// Convertit `Option<Vec<String>>` en string d’affichage.
+/// Convertit `Option<Vec<String>>` en string d'affichage.
 pub fn tags_to_string(tags: &Option<Vec<String>>) -> String {
     tags.as_ref()
         .filter(|v| !v.is_empty())
