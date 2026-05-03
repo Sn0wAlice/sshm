@@ -11,6 +11,7 @@ pub enum HelpContext {
     ThemeTab,
     HelpTab,
     IdentitiesTab,
+    KlusterTab,
     Empty,
 }
 
@@ -39,6 +40,9 @@ pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static
         }
         HelpContext::IdentitiesTab => {
             "↑↓ move │ g generate │ p push │ a agent-add │ x agent-del │ K known-hosts │ r refresh │ ←→ tab │ q quit"
+        }
+        HelpContext::KlusterTab => {
+            "↑↓ move │ Enter shell │ l logs(-f) │ r refresh │ n add │ e edit │ d delete │ ←→ tab │ q quit"
         }
         HelpContext::Empty => {
             "a add host │ q quit │ ←→ tab"

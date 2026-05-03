@@ -9,6 +9,8 @@ pub mod filter;
 pub mod tui;
 pub mod commands;
 pub mod history;
+pub mod i18n;
+pub mod kluster;
 
 // Convenience re-exports
 pub use commands::{list, connect, crud, tags};

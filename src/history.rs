@@ -23,6 +23,9 @@ pub enum SortMode {
     Mru,
     MostUsed,
     Favorites,
+    /// Frecency = recency × frequency (Mozilla-style). Reorders so that
+    /// hosts you often *and* recently use bubble to the top.
+    Frecency,
 }
 
 impl SortMode {
@@ -31,7 +34,8 @@ impl SortMode {
             SortMode::Name => SortMode::Mru,
             SortMode::Mru => SortMode::MostUsed,
             SortMode::MostUsed => SortMode::Favorites,
-            SortMode::Favorites => SortMode::Name,
+            SortMode::Favorites => SortMode::Frecency,
+            SortMode::Frecency => SortMode::Name,
         }
     }
 
@@ -41,8 +45,26 @@ impl SortMode {
             SortMode::Mru => "most recently used",
             SortMode::MostUsed => "most used",
             SortMode::Favorites => "favorites first",
+            SortMode::Frecency => "frecency (recent × frequent)",
         }
     }
+}
+
+/// Compute a frecency score for a host: a higher value means "more interesting".
+/// Inputs: connection count, hours since last use (None ⇒ never).
+/// Heuristic: score = use_count / (1 + log10(hours_since)). Hosts never used
+/// score 0 (so they sink to the bottom).
+pub fn frecency_score(use_count: u32, last_connected_at: Option<&str>) -> f64 {
+    if use_count == 0 { return 0.0; }
+    let Some(stamp) = last_connected_at else { return 0.0; };
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(stamp) else { return 0.0; };
+    let hours = chrono::Utc::now()
+        .signed_duration_since(parsed.with_timezone(&chrono::Utc))
+        .num_minutes()
+        .max(1) as f64
+        / 60.0;
+    let decay = 1.0 + (hours.max(1.0)).log10();
+    (use_count as f64) / decay
 }
 
 /// Re-sort `items` in place according to the chosen [`SortMode`].
@@ -80,6 +102,43 @@ pub fn sort_items(items: &mut [&Host], mode: SortMode) {
                     .then_with(|| a.name.cmp(&b.name))
             });
         }
+        SortMode::Frecency => {
+            items.sort_by(|a, b| {
+                let sa = frecency_score(a.use_count, a.last_connected_at.as_deref());
+                let sb = frecency_score(b.use_count, b.last_connected_at.as_deref());
+                sb.partial_cmp(&sa)
+                    .unwrap_or(std::cmp::Ordering::Equal)
+                    .then_with(|| a.name.cmp(&b.name))
+            });
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frecency_score;
+
+    #[test]
+    fn never_used_scores_zero() {
+        assert_eq!(frecency_score(0, None), 0.0);
+        assert_eq!(frecency_score(5, None), 0.0);
+    }
+
+    #[test]
+    fn frequency_dominates_when_recency_equal() {
+        let now = chrono::Utc::now().to_rfc3339();
+        let a = frecency_score(10, Some(&now));
+        let b = frecency_score(2, Some(&now));
+        assert!(a > b);
+    }
+
+    #[test]
+    fn recency_dominates_when_frequency_equal() {
+        let now = chrono::Utc::now().to_rfc3339();
+        let week_ago = (chrono::Utc::now() - chrono::Duration::days(7)).to_rfc3339();
+        let recent = frecency_score(5, Some(&now));
+        let old = frecency_score(5, Some(&week_ago));
+        assert!(recent > old);
     }
 }
 

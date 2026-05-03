@@ -1,0 +1,43 @@
+# Bundle français.
+
+[toast]
+settings_saved = "Paramètres enregistrés !"
+settings_saved_exported = "Paramètres enregistrés et exportés !"
+export_failed = "Échec de l'export : {error}"
+invalid_port = "Numéro de port invalide"
+nothing_selected = "Aucune sélection (Espace pour sélectionner)"
+selection_cleared = "{n} sélection(s) effacée(s)"
+deleted_n_hosts = "{n} hôte(s) supprimé(s)"
+tagged_n_hosts = "{n} hôte(s) étiqueté(s) avec {tags}"
+sort_changed = "Tri : {label}"
+view_changed = "Vue : groupé par {label}"
+keys_refreshed = "Clés rechargées"
+generate_failed = "Échec de la génération : {error}"
+generated_key = "Clé générée : {path}"
+agent_added = "Ajouté à ssh-agent"
+agent_add_failed = "ssh-add a échoué : {error}"
+agent_removed = "Retiré de ssh-agent"
+agent_remove_failed = "ssh-add -d a échoué : {error}"
+no_key_selected = "Aucune clé sélectionnée"
+known_hosts_removed = "{host} retiré de known_hosts"
+known_hosts_clean_failed = "Nettoyage known_hosts échoué : {error}"
+quick_connect_oob = "Pas d'hôte n°{n} dans la liste visible"
+
+[kluster]
+docker_unavailable = "Daemon Docker non démarré"
+docker_not_installed = "docker introuvable dans PATH"
+kubectl_not_installed = "kubectl introuvable dans PATH"
+shell_failed = "Shell sorti avec code {code} — /bin/sh probablement absent"
+no_target = "Rien à connecter (sélectionne un container ou pod)"
+cluster_added = "Cluster {name} ajouté"
+cluster_imported_n = "{n} cluster(s) importé(s) depuis kubeconfig"
+logs_failed = "Commande logs échouée : {error}"
+
+[label]
+sort_name = "nom"
+sort_mru = "utilisés récemment"
+sort_mostused = "plus utilisés"
+sort_favorites = "favoris d'abord"
+sort_frecency = "frecency (récent × fréquent)"
+view_folders = "dossiers"
+view_tags = "tags"

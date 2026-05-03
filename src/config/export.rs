@@ -1,11 +1,12 @@
 use std::fs;
 use std::path::Path;
+use anyhow::{anyhow, Context, Result};
 use crate::models::{Database, TunnelKind};
 
 /// Export the host database as an SSH config file.
-pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<(), String> {
+pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<()> {
     if raw_path.trim().is_empty() {
-        return Err("Export path is empty".into());
+        return Err(anyhow!("Export path is empty"));
     }
 
     let expanded = shellexpand::tilde(raw_path);
@@ -13,7 +14,7 @@ pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<(), String> {
 
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)
-            .map_err(|e| format!("Failed to create directories: {e}"))?;
+            .with_context(|| format!("creating export parent dir {}", parent.display()))?;
     }
 
     let mut content = String::new();
@@ -64,7 +65,7 @@ pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<(), String> {
     }
 
     fs::write(path, &content)
-        .map_err(|e| format!("Failed to write export file: {e}"))?;
+        .with_context(|| format!("writing export file {}", path.display()))?;
 
     Ok(())
 }

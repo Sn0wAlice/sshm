@@ -16,6 +16,11 @@ pub fn config_path() -> PathBuf {
 
     dir.join("host.json")
 }
+/// Path to the Kluster (Docker + k8s) database, sibling of `host.json`.
+pub fn kluster_path() -> PathBuf {
+    config_path().with_file_name("kluster.json")
+}
+
 pub fn ensure_config_file(path: &PathBuf) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;

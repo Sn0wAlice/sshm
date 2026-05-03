@@ -58,6 +58,7 @@ mod tests {
             use_count: 0,
             favorite: false,
             tunnels: vec![],
+            forward_agent: false,
         }
     }
 

@@ -1,0 +1,43 @@
+# English bundle — source of truth for all translation keys.
+
+[toast]
+settings_saved = "Settings saved!"
+settings_saved_exported = "Settings saved & exported!"
+export_failed = "Export failed: {error}"
+invalid_port = "Invalid port number"
+nothing_selected = "Nothing selected (Space to select hosts)"
+selection_cleared = "Cleared {n} selection(s)"
+deleted_n_hosts = "Deleted {n} host(s)"
+tagged_n_hosts = "Tagged {n} host(s) with {tags}"
+sort_changed = "Sort: {label}"
+view_changed = "View: group by {label}"
+keys_refreshed = "Keys refreshed"
+generate_failed = "Generate failed: {error}"
+generated_key = "Generated {path}"
+agent_added = "Added to ssh-agent"
+agent_add_failed = "ssh-add failed: {error}"
+agent_removed = "Removed from ssh-agent"
+agent_remove_failed = "ssh-add -d failed: {error}"
+no_key_selected = "No key selected"
+known_hosts_removed = "Removed {host} from known_hosts"
+known_hosts_clean_failed = "known_hosts clean failed: {error}"
+quick_connect_oob = "No host #{n} in the visible list"
+
+[kluster]
+docker_unavailable = "Docker daemon not running"
+docker_not_installed = "docker not on PATH"
+kubectl_not_installed = "kubectl not on PATH"
+shell_failed = "Shell exited {code} — container may not have /bin/sh"
+no_target = "Nothing to connect to (select a container or pod)"
+cluster_added = "Cluster {name} added"
+cluster_imported_n = "Imported {n} cluster(s) from kubeconfig"
+logs_failed = "Logs command failed: {error}"
+
+[label]
+sort_name = "name"
+sort_mru = "most recently used"
+sort_mostused = "most used"
+sort_favorites = "favorites first"
+sort_frecency = "frecency (recent × frequent)"
+view_folders = "folders"
+view_tags = "tags"

@@ -29,6 +29,9 @@ pub fn launch_ssh(h: &Host, all_hosts: &HashMap<String, Host>, overrides: Option
             cmd.arg("-J").arg(resolved);
         }
     }
+    if h.forward_agent {
+        cmd.arg("-A");
+    }
     if let Some(args) = overrides {
         cmd.args(args);
     }

@@ -10,9 +10,13 @@ pub struct HostFormState {
     pub proxy_jump: String,
     pub tags: String,
     pub folder: String,
+    pub forward_agent: bool,
     pub selected_field: usize,
     pub is_edit: bool,
     pub original_name: Option<String>,
+    /// Last validation error from `apply_host_form`. Rendered under the Save
+    /// button until the user edits any field or presses Esc.
+    pub error: Option<String>,
 }
 
 impl HostFormState {
@@ -26,9 +30,11 @@ impl HostFormState {
             proxy_jump: String::new(),
             tags: String::new(),
             folder: current_folder.unwrap_or_default(),
+            forward_agent: false,
             selected_field: 0,
             is_edit: false,
             original_name: None,
+            error: None,
         }
     }
 
@@ -43,9 +49,11 @@ impl HostFormState {
                 proxy_jump: h.proxy_jump.clone().unwrap_or_default(),
                 tags: tags_to_string(&h.tags),
                 folder: h.folder.clone().unwrap_or_default(),
+                forward_agent: h.forward_agent,
                 selected_field: 0,
                 is_edit: true,
                 original_name: Some(h.name.clone()),
+                error: None,
             }
         } else {
             HostFormState::new_create(None, &AppConfig::default())
@@ -53,7 +61,7 @@ impl HostFormState {
     }
 
     pub fn fields_count() -> usize {
-        8 // name, host, port, username, identity_file, proxy_jump, tags, folder
+        9 // name, host, port, username, identity_file, proxy_jump, tags, folder, forward_agent
     }
 
     pub fn next_field(&mut self) {
@@ -83,12 +91,19 @@ impl HostFormState {
     }
 
     pub fn push_char(&mut self, c: char) {
+        self.error = None;
+        // Forward-agent toggle: space flips it.
+        if self.selected_field == 8 {
+            if c == ' ' { self.forward_agent = !self.forward_agent; }
+            return;
+        }
         if let Some(field) = self.active_value_mut() {
             field.push(c);
         }
     }
 
     pub fn pop_char(&mut self) {
+        self.error = None;
         if let Some(field) = self.active_value_mut() {
             field.pop();
         }

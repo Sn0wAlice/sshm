@@ -768,6 +768,9 @@ fn run_tunnel_loop<B: Backend>(
             cmd.arg("-J").arg(resolved);
         }
     }
+    if host.forward_agent {
+        cmd.arg("-A");
+    }
 
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())

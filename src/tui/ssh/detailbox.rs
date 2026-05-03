@@ -11,8 +11,11 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
             match row {
                 Row::Host(h) => {
                     let status_line: String = match host_status.get(&h.name) {
-                        Some(HostStatus::Reachable { latency_ms }) => {
-                            format!("Status: ● reachable ({} ms)", latency_ms)
+                        Some(HostStatus::Reachable { latency_ms, ssh_banner }) => {
+                            match ssh_banner {
+                                Some(b) => format!("Status: ● reachable ({} ms) — {}", latency_ms, b),
+                                None => format!("Status: ● reachable ({} ms) — no SSH banner", latency_ms),
+                            }
                         }
                         Some(HostStatus::Unreachable) => "Status: ● unreachable".to_string(),
                         None => "Status: — not checked".to_string(),
@@ -23,8 +26,25 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         h.name.clone()
                     };
                     let last_used = crate::history::format_last_used(h.last_connected_at.as_deref());
+                    let fa_line = if h.forward_agent {
+                        "ForwardAgent: ⚠ ON (-A)\n"
+                    } else {
+                        ""
+                    };
+                    let tunnels_line = if h.tunnels.is_empty() {
+                        String::new()
+                    } else {
+                        let kinds: Vec<String> = h.tunnels.iter()
+                            .map(|t| t.kind.short().to_string())
+                            .collect();
+                        format!("Tunnels: {} saved [{}]\n", h.tunnels.len(), kinds.join(", "))
+                    };
+                    let frecency = crate::history::frecency_score(
+                        h.use_count,
+                        h.last_connected_at.as_deref(),
+                    );
                     let detail = format!(
-                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\nLast used: {}\nUses: {}\n{}",
+                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n{}{}Last used: {}\nUses: {}\nFrecency: {:.2}\n{}",
                         name_display,
                         h.username,
                         h.host,
@@ -33,8 +53,11 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         h.identity_file.as_deref().unwrap_or_default(),
                         h.proxy_jump.as_deref().unwrap_or_default(),
                         h.folder.as_deref().unwrap_or("-"),
+                        fa_line,
+                        tunnels_line,
                         last_used,
                         h.use_count,
+                        frecency,
                         status_line,
                     );
 

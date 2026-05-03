@@ -10,12 +10,20 @@ pub struct SettingsFormState {
     pub default_identity_file: String,
     pub export_path: String,
     pub auto_health_check: bool,
+    pub health_ttl_secs: String,
+    pub health_probe_timeout_ms: String,
+    pub kluster_refresh_secs: String,
+    pub kluster_log_tail_lines: String,
     pub selected_field: usize,
     pub dirty: bool,
 }
 
 /// Index of the boolean `auto_health_check` field in the form.
 const AUTO_HEALTH_FIELD: usize = 4;
+const HEALTH_TTL_FIELD: usize = 5;
+const HEALTH_TIMEOUT_FIELD: usize = 6;
+const KLUSTER_REFRESH_FIELD: usize = 7;
+const KLUSTER_TAIL_FIELD: usize = 8;
 
 impl SettingsFormState {
     pub fn from_config(config: &AppConfig) -> Self {
@@ -25,12 +33,16 @@ impl SettingsFormState {
             default_identity_file: config.default_identity_file.clone(),
             export_path: config.export_path.clone(),
             auto_health_check: config.auto_health_check,
+            health_ttl_secs: config.health_ttl_secs.to_string(),
+            health_probe_timeout_ms: config.health_probe_timeout_ms.to_string(),
+            kluster_refresh_secs: config.kluster_refresh_secs.to_string(),
+            kluster_log_tail_lines: config.kluster_log_tail_lines.to_string(),
             selected_field: 0,
             dirty: false,
         }
     }
 
-    pub fn fields_count() -> usize { 5 }
+    pub fn fields_count() -> usize { 9 }
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
@@ -50,11 +62,22 @@ impl SettingsFormState {
             1 => Some(&mut self.default_username),
             2 => Some(&mut self.default_identity_file),
             3 => Some(&mut self.export_path),
+            HEALTH_TTL_FIELD => Some(&mut self.health_ttl_secs),
+            HEALTH_TIMEOUT_FIELD => Some(&mut self.health_probe_timeout_ms),
+            KLUSTER_REFRESH_FIELD => Some(&mut self.kluster_refresh_secs),
+            KLUSTER_TAIL_FIELD => Some(&mut self.kluster_log_tail_lines),
             _ => None,
         }
     }
 
     pub fn push_char(&mut self, c: char) {
+        let numeric_only = matches!(
+            self.selected_field,
+            0 | HEALTH_TTL_FIELD | HEALTH_TIMEOUT_FIELD | KLUSTER_REFRESH_FIELD | KLUSTER_TAIL_FIELD
+        );
+        if numeric_only && !c.is_ascii_digit() {
+            return;
+        }
         if let Some(field) = self.active_value_mut() {
             field.push(c);
             self.dirty = true;
@@ -184,6 +207,24 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
         let text = format!("  Auto Health Check: {}{}", value, hint);
         let p = Paragraph::new(text).style(style);
         f.render_widget(p, chunks[AUTO_HEALTH_FIELD]);
+    }
+
+    // Numeric: TTL + probe timeout + kluster
+    for (idx, label, val_str) in [
+        (HEALTH_TTL_FIELD,       "Health Refresh / Cache TTL (s)", &state.health_ttl_secs),
+        (HEALTH_TIMEOUT_FIELD,   "Probe Connect Timeout (ms)",     &state.health_probe_timeout_ms),
+        (KLUSTER_REFRESH_FIELD,  "Kluster Refresh Interval (s)",   &state.kluster_refresh_secs),
+        (KLUSTER_TAIL_FIELD,     "Kluster Log Tail (lines)",       &state.kluster_log_tail_lines),
+    ] {
+        let is_selected = state.selected_field == idx;
+        let cursor = if is_selected { "|" } else { "" };
+        let style = if is_selected {
+            Style::default().fg(theme.accent)
+        } else {
+            Style::default().fg(theme.fg)
+        };
+        let text = format!("  {}: {}{}", label, val_str, cursor);
+        f.render_widget(Paragraph::new(text).style(style), chunks[idx]);
     }
 
     // Save button

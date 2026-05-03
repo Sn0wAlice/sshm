@@ -13,6 +13,21 @@ pub struct KeyEntry {
     pub comment: String,
     pub fingerprint: String,
     pub in_agent: bool,
+    /// True when the key is backed by a FIDO2 / hardware token
+    /// (`*-sk` keytype, e.g. ED25519-SK / ECDSA-SK).
+    pub is_hardware: bool,
+}
+
+/// Heuristic: a key is hardware-backed when its OpenSSH key-type ends with
+/// `-SK` (case-insensitive) or, lacking a key-type, when the filename matches
+/// the conventional `id_*_sk` pattern.
+pub fn is_hardware_key(key_type: &str, file_name: &str) -> bool {
+    let kt = key_type.to_ascii_uppercase();
+    if kt.ends_with("-SK") || kt.contains("SK-") {
+        return true;
+    }
+    let fn_lower = file_name.to_ascii_lowercase();
+    fn_lower.ends_with("_sk") || fn_lower.ends_with("-sk")
 }
 
 /// Scan `~/.ssh` for private keys (any file whose `<file>.pub` sibling
@@ -58,6 +73,8 @@ pub fn scan_ssh_dir() -> Vec<KeyEntry> {
         let (bits, fingerprint, comment, key_type) = parse_pubkey_fingerprint(&public)
             .unwrap_or((None, "(unknown)".to_string(), String::new(), "unknown".to_string()));
         let in_agent = agent_fps.iter().any(|f| f == &fingerprint);
+        let file_name = private.file_name().and_then(|n| n.to_str()).unwrap_or("");
+        let is_hardware = is_hardware_key(&key_type, file_name);
 
         results.push(KeyEntry {
             private,
@@ -67,6 +84,7 @@ pub fn scan_ssh_dir() -> Vec<KeyEntry> {
             comment,
             fingerprint,
             in_agent,
+            is_hardware,
         });
     }
     results.sort_by(|a, b| a.private.file_name().cmp(&b.private.file_name()));
@@ -109,8 +127,10 @@ pub fn generate_key(
     }
     let mut cmd = Command::new("ssh-keygen");
     cmd.arg("-t").arg(key_type);
-    if key_type == "rsa" {
-        cmd.arg("-b").arg("4096");
+    match key_type {
+        "rsa" => { cmd.arg("-b").arg("4096"); }
+        "ecdsa" => { cmd.arg("-b").arg("521"); }
+        _ => {}
     }
     cmd.arg("-f").arg(path);
     cmd.arg("-C").arg(comment);
@@ -138,6 +158,29 @@ pub fn default_pubkey_path() -> Option<PathBuf> {
     let p2 = home.join(".ssh/id_rsa.pub");
     if p2.exists() { return Some(p2); }
     None
+}
+
+#[cfg(test)]
+mod tests {
+    use super::is_hardware_key;
+
+    #[test]
+    fn detects_hardware_by_keytype() {
+        assert!(is_hardware_key("ED25519-SK", "anything"));
+        assert!(is_hardware_key("ecdsa-sk", "anything"));
+    }
+
+    #[test]
+    fn detects_hardware_by_filename_fallback() {
+        assert!(is_hardware_key("unknown", "id_ed25519_sk"));
+        assert!(is_hardware_key("unknown", "yubi-sk"));
+    }
+
+    #[test]
+    fn regular_keys_not_hardware() {
+        assert!(!is_hardware_key("ED25519", "id_ed25519"));
+        assert!(!is_hardware_key("RSA", "id_rsa"));
+    }
 }
 
 pub fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<()> {

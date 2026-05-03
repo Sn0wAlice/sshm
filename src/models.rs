@@ -91,6 +91,11 @@ pub struct Host {
     /// Tunnels persistants associés à cet hôte.
     #[serde(default)]
     pub tunnels: Vec<Tunnel>,
+    /// Forward le ssh-agent local (`-A`). Implication de sécurité : permet à un
+    /// utilisateur root du host distant d'utiliser tes clés. À n'activer que sur
+    /// des hôtes de confiance (typiquement bastions). Désactivé par défaut.
+    #[serde(default)]
+    pub forward_agent: bool,
 }
 
 /// Base de données de l'application (hosts + dossiers)

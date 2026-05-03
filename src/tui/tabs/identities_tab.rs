@@ -121,19 +121,25 @@ pub fn draw_identities_tab(
                 .bits
                 .map(|b| format!("{}b", b))
                 .unwrap_or_else(|| "--".to_string());
-            let label = format!("{}  {:<20} {:<8} {}", agent_marker, file_name, k.key_type, bits);
             let marker_style = if k.in_agent {
                 Style::default().fg(theme.success)
             } else {
                 Style::default().fg(theme.muted)
             };
-            ListItem::new(Line::from(vec![
+            let mut spans = vec![
                 Span::styled(format!("{}  ", agent_marker), marker_style),
-                Span::styled(
-                    label[(agent_marker.chars().count() + 2)..].to_string(),
-                    Style::default().fg(theme.fg),
-                ),
-            ]))
+            ];
+            if k.is_hardware {
+                spans.push(Span::styled(
+                    "[HW] ".to_string(),
+                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                ));
+            }
+            spans.push(Span::styled(
+                format!("{:<20} {:<8} {}", file_name, k.key_type, bits),
+                Style::default().fg(theme.fg),
+            ));
+            ListItem::new(Line::from(spans))
         })
         .collect();
 
@@ -164,7 +170,7 @@ pub fn draw_identities_tab(
     let detail_text: String = if let Some(k) = state.selected_key() {
         format!(
             "File:        {}\n\
-             Type:        {}{}\n\
+             Type:        {}{}{}\n\
              Comment:     {}\n\
              Fingerprint: {}\n\
              In agent:    {}\n\
@@ -172,6 +178,7 @@ pub fn draw_identities_tab(
             k.private.display(),
             k.key_type,
             k.bits.map(|b| format!(" {} bits", b)).unwrap_or_default(),
+            if k.is_hardware { "  [HW-backed]" } else { "" },
             if k.comment.is_empty() { "(none)" } else { &k.comment },
             k.fingerprint,
             if k.in_agent { "yes ●" } else { "no" },
