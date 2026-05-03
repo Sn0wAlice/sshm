@@ -18,18 +18,11 @@ use crate::tui::theme::Theme;
 fn header_key(row: &KlusterRow) -> Option<String> {
     match row {
         KlusterRow::DockerHeader { .. } => Some("docker".into()),
+        KlusterRow::DockerRemoteHeader { remote_idx, .. } => Some(format!("docker_remote_{}", remote_idx)),
         KlusterRow::IncusLocalHeader { .. } => Some("incus_local".into()),
-        KlusterRow::IncusRemoteHeader { .. } => Some(format!("incus_remote_{}", header_remote_idx(row).unwrap_or(0))),
+        KlusterRow::IncusRemoteHeader { remote_idx, .. } => Some(format!("incus_remote_{}", remote_idx)),
         KlusterRow::ClusterHeader { cluster_idx, .. } => Some(format!("cluster_{}", cluster_idx)),
         _ => None,
-    }
-}
-
-fn header_remote_idx(row: &KlusterRow) -> Option<usize> {
-    if let KlusterRow::IncusRemoteHeader { remote_idx, .. } = row {
-        Some(*remote_idx)
-    } else {
-        None
     }
 }
 
@@ -39,6 +32,11 @@ fn header_remote_idx(row: &KlusterRow) -> Option<usize> {
 pub enum KlusterRow {
     DockerHeader { count: usize, available: bool },
     DockerContainer(usize),
+    /// One header per saved Docker remote (over SSH). `remote_idx` indexes
+    /// `db.docker_remotes`, `reachable` is the last status reported by the
+    /// worker.
+    DockerRemoteHeader { remote_idx: usize, count: usize, reachable: bool },
+    DockerRemoteContainer { remote_idx: usize, container_idx: usize },
     ClusterHeader { cluster_idx: usize, count: usize },
     ClusterPod {
         cluster_idx: usize,
@@ -63,6 +61,12 @@ pub struct KlusterTabState {
     pub incus_local_instances: Vec<IncusInstance>,
     /// Keyed by remote alias (entries from `db.incus_remotes`).
     pub incus_remote_instances: HashMap<String, Vec<IncusInstance>>,
+    /// Resolved `ssh://…` URI for each saved Docker remote (keyed by host_alias).
+    /// Filled by `sync_kluster_targets` whenever the host DB or kluster DB changes.
+    pub docker_remote_uris: HashMap<String, String>,
+    /// Containers reported by each Docker remote in the last refresh round.
+    pub docker_remote_containers: HashMap<String, Vec<ContainerInfo>>,
+    pub docker_remote_reachable: HashMap<String, bool>,
     pub selected: usize,
     pub flat_rows: Vec<KlusterRow>,
     /// True after the very first refresh round-trip; gates "no daemon" toasts.
@@ -76,6 +80,11 @@ impl KlusterTabState {
     pub fn new() -> Self {
         let (db, imported) = crate::kluster::db::load_or_bootstrap();
         let cluster_pods = vec![None; db.clusters.len()];
+        // Collapse k8s/k3s cluster sections by default — they often hold 50+
+        // pods and the noise hides everything else. Docker/Incus stay open.
+        let collapsed: HashSet<String> = (0..db.clusters.len())
+            .map(|i| format!("cluster_{}", i))
+            .collect();
         let mut state = KlusterTabState {
             db,
             docker_available: false,
@@ -84,11 +93,14 @@ impl KlusterTabState {
             incus_local_available: false,
             incus_local_instances: Vec::new(),
             incus_remote_instances: HashMap::new(),
+            docker_remote_uris: HashMap::new(),
+            docker_remote_containers: HashMap::new(),
+            docker_remote_reachable: HashMap::new(),
             selected: 0,
             flat_rows: Vec::new(),
             bootstrapped: false,
             bootstrap_imported: imported,
-            collapsed: HashSet::new(),
+            collapsed,
         };
         state.rebuild_rows();
         state
@@ -107,6 +119,26 @@ impl KlusterTabState {
         if self.docker_available && !docker_collapsed {
             for i in 0..self.docker_containers.len() {
                 rows.push(KlusterRow::DockerContainer(i));
+            }
+        }
+        // Remote Docker daemons (over SSH).
+        for (ri, remote) in self.db.docker_remotes.iter().enumerate() {
+            let containers = self.docker_remote_containers.get(&remote.host_alias);
+            let count = containers.map(|v| v.len()).unwrap_or(0);
+            let reachable = self
+                .docker_remote_reachable
+                .get(&remote.host_alias)
+                .copied()
+                .unwrap_or(false);
+            let key = format!("docker_remote_{}", ri);
+            let is_collapsed = self.collapsed.contains(&key);
+            rows.push(KlusterRow::DockerRemoteHeader { remote_idx: ri, count, reachable });
+            if !is_collapsed && reachable {
+                if let Some(list) = containers {
+                    for ii in 0..list.len() {
+                        rows.push(KlusterRow::DockerRemoteContainer { remote_idx: ri, container_idx: ii });
+                    }
+                }
             }
         }
         // Local Incus section.
@@ -163,6 +195,25 @@ impl KlusterTabState {
         }
     }
 
+    /// Re-pack `collapsed` keys after a deletion at `deleted_idx` for entries
+    /// matching `prefix` (e.g. `"cluster_"`). Drops the deleted key and
+    /// shifts higher indices down by one. Other unrelated keys are kept.
+    pub fn shift_collapsed_after_delete(&mut self, prefix: &str, deleted_idx: usize) {
+        let mut next = HashSet::new();
+        for key in self.collapsed.drain() {
+            if let Some(rest) = key.strip_prefix(prefix) {
+                if let Ok(n) = rest.parse::<usize>() {
+                    if n == deleted_idx { continue; }
+                    let new_n = if n > deleted_idx { n - 1 } else { n };
+                    next.insert(format!("{}{}", prefix, new_n));
+                    continue;
+                }
+            }
+            next.insert(key);
+        }
+        self.collapsed = next;
+    }
+
     /// Toggle the collapsed state of the header on the current row.
     /// No-op if the cursor isn't on a header.
     pub fn toggle_collapsed_at_selected(&mut self) {
@@ -184,6 +235,13 @@ impl KlusterTabState {
         match row {
             KlusterRow::DockerContainer(i) => {
                 self.docker_containers.get(*i).map(KlusterTarget::Docker)
+            }
+            KlusterRow::DockerRemoteContainer { remote_idx, container_idx } => {
+                let remote = self.db.docker_remotes.get(*remote_idx)?;
+                let host_uri = self.docker_remote_uris.get(&remote.host_alias)?;
+                let containers = self.docker_remote_containers.get(&remote.host_alias)?;
+                let container = containers.get(*container_idx)?;
+                Some(KlusterTarget::DockerRemote { container, host_uri })
             }
             KlusterRow::ClusterPod { cluster_idx, pod_idx, container } => {
                 let cluster = self.db.clusters.get(*cluster_idx)?;
@@ -223,6 +281,12 @@ impl KlusterTabState {
 /// Resolved target the action handlers in `app::mod` work with.
 pub enum KlusterTarget<'a> {
     Docker(&'a ContainerInfo),
+    /// Container running on a remote Docker daemon reached via SSH.
+    /// `host_uri` is the `ssh://user@host:port` value to set as `DOCKER_HOST`.
+    DockerRemote {
+        container: &'a ContainerInfo,
+        host_uri: &'a str,
+    },
     Pod {
         cluster: &'a Cluster,
         pod: &'a PodInfo,
@@ -248,6 +312,10 @@ pub enum KlusterAction {
     DeleteCluster,
     /// `kubectl delete pod` — only fired on terminated pods (Succeeded / Failed).
     DeletePod,
+    /// Open a picker to register a new Docker remote (a saved Host that runs Docker).
+    AddDockerRemote,
+    /// Remove a Docker remote entry (the SSH host itself is unaffected).
+    DeleteDockerRemote,
 }
 
 pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> KlusterAction {
@@ -255,6 +323,7 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
     let on_item = matches!(
         row,
         Some(KlusterRow::DockerContainer(_))
+            | Some(KlusterRow::DockerRemoteContainer { .. })
             | Some(KlusterRow::ClusterPod { .. })
             | Some(KlusterRow::IncusLocalInstance(_))
             | Some(KlusterRow::IncusRemoteInstance { .. })
@@ -262,10 +331,12 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
     let on_header = matches!(
         row,
         Some(KlusterRow::DockerHeader { .. })
+            | Some(KlusterRow::DockerRemoteHeader { .. })
             | Some(KlusterRow::IncusLocalHeader { .. })
             | Some(KlusterRow::IncusRemoteHeader { .. })
             | Some(KlusterRow::ClusterHeader { .. })
     );
+    let on_docker_remote_header = matches!(row, Some(KlusterRow::DockerRemoteHeader { .. }));
     let on_cluster_header = matches!(row, Some(KlusterRow::ClusterHeader { .. }));
     let on_terminal_pod = matches!(row, Some(KlusterRow::ClusterPod { .. }))
         && state
@@ -285,7 +356,15 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
         KeyCode::Up | KeyCode::Char('k') => { state.move_up(); KlusterAction::None }
         KeyCode::Down | KeyCode::Char('j') => { state.move_down(); KlusterAction::None }
         KeyCode::Char('r') => KlusterAction::Refresh,
-        KeyCode::Char('n') => KlusterAction::AddCluster,
+        // `n` is context-aware: on a docker (local or remote) header, register
+        // a new Docker remote; everywhere else it adds a k8s/k3s cluster.
+        KeyCode::Char('n') => match row {
+            Some(KlusterRow::DockerHeader { .. })
+            | Some(KlusterRow::DockerRemoteHeader { .. })
+            | Some(KlusterRow::DockerContainer(_))
+            | Some(KlusterRow::DockerRemoteContainer { .. }) => KlusterAction::AddDockerRemote,
+            _ => KlusterAction::AddCluster,
+        },
         // Headers: Enter (and Space) toggles collapse.
         KeyCode::Enter | KeyCode::Char(' ') if on_header => {
             state.toggle_collapsed_at_selected();
@@ -297,6 +376,8 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
         // Cluster header CRUD
         KeyCode::Char('e') if on_cluster_header => KlusterAction::EditCluster,
         KeyCode::Char('d') if on_cluster_header => KlusterAction::DeleteCluster,
+        // Docker remote: `d` on its header removes the entry (SSH host stays).
+        KeyCode::Char('d') if on_docker_remote_header => KlusterAction::DeleteDockerRemote,
         // Pod-level cleanup: `d` on a Succeeded/Failed pod deletes it.
         KeyCode::Char('d') if on_terminal_pod => KlusterAction::DeletePod,
         _ => KlusterAction::None,
@@ -354,21 +435,34 @@ fn render_row<'a>(
         }
         KlusterRow::DockerContainer(i) => {
             let c = &state.docker_containers[*i];
-            let glyph = if c.running { "●" } else { "○" };
-            let glyph_style = if c.running {
-                Style::default().fg(theme.success)
+            render_docker_container(c, theme)
+        }
+        KlusterRow::DockerRemoteHeader { remote_idx, count, reachable } => {
+            let remote = &state.db.docker_remotes[*remote_idx];
+            let key = format!("docker_remote_{}", remote_idx);
+            let glyph = if state.collapsed.contains(&key) { "▸" } else { "▾" };
+            let suffix = if *reachable {
+                format!("({})", count)
             } else {
-                Style::default().fg(theme.muted)
+                "(unreachable)".to_string()
             };
-            ListItem::new(Line::from(vec![
-                Span::raw("    "),
-                Span::styled(format!("{} ", glyph), glyph_style),
-                Span::styled(c.name.clone(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
-                Span::raw("  "),
-                Span::styled(c.image.clone(), Style::default().fg(theme.muted)),
-                Span::raw("  "),
-                Span::styled(c.status.clone(), Style::default().fg(theme.muted)),
-            ]))
+            let style = if *reachable {
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
+            };
+            ListItem::new(Line::from(Span::styled(
+                format!("{} Docker (remote {}) {}", glyph, remote.host_alias, suffix),
+                style,
+            )))
+        }
+        KlusterRow::DockerRemoteContainer { remote_idx, container_idx } => {
+            let remote = &state.db.docker_remotes[*remote_idx];
+            let containers = state.docker_remote_containers.get(&remote.host_alias);
+            match containers.and_then(|v| v.get(*container_idx)) {
+                Some(c) => render_docker_container(c, theme),
+                None => ListItem::new(Span::raw("    ?")),
+            }
         }
         KlusterRow::ClusterHeader { cluster_idx, count } => {
             let cluster = &state.db.clusters[*cluster_idx];
@@ -435,6 +529,24 @@ fn render_row<'a>(
             render_incus_instance(inst, theme)
         }
     }
+}
+
+fn render_docker_container<'a>(c: &ContainerInfo, theme: &Theme) -> ListItem<'a> {
+    let glyph = if c.running { "●" } else { "○" };
+    let glyph_style = if c.running {
+        Style::default().fg(theme.success)
+    } else {
+        Style::default().fg(theme.muted)
+    };
+    ListItem::new(Line::from(vec![
+        Span::raw("    "),
+        Span::styled(format!("{} ", glyph), glyph_style),
+        Span::styled(c.name.clone(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        Span::raw("  "),
+        Span::styled(c.image.clone(), Style::default().fg(theme.muted)),
+        Span::raw("  "),
+        Span::styled(c.status.clone(), Style::default().fg(theme.muted)),
+    ]))
 }
 
 fn render_incus_instance<'a>(inst: &IncusInstance, theme: &Theme) -> ListItem<'a> {

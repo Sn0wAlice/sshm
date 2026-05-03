@@ -47,6 +47,15 @@ pub struct Cluster {
     pub namespace_default: Option<String>,
 }
 
+/// A reference to a remote Docker daemon reached over SSH. The actual
+/// connection details are looked up from the saved Host map (`host.json`)
+/// at runtime, so renaming/editing the SSH host's user/port flows through.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DockerRemote {
+    /// Name of an entry in the SSH Host DB (`Host.name`).
+    pub host_alias: String,
+}
+
 /// On-disk representation for `kluster.json`.
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KlusterDb {
@@ -56,6 +65,9 @@ pub struct KlusterDb {
     /// implicit `local` remote is in use.
     #[serde(default)]
     pub incus_remotes: Vec<String>,
+    /// Saved Docker daemons reachable over SSH (`DOCKER_HOST=ssh://…`).
+    #[serde(default)]
+    pub docker_remotes: Vec<DockerRemote>,
 }
 
 /// Snapshot of one Docker container at the moment of `docker ps`.

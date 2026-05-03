@@ -16,6 +16,8 @@ pub enum HelpContext {
     KlusterHeaderRuntime,
     /// Selection is on a saved k8s/k3s cluster header (full CRUD available).
     KlusterHeaderCluster,
+    /// Selection is on a saved Docker remote header (delete = unlink, no edit).
+    KlusterHeaderDockerRemote,
     /// Selection is on a container / pod / instance — shell + logs apply.
     KlusterItem,
     /// Selection is on a Succeeded/Failed pod — additionally allows `d` to
@@ -55,6 +57,9 @@ pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static
         }
         HelpContext::KlusterHeaderCluster => {
             "↑↓ move │ Enter expand/collapse │ r refresh │ n add │ e edit │ d delete │ ←→ tab │ q quit"
+        }
+        HelpContext::KlusterHeaderDockerRemote => {
+            "↑↓ move │ Enter expand/collapse │ r refresh │ n add docker remote │ d unlink │ ←→ tab │ q quit"
         }
         HelpContext::KlusterItem => {
             "↑↓ move │ Enter shell │ l logs(-f) │ r refresh │ ←→ tab │ q quit"

@@ -271,6 +271,91 @@ pub fn run_cluster_form(initial: Option<&Cluster>) -> Option<Cluster> {
     result
 }
 
+/// Picker modal: present a list of options and let the user choose one
+/// (Enter) or cancel (Esc). Returns the chosen index. Self-contained loop.
+pub fn run_picker(title: &str, options: &[String]) -> Option<usize> {
+    use ratatui::widgets::{List, ListItem, ListState};
+
+    if options.is_empty() {
+        return None;
+    }
+
+    let mut stdout_h = stdout();
+    let _ = enable_raw_mode();
+    let _ = execute!(stdout_h, EnterAlternateScreen);
+    let backend = CrosstermBackend::new(stdout_h);
+    let mut terminal = Terminal::new(backend).ok()?;
+
+    let mut selected = 0usize;
+
+    let result = loop {
+        let _ = terminal.draw(|f| {
+            let theme = theme::load();
+            let size = f.area();
+            let area = centered_rect(50, 60, size);
+            f.render_widget(Clear, area);
+
+            let block = Block::default()
+                .title(Span::styled(
+                    format!(" {} ", title),
+                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                ))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(theme.accent))
+                .style(Style::default().bg(theme.bg).fg(theme.fg));
+            let inner = block.inner(area);
+            f.render_widget(block, area);
+
+            let chunks = Layout::default()
+                .direction(Direction::Vertical)
+                .margin(1)
+                .constraints([Constraint::Min(3), Constraint::Length(1)])
+                .split(inner);
+
+            let items: Vec<ListItem> = options
+                .iter()
+                .map(|o| ListItem::new(o.clone()))
+                .collect();
+            let list = List::new(items)
+                .highlight_symbol("➜ ")
+                .highlight_style(
+                    Style::default()
+                        .bg(theme.accent)
+                        .fg(theme.bg)
+                        .add_modifier(Modifier::BOLD),
+                );
+            let mut ls = ListState::default();
+            ls.select(Some(selected));
+            f.render_stateful_widget(list, chunks[0], &mut ls);
+
+            let help = Paragraph::new("↑↓ navigate │ Enter select │ Esc cancel")
+                .style(Style::default().fg(theme.muted));
+            f.render_widget(help, chunks[1]);
+        });
+
+        if event::poll(Duration::from_millis(120)).unwrap_or(false) {
+            if let Ok(Event::Key(k)) = event::read() {
+                if k.kind != KeyEventKind::Press { continue; }
+                match k.code {
+                    KeyCode::Esc => break None,
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if selected > 0 { selected -= 1; }
+                    }
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if selected + 1 < options.len() { selected += 1; }
+                    }
+                    KeyCode::Enter => break Some(selected),
+                    _ => {}
+                }
+            }
+        }
+    };
+
+    let _ = disable_raw_mode();
+    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+    result
+}
+
 /// Confirmation modal for `delete cluster`. Dedicated mini-loop so the
 /// caller doesn't need to weave delete-state through the whole tab.
 pub fn run_cluster_delete_confirm(cluster_name: &str) -> bool {

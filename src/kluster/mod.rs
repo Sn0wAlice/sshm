@@ -13,4 +13,6 @@ pub mod docker;
 pub mod kube;
 pub mod incus;
 
-pub use models::{Cluster, ClusterKind, ContainerInfo, IncusInstance, KlusterDb, PodInfo};
+pub use models::{
+    Cluster, ClusterKind, ContainerInfo, DockerRemote, IncusInstance, KlusterDb, PodInfo,
+};

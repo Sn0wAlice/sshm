@@ -11,11 +11,14 @@ use crossterm::{
 };
 use ratatui::{backend::Backend, Terminal};
 
+use std::collections::HashMap;
+
+use crate::models::{Database, Host};
 use crate::t;
 use crate::tui::ssh::toast::Toast;
 use crate::tui::tabs::kluster_tab::{KlusterTabState, KlusterTarget};
 
-use super::cluster_form::{run_cluster_delete_confirm, run_cluster_form};
+use super::cluster_form::{run_cluster_delete_confirm, run_cluster_form, run_picker};
 use super::kluster_worker::{KlusterTargets, WorkerTargets};
 
 fn enter_foreground<B: Backend>(terminal: &mut Terminal<B>) {
@@ -28,6 +31,26 @@ fn restore_tui<B: Backend>(terminal: &mut Terminal<B>) {
     let _ = enable_raw_mode();
     let _ = execute!(stdout(), EnterAlternateScreen);
     let _ = terminal.clear();
+}
+
+/// RAII guard that ignores `SIGINT` in the *current process* while it lives.
+/// Used around foreground commands like `docker logs -f` / `kubectl logs -f`
+/// so the user's `Ctrl+C` only terminates the child (which exits naturally)
+/// without killing sshm itself.
+struct IgnoreSigint {
+    previous: libc::sighandler_t,
+}
+impl IgnoreSigint {
+    fn new() -> Self {
+        // SAFETY: libc::signal is safe to call; we only swap to SIG_IGN.
+        let previous = unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+        IgnoreSigint { previous }
+    }
+}
+impl Drop for IgnoreSigint {
+    fn drop(&mut self) {
+        unsafe { libc::signal(libc::SIGINT, self.previous); }
+    }
 }
 
 fn report_shell_exit(status: std::io::Result<std::process::ExitStatus>) -> Option<Toast> {
@@ -52,7 +75,10 @@ pub fn handle_kluster_open_shell<B: Backend>(
     };
     enter_foreground(terminal);
     let res = match target {
-        KlusterTarget::Docker(c) => crate::kluster::docker::exec_shell(&c.id),
+        KlusterTarget::Docker(c) => crate::kluster::docker::exec_shell(&c.id, None),
+        KlusterTarget::DockerRemote { container, host_uri } => {
+            crate::kluster::docker::exec_shell(&container.id, Some(host_uri))
+        }
         KlusterTarget::Pod { cluster, pod, container } => {
             // First container in the pod by default if none specified.
             let ctn = container.or_else(|| pod.containers.first().map(|s| s.as_str()));
@@ -80,8 +106,15 @@ pub fn handle_kluster_open_logs<B: Backend>(
         return;
     };
     enter_foreground(terminal);
+    // While the foreground `logs -f` runs, swallow SIGINT in *our* process so
+    // Ctrl+C only kills the child. The guard restores the previous handler on
+    // drop, even on early returns / panics.
+    let _sigint_guard = IgnoreSigint::new();
     let res = match target {
-        KlusterTarget::Docker(c) => crate::kluster::docker::logs(&c.id, tail, follow),
+        KlusterTarget::Docker(c) => crate::kluster::docker::logs(&c.id, tail, follow, None),
+        KlusterTarget::DockerRemote { container, host_uri } => {
+            crate::kluster::docker::logs(&container.id, tail, follow, Some(host_uri))
+        }
         KlusterTarget::Pod { cluster, pod, container } => {
             let ctn = container.or_else(|| pod.containers.first().map(|s| s.as_str()));
             crate::kluster::kube::logs(cluster, &pod.namespace, &pod.name, ctn, tail, follow)
@@ -90,19 +123,122 @@ pub fn handle_kluster_open_logs<B: Backend>(
             crate::kluster::incus::logs(&instance.name, remote, tail, follow)
         }
     };
+    drop(_sigint_guard);
     restore_tui(terminal);
     if let Err(e) = res {
         *toast = Some(Toast::error(t!("kluster.logs_failed", "error" => e)));
     }
 }
 
-pub fn sync_kluster_targets(targets: &KlusterTargets, state: &KlusterTabState) {
+/// Resolve every saved Docker remote to its `ssh://` URI using the SSH host
+/// DB. Entries whose `host_alias` no longer exists in the host DB are
+/// dropped silently — the worker just won't probe them. The same map is
+/// also surfaced in `state.docker_remote_uris` so the action handlers can
+/// look up the URI without the host DB at action time.
+pub fn sync_kluster_targets(
+    targets: &KlusterTargets,
+    state: &mut KlusterTabState,
+    hosts: &HashMap<String, Host>,
+) {
+    let mut docker_remotes: Vec<(String, String)> = Vec::new();
+    state.docker_remote_uris.clear();
+    for r in &state.db.docker_remotes {
+        if let Some(h) = hosts.get(&r.host_alias) {
+            let uri = crate::kluster::docker::host_to_docker_uri(h);
+            state.docker_remote_uris.insert(r.host_alias.clone(), uri.clone());
+            docker_remotes.push((r.host_alias.clone(), uri));
+        }
+    }
     if let Ok(mut g) = targets.lock() {
         *g = WorkerTargets {
             clusters: state.db.clusters.clone(),
             incus_remotes: state.db.incus_remotes.clone(),
+            docker_remotes,
         };
     }
+}
+
+/// Pick a saved Host that's not already registered as a Docker remote and
+/// add it to `kluster.json`.
+pub fn kluster_add_docker_remote_flow<B: Backend>(
+    state: &mut KlusterTabState,
+    db: &Database,
+    terminal: &mut Terminal<B>,
+) -> Result<Option<String>> {
+    let already: std::collections::HashSet<&str> = state
+        .db
+        .docker_remotes
+        .iter()
+        .map(|r| r.host_alias.as_str())
+        .collect();
+    let mut candidates: Vec<&Host> = db
+        .hosts
+        .values()
+        .filter(|h| !already.contains(h.name.as_str()))
+        .collect();
+    candidates.sort_by(|a, b| a.name.cmp(&b.name));
+    if candidates.is_empty() {
+        return Err(anyhow::anyhow!(
+            "no SSH host available — register a host in the Hosts tab first"
+        ));
+    }
+    let labels: Vec<String> = candidates
+        .iter()
+        .map(|h| format!("{}  ({}@{}:{})", h.name, h.username, h.host, h.port))
+        .collect();
+
+    enter_foreground(terminal);
+    let pick = run_picker("Pick a host running Docker", &labels);
+    restore_tui(terminal);
+
+    let idx = match pick {
+        Some(i) => i,
+        None => return Ok(None),
+    };
+    let host = candidates[idx];
+    state.db.docker_remotes.push(crate::kluster::DockerRemote {
+        host_alias: host.name.clone(),
+    });
+    crate::kluster::db::save(&state.db).context("saving kluster.json")?;
+    state.rebuild_rows();
+    Ok(Some(host.name.clone()))
+}
+
+/// Confirm and remove a Docker remote entry from the DB. The remote daemon
+/// itself is unaffected — we just stop polling it.
+pub fn kluster_delete_docker_remote_flow<B: Backend>(
+    state: &mut KlusterTabState,
+    terminal: &mut Terminal<B>,
+) -> Result<Option<String>> {
+    use crate::tui::tabs::kluster_tab::KlusterRow;
+    let remote_idx = match state.flat_rows.get(state.selected) {
+        Some(KlusterRow::DockerRemoteHeader { remote_idx, .. }) => *remote_idx,
+        _ => return Ok(None),
+    };
+    let alias = state
+        .db
+        .docker_remotes
+        .get(remote_idx)
+        .map(|r| r.host_alias.clone())
+        .ok_or_else(|| anyhow::anyhow!("docker remote index out of range"))?;
+
+    enter_foreground(terminal);
+    let confirmed = run_cluster_delete_confirm(&format!("docker remote {}", alias));
+    restore_tui(terminal);
+    if !confirmed {
+        return Ok(None);
+    }
+    state.db.docker_remotes.remove(remote_idx);
+    state.docker_remote_uris.remove(&alias);
+    state.docker_remote_containers.remove(&alias);
+    state.docker_remote_reachable.remove(&alias);
+    state.shift_collapsed_after_delete("docker_remote_", remote_idx);
+    crate::kluster::db::save(&state.db).context("saving kluster.json")?;
+    state.rebuild_rows();
+    if state.selected >= state.flat_rows.len() {
+        state.selected = state.flat_rows.len().saturating_sub(1);
+    }
+    Ok(Some(alias))
 }
 
 // -------- CRUD flows (TUI form / modal) --------
@@ -127,8 +263,11 @@ pub fn kluster_add_cluster_flow<B: Backend>(
             new_cluster.name
         ));
     }
+    let new_idx = state.db.clusters.len();
     state.db.clusters.push(new_cluster);
     state.cluster_pods.push(None);
+    // Collapse the new cluster by default — same UX as the bootstrap flow.
+    state.collapsed.insert(format!("cluster_{}", new_idx));
     crate::kluster::db::save(&state.db).context("saving kluster.json")?;
     state.rebuild_rows();
     Ok(())
@@ -253,6 +392,7 @@ pub fn kluster_delete_cluster_flow<B: Backend>(
         if cluster_idx < state.cluster_pods.len() {
             state.cluster_pods.remove(cluster_idx);
         }
+        state.shift_collapsed_after_delete("cluster_", cluster_idx);
         crate::kluster::db::save(&state.db).context("saving kluster.json")?;
         state.rebuild_rows();
         if state.selected >= state.flat_rows.len() {

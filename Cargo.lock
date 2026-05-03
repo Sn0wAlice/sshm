@@ -1570,6 +1570,7 @@ dependencies = [
  "dirs",
  "fuzzy-matcher",
  "inquire",
+ "libc",
  "openssl",
  "prettytable",
  "ratatui",

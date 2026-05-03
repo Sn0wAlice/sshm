@@ -133,8 +133,9 @@ pub mod cluster_form;
 pub mod kluster_actions;
 use kluster_actions::{
     handle_kluster_open_logs, handle_kluster_open_shell,
-    kluster_add_cluster_flow, kluster_delete_cluster_flow, kluster_delete_pod_flow,
-    kluster_edit_cluster_flow, sync_kluster_targets,
+    kluster_add_cluster_flow, kluster_add_docker_remote_flow, kluster_delete_cluster_flow,
+    kluster_delete_docker_remote_flow, kluster_delete_pod_flow, kluster_edit_cluster_flow,
+    sync_kluster_targets,
 };
 
 pub fn run_tui(db: &mut Database) {
@@ -228,11 +229,9 @@ pub fn run_tui(db: &mut Database) {
         )));
     }
     let kluster_targets: KlusterTargets = Arc::new(Mutex::new(
-        kluster_worker::WorkerTargets {
-            clusters: kluster_state.db.clusters.clone(),
-            incus_remotes: kluster_state.db.incus_remotes.clone(),
-        },
+        kluster_worker::WorkerTargets::default(),
     ));
+    sync_kluster_targets(&kluster_targets, &mut kluster_state, &db.hosts);
     let (kluster_tx, kluster_rx) = mpsc::channel::<KlusterUpdate>();
     let kluster_poke = Arc::new(AtomicBool::new(true)); // first refresh ASAP
     let kluster_interval_secs =
@@ -306,6 +305,11 @@ pub fn run_tui(db: &mut Database) {
                 }
                 KlusterUpdate::IncusRemote { remote, instances } => {
                     kluster_state.incus_remote_instances.insert(remote, instances);
+                    kluster_dirty = true;
+                }
+                KlusterUpdate::DockerRemote { host_alias, containers, reachable } => {
+                    kluster_state.docker_remote_containers.insert(host_alias.clone(), containers);
+                    kluster_state.docker_remote_reachable.insert(host_alias, reachable);
                     kluster_dirty = true;
                 }
             }
@@ -462,6 +466,7 @@ pub fn run_tui(db: &mut Database) {
                             Some(KlusterRow::DockerHeader { .. })
                             | Some(KlusterRow::IncusLocalHeader { .. })
                             | Some(KlusterRow::IncusRemoteHeader { .. }) => HelpContext::KlusterHeaderRuntime,
+                            Some(KlusterRow::DockerRemoteHeader { .. }) => HelpContext::KlusterHeaderDockerRemote,
                             Some(KlusterRow::ClusterPod { .. }) => {
                                 let terminal = match kluster_state.current_target() {
                                     Some(KlusterTarget::Pod { pod, .. }) => {
@@ -473,6 +478,7 @@ pub fn run_tui(db: &mut Database) {
                                 if terminal { HelpContext::KlusterTerminalPod } else { HelpContext::KlusterItem }
                             }
                             Some(KlusterRow::DockerContainer(_))
+                            | Some(KlusterRow::DockerRemoteContainer { .. })
                             | Some(KlusterRow::IncusLocalInstance(_))
                             | Some(KlusterRow::IncusRemoteInstance { .. }) => HelpContext::KlusterItem,
                             None => HelpContext::Empty,
@@ -1129,7 +1135,7 @@ pub fn run_tui(db: &mut Database) {
                                     ) {
                                         toast = Some(Toast::error(format!("{e:#}")));
                                     } else {
-                                        sync_kluster_targets(&kluster_targets, &kluster_state);
+                                        sync_kluster_targets(&kluster_targets, &mut kluster_state, &db.hosts);
                                         kluster_poke.store(true, Ordering::Relaxed);
                                     }
                                 }
@@ -1140,7 +1146,7 @@ pub fn run_tui(db: &mut Database) {
                                     ) {
                                         toast = Some(Toast::error(format!("{e:#}")));
                                     } else {
-                                        sync_kluster_targets(&kluster_targets, &kluster_state);
+                                        sync_kluster_targets(&kluster_targets, &mut kluster_state, &db.hosts);
                                         kluster_poke.store(true, Ordering::Relaxed);
                                     }
                                 }
@@ -1151,7 +1157,7 @@ pub fn run_tui(db: &mut Database) {
                                     ) {
                                         toast = Some(Toast::error(format!("{e:#}")));
                                     } else {
-                                        sync_kluster_targets(&kluster_targets, &kluster_state);
+                                        sync_kluster_targets(&kluster_targets, &mut kluster_state, &db.hosts);
                                     }
                                 }
                                 KlusterAction::DeletePod => {
@@ -1162,6 +1168,38 @@ pub fn run_tui(db: &mut Database) {
                                         Ok(Some(name)) => {
                                             toast = Some(Toast::success(format!("Deleted pod {}", name)));
                                             kluster_poke.store(true, Ordering::Relaxed);
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            toast = Some(Toast::error(format!("{e:#}")));
+                                        }
+                                    }
+                                }
+                                KlusterAction::AddDockerRemote => {
+                                    match kluster_add_docker_remote_flow(
+                                        &mut kluster_state,
+                                        db,
+                                        &mut terminal,
+                                    ) {
+                                        Ok(Some(alias)) => {
+                                            toast = Some(Toast::success(format!("Added Docker remote: {}", alias)));
+                                            sync_kluster_targets(&kluster_targets, &mut kluster_state, &db.hosts);
+                                            kluster_poke.store(true, Ordering::Relaxed);
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            toast = Some(Toast::error(format!("{e:#}")));
+                                        }
+                                    }
+                                }
+                                KlusterAction::DeleteDockerRemote => {
+                                    match kluster_delete_docker_remote_flow(
+                                        &mut kluster_state,
+                                        &mut terminal,
+                                    ) {
+                                        Ok(Some(alias)) => {
+                                            toast = Some(Toast::success(format!("Removed Docker remote: {}", alias)));
+                                            sync_kluster_targets(&kluster_targets, &mut kluster_state, &db.hosts);
                                         }
                                         Ok(None) => {}
                                         Err(e) => {

@@ -19,6 +19,10 @@ use crate::kluster::{Cluster, ContainerInfo, IncusInstance, PodInfo};
 pub struct WorkerTargets {
     pub clusters: Vec<Cluster>,
     pub incus_remotes: Vec<String>,
+    /// Docker remotes resolved at sync time: `(alias, ssh:// URI)`.
+    /// We resolve eagerly so the worker doesn't need to know about the SSH
+    /// host DB.
+    pub docker_remotes: Vec<(String, String)>,
 }
 
 pub type KlusterTargets = Arc<Mutex<WorkerTargets>>;
@@ -29,6 +33,12 @@ pub enum KlusterUpdate {
     Docker {
         available: bool,
         containers: Vec<ContainerInfo>,
+    },
+    /// Result for a remote Docker daemon (keyed by Host alias).
+    DockerRemote {
+        host_alias: String,
+        containers: Vec<ContainerInfo>,
+        reachable: bool,
     },
     Cluster {
         cluster_name: String,
@@ -60,11 +70,11 @@ pub fn spawn_kluster_worker(
             let due = Instant::now() >= next_pass;
             let poked = poke.swap(false, Ordering::Relaxed);
             if due || poked {
-                // Docker
+                // Docker — local
                 crate::kluster::docker::invalidate_daemon_cache();
                 let available = crate::kluster::docker::daemon_running();
                 let containers = if available {
-                    crate::kluster::docker::list_containers().unwrap_or_default()
+                    crate::kluster::docker::list_containers(None).unwrap_or_default()
                 } else {
                     Vec::new()
                 };
@@ -76,6 +86,21 @@ pub fn spawn_kluster_worker(
                     Ok(g) => g.clone(),
                     Err(_) => break,
                 };
+
+                // Docker — remote (over SSH)
+                for (alias, uri) in &snapshot.docker_remotes {
+                    if stop.load(Ordering::Relaxed) { return; }
+                    let (containers, reachable) =
+                        match crate::kluster::docker::list_containers(Some(uri)) {
+                            Ok(v) => (v, true),
+                            Err(_) => (Vec::new(), false),
+                        };
+                    let _ = result_tx.send(KlusterUpdate::DockerRemote {
+                        host_alias: alias.clone(),
+                        containers,
+                        reachable,
+                    });
+                }
 
                 // Local Incus
                 crate::kluster::incus::invalidate_cache();

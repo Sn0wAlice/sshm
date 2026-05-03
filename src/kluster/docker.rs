@@ -15,6 +15,49 @@ use crossterm::{
 use super::models::ContainerInfo;
 use super::shell::SHELL_PATH;
 
+/// Build the `ssh://[user@]host[:port]` URI passed to `DOCKER_HOST` for a
+/// remote Docker daemon reached over SSH.
+pub fn host_to_docker_uri(h: &crate::models::Host) -> String {
+    if h.port == 22 {
+        format!("ssh://{}@{}", h.username, h.host)
+    } else {
+        format!("ssh://{}@{}:{}", h.username, h.host, h.port)
+    }
+}
+
+#[cfg(test)]
+mod ssh_uri_tests {
+    use super::*;
+    use crate::models::Host;
+
+    fn h(user: &str, host: &str, port: u16) -> Host {
+        Host {
+            name: "x".into(),
+            host: host.into(),
+            port,
+            username: user.into(),
+            identity_file: None,
+            proxy_jump: None,
+            tags: None,
+            folder: None,
+            last_connected_at: None,
+            use_count: 0,
+            favorite: false,
+            tunnels: vec![],
+            forward_agent: false,
+        }
+    }
+
+    #[test]
+    fn omits_port_when_default() {
+        assert_eq!(host_to_docker_uri(&h("alice", "1.2.3.4", 22)), "ssh://alice@1.2.3.4");
+    }
+    #[test]
+    fn includes_port_when_custom() {
+        assert_eq!(host_to_docker_uri(&h("alice", "1.2.3.4", 2222)), "ssh://alice@1.2.3.4:2222");
+    }
+}
+
 /// Cached "is the daemon up?" check. `docker info` is heavy (~100ms) so we
 /// don't want to call it on every refresh tick.
 struct DaemonCache {
@@ -57,24 +100,37 @@ pub fn invalidate_daemon_cache() {
 }
 
 /// `docker ps -a` with a tab-separated format, parsed into [`ContainerInfo`].
-/// Returns an empty `Vec` when the daemon is unreachable so the UI can
-/// distinguish "no containers" from "no daemon" via [`daemon_running`].
-pub fn list_containers() -> Result<Vec<ContainerInfo>> {
-    if !daemon_running() {
+///
+/// `docker_host`:
+/// - `None` → local daemon. Skipped entirely if [`daemon_running`] says no.
+/// - `Some(uri)` → set `DOCKER_HOST=<uri>` and try the remote. Returns an
+///   empty `Vec` on failure (network error, daemon down, key rejected) — we
+///   don't surface those as hard errors because the worker probes on a loop.
+pub fn list_containers(docker_host: Option<&str>) -> Result<Vec<ContainerInfo>> {
+    if docker_host.is_none() && !daemon_running() {
         return Ok(Vec::new());
     }
-    let out = Command::new("docker")
-        .args([
-            "ps",
-            "-a",
-            "--format",
-            "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}",
-        ])
-        .stderr(Stdio::null())
-        .output()
-        .context("running `docker ps`")?;
+    let mut cmd = Command::new("docker");
+    if let Some(u) = docker_host {
+        cmd.env("DOCKER_HOST", u);
+    }
+    cmd.args([
+        "ps",
+        "-a",
+        "--format",
+        "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}",
+    ])
+    .stderr(Stdio::null());
+    let out = cmd.output().context("running `docker ps`")?;
     if !out.status.success() {
-        return Ok(Vec::new());
+        // For a remote, surface this as Err so callers can flag the host
+        // as unreachable; for the local daemon we historically return
+        // Ok(empty) which the existing flow expects.
+        return if docker_host.is_some() {
+            Err(anyhow::anyhow!("docker ps exited {}", out.status))
+        } else {
+            Ok(Vec::new())
+        };
     }
     let raw = String::from_utf8_lossy(&out.stdout);
     Ok(parse_docker_ps(&raw))
@@ -99,22 +155,26 @@ pub fn parse_docker_ps(raw: &str) -> Vec<ContainerInfo> {
 }
 
 /// Run `docker exec -it <id> /bin/sh` in the foreground.
-/// The caller is expected to have already left the alternate screen; this
-/// function inherits stdin/stdout/stderr so the user lands directly in the
-/// container.
-pub fn exec_shell(id: &str) -> std::io::Result<ExitStatus> {
-    let _ = disable_raw_mode();
-    let _ = execute!(stdout(), Show);
-    Command::new("docker")
-        .args(["exec", "-it", id, SHELL_PATH])
-        .status()
-}
-
-/// Run `docker logs [--tail N] [--follow] <id>` in the foreground.
-pub fn logs(id: &str, tail: u32, follow: bool) -> std::io::Result<ExitStatus> {
+/// `docker_host = Some(uri)` routes via SSH (`DOCKER_HOST=<uri>`).
+pub fn exec_shell(id: &str, docker_host: Option<&str>) -> std::io::Result<ExitStatus> {
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), Show);
     let mut cmd = Command::new("docker");
+    if let Some(u) = docker_host { cmd.env("DOCKER_HOST", u); }
+    cmd.args(["exec", "-it", id, SHELL_PATH]).status()
+}
+
+/// Run `docker logs [--tail N] [--follow] <id>` in the foreground.
+pub fn logs(
+    id: &str,
+    tail: u32,
+    follow: bool,
+    docker_host: Option<&str>,
+) -> std::io::Result<ExitStatus> {
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout(), Show);
+    let mut cmd = Command::new("docker");
+    if let Some(u) = docker_host { cmd.env("DOCKER_HOST", u); }
     cmd.arg("logs").arg("--tail").arg(tail.to_string());
     if follow {
         cmd.arg("--follow");
