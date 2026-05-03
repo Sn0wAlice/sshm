@@ -6,17 +6,17 @@ class Sshm < Formula
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-darwin-arm64.tar.gz"
-      sha256 "8914d72087103de88d7912a0e163e98abb073c2cb4763c79b955c05a25a4d785"
+      sha256 "d9f3790b84a533c785e7874b1840b6fb613f52e3b6f51ffe004e309b66e32f9f"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-linux-amd64.tar.gz"
-      sha256 "415734a01ff0e3069b7e8c890bcee76508eff24d7e2e50d8d7c3b00805a146d6"
+      sha256 "4d7809a026c69021f5449be0d9a55bac3542592f57de723ba599598e90ec7cd0"
     elsif Hardware::CPU.arm?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-linux-arm64.tar.gz"
-      sha256 "9bd5b041989c6552ff65b994ba15f0037d81ae7ecdb5eaa7b73538d863244146"
+      sha256 "02c7bd4f277cbd7b28f35a82069b0655b8241601a312ff959b931d7c8b346bb1"
     end
   end
 
