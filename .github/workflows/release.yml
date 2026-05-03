@@ -131,7 +131,7 @@ jobs:
         run: |
           cat > Formula/sshm.rb << 'FORMULA'
           class Sshm < Formula
-            desc "Fast, modern SSH host manager for the terminal"
+            desc "Fast SSH + Docker + Incus + Kubernetes manager for the terminal"
             homepage "https://github.com/Sn0wAlice/sshm"
             version "${{ steps.version.outputs.version }}"
 

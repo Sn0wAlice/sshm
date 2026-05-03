@@ -1,3 +1,24 @@
+sshm (1.3.0) stable; urgency=medium
+
+  * NEW: Kluster tab — manage Docker (local + remote SSH), Incus (local + remotes),
+    and Kubernetes / k3s clusters (auto-imported from kubeconfig) in one place.
+    Open a /bin/sh, follow logs, delete terminated pods.
+  * NEW: Docker remote via SSH — pick a saved host, sshm sets DOCKER_HOST=ssh://...
+    No port to open, no TLS to set up.
+  * NEW: persistent tunnels per host (-L / -R / -D), saved in host.json.
+  * NEW: multi-hop ProxyJump auto-resolution from saved host names.
+  * NEW: ed25519-sk (FIDO2) + ECDSA key generation; hardware-key [HW] badge.
+  * NEW: ForwardAgent (-A) per host with safety warning + list badge.
+  * NEW: deeply nested folders (any depth), group-by-tag toggle (g),
+    frecency sort, quick-connect 1-9, bulk select (Space/T/D/C).
+  * NEW: SSH banner detection in health probes (shows OpenSSH_9.6 inline).
+  * NEW: i18n — English and French bundled (SSHM_LANG=fr).
+  * Improved: TUI cluster CRUD via dedicated form (no more inquire takeover).
+  * Improved: configurable refresh intervals + log-tail default in Settings.
+  * Improved: error surfacing in host form, structured anyhow errors throughout.
+
+ -- Sn0wAlice <github@sn0w.io>  Sun, 14 Jun 2026 00:00:00 +0000
+
 sshm (1.0.4) stable; urgency=medium
 
   * Host reachability check (TCP ping) with colored status

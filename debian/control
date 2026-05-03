@@ -5,8 +5,11 @@ Priority: optional
 Architecture: ${ARCH}
 Maintainer: Sn0wAlice <github@sn0w.io>
 Homepage: https://github.com/Sn0wAlice/sshm
-Description: Fast, modern SSH host manager for the terminal
- SSHM is a terminal UI application to manage, organize, and connect
- to your SSH hosts. Features include fuzzy search, nested folders,
- host reachability checks, port forwarding, theme customization,
- and export to ~/.ssh/config format.
+Description: Fast SSH + Docker + Incus + Kubernetes manager for the terminal
+ SSHM is a terminal UI application to manage and connect to SSH hosts,
+ Docker containers (local and remote over SSH), Incus instances, and
+ Kubernetes / k3s pods — all from one keyboard-driven interface.
+ Features include fuzzy search, deeply nested folders, persistent
+ tunnels, multi-hop ProxyJump, ssh-agent integration, hardware-key
+ detection, host reachability with SSH banner probing, theme
+ customization, English/French i18n, and export to ~/.ssh/config.

@@ -75,18 +75,32 @@ fn main() {
             let extras: Vec<String> = if name.is_some() { args[3..].to_vec() } else { args[2..].to_vec() };
             sshm::ssh::add_identity::cmd_add_identity(&db.hosts, name, &extras);
         }
-        Some("help") => {
+        Some("help") | Some("-h") | Some("--help") => {
+            println!("sshm — SSH + Docker + Incus + Kubernetes manager for the terminal");
+            println!();
             println!("Usage:");
-            println!("  sshm");
-
-            println!("\nAdvanced commands:");
-            println!("  sshm list [--filter \"expr\"]");
-            println!("  sshm connect (c) <name> [overrides...]   # pass -i, -J, -L/-R/-D etc.");
-            println!("  sshm create | edit | delete");
-            println!("  sshm tag add <name> <tag1,tag2> | tag del <name> <tag1,tag2>");
-            println!("  sshm load_local_conf   # import from ~/.ssh/config once");
-            println!("  sshm export [path]                                       # export as ~/.ssh/config format");
-            println!("  sshm add-identity <name?> [--pub ~/.ssh/id_ed25519.pub]   # push pubkey to authorized_keys");
+            println!("  sshm                                       # launch the TUI (recommended)");
+            println!();
+            println!("Hosts:");
+            println!("  sshm list [--filter \"expr\"]                # list hosts (expr: tag:foo host:1.* user:bar)");
+            println!("  sshm connect (c) <name> [overrides...]     # connect via ssh; pass -i, -J, -L/-R/-D etc.");
+            println!("  sshm create | edit | delete                # interactive CRUD");
+            println!("  sshm tag add <name> <tag1,tag2>            # add tags");
+            println!("  sshm tag del <name> <tag1,tag2>            # remove tags");
+            println!();
+            println!("Identities:");
+            println!("  sshm add-identity <name?> [--pub <path>]   # push pubkey to authorized_keys");
+            println!();
+            println!("Import / export:");
+            println!("  sshm load_local_conf                       # import from ~/.ssh/config");
+            println!("  sshm export [path]                         # export DB as ~/.ssh/config format");
+            println!();
+            println!("Inside the TUI:");
+            println!("  ←/→  switch tabs (Hosts | Kluster | Identities | Settings | Theme | Help)");
+            println!("  In Kluster: Enter shell, l logs(-f), r refresh, n add, d delete/unlink");
+            println!();
+            println!("Locale:    SSHM_LANG=en|fr  (default = locale, fallback en)");
+            println!("Config:    ~/.config/sshm/{{host,kluster}}.json, settings.toml, theme.toml");
         }
         _ => loop { run_tui(&mut db) },
     }

@@ -1,7 +1,7 @@
 class Sshm < Formula
-  desc "Fast, modern SSH host manager for the terminal"
+  desc "Fast SSH + Docker + Incus + Kubernetes manager for the terminal"
   homepage "https://github.com/Sn0wAlice/sshm"
-  version "1.2.0"
+  version "1.3.0"
 
   on_macos do
     if Hardware::CPU.arm?
