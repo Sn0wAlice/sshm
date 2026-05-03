@@ -99,6 +99,21 @@ pub fn exec_shell(
     cmd.status()
 }
 
+/// `kubectl delete pod -n NS POD [--wait=false]`.
+///
+/// Used to clean up terminated (Succeeded / Failed) pods left behind by Jobs
+/// or CronJobs. We pass `--wait=false` so the command returns immediately
+/// once the deletion has been requested — the caller refreshes the list.
+pub fn delete_pod(
+    cluster: &Cluster,
+    namespace: &str,
+    pod: &str,
+) -> std::io::Result<std::process::Output> {
+    let mut cmd = base_cmd(cluster);
+    cmd.args(["delete", "pod", "-n", namespace, pod, "--wait=false"]);
+    cmd.output()
+}
+
 /// `kubectl logs -n NS POD [-c CONTAINER] [--tail N] [-f]`.
 pub fn logs(
     cluster: &Cluster,

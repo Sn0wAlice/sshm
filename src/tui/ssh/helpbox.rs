@@ -11,7 +11,16 @@ pub enum HelpContext {
     ThemeTab,
     HelpTab,
     IdentitiesTab,
-    KlusterTab,
+    /// Selection is on a Docker / Incus-local / Incus-remote section header
+    /// (no edit/delete — those daemons aren't user-managed entries).
+    KlusterHeaderRuntime,
+    /// Selection is on a saved k8s/k3s cluster header (full CRUD available).
+    KlusterHeaderCluster,
+    /// Selection is on a container / pod / instance — shell + logs apply.
+    KlusterItem,
+    /// Selection is on a Succeeded/Failed pod — additionally allows `d` to
+    /// delete it (`kubectl delete pod`).
+    KlusterTerminalPod,
     Empty,
 }
 
@@ -41,8 +50,17 @@ pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static
         HelpContext::IdentitiesTab => {
             "↑↓ move │ g generate │ p push │ a agent-add │ x agent-del │ K known-hosts │ r refresh │ ←→ tab │ q quit"
         }
-        HelpContext::KlusterTab => {
-            "↑↓ move │ Enter shell │ l logs(-f) │ r refresh │ n add │ e edit │ d delete │ ←→ tab │ q quit"
+        HelpContext::KlusterHeaderRuntime => {
+            "↑↓ move │ Enter expand/collapse │ r refresh │ n add cluster │ ←→ tab │ q quit"
+        }
+        HelpContext::KlusterHeaderCluster => {
+            "↑↓ move │ Enter expand/collapse │ r refresh │ n add │ e edit │ d delete │ ←→ tab │ q quit"
+        }
+        HelpContext::KlusterItem => {
+            "↑↓ move │ Enter shell │ l logs(-f) │ r refresh │ ←→ tab │ q quit"
+        }
+        HelpContext::KlusterTerminalPod => {
+            "↑↓ move │ Enter shell │ l logs(-f) │ d delete pod │ r refresh │ ←→ tab │ q quit"
         }
         HelpContext::Empty => {
             "a add host │ q quit │ ←→ tab"

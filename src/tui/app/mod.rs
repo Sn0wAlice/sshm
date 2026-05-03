@@ -133,8 +133,8 @@ pub mod cluster_form;
 pub mod kluster_actions;
 use kluster_actions::{
     handle_kluster_open_logs, handle_kluster_open_shell,
-    kluster_add_cluster_flow, kluster_delete_cluster_flow, kluster_edit_cluster_flow,
-    sync_kluster_targets,
+    kluster_add_cluster_flow, kluster_delete_cluster_flow, kluster_delete_pod_flow,
+    kluster_edit_cluster_flow, sync_kluster_targets,
 };
 
 pub fn run_tui(db: &mut Database) {
@@ -455,7 +455,29 @@ pub fn run_tui(db: &mut Database) {
                             }
                         }
                     }
-                    ActiveTab::Kluster => HelpContext::KlusterTab,
+                    ActiveTab::Kluster => {
+                        use crate::tui::tabs::kluster_tab::{KlusterRow, KlusterTarget};
+                        match kluster_state.flat_rows.get(kluster_state.selected) {
+                            Some(KlusterRow::ClusterHeader { .. }) => HelpContext::KlusterHeaderCluster,
+                            Some(KlusterRow::DockerHeader { .. })
+                            | Some(KlusterRow::IncusLocalHeader { .. })
+                            | Some(KlusterRow::IncusRemoteHeader { .. }) => HelpContext::KlusterHeaderRuntime,
+                            Some(KlusterRow::ClusterPod { .. }) => {
+                                let terminal = match kluster_state.current_target() {
+                                    Some(KlusterTarget::Pod { pod, .. }) => {
+                                        pod.phase.eq_ignore_ascii_case("Succeeded")
+                                            || pod.phase.eq_ignore_ascii_case("Failed")
+                                    }
+                                    _ => false,
+                                };
+                                if terminal { HelpContext::KlusterTerminalPod } else { HelpContext::KlusterItem }
+                            }
+                            Some(KlusterRow::DockerContainer(_))
+                            | Some(KlusterRow::IncusLocalInstance(_))
+                            | Some(KlusterRow::IncusRemoteInstance { .. }) => HelpContext::KlusterItem,
+                            None => HelpContext::Empty,
+                        }
+                    }
                     ActiveTab::Identities => HelpContext::IdentitiesTab,
                     ActiveTab::Settings => HelpContext::SettingsTab,
                     ActiveTab::Theme => HelpContext::ThemeTab,
@@ -1130,6 +1152,21 @@ pub fn run_tui(db: &mut Database) {
                                         toast = Some(Toast::error(format!("{e:#}")));
                                     } else {
                                         sync_kluster_targets(&kluster_targets, &kluster_state);
+                                    }
+                                }
+                                KlusterAction::DeletePod => {
+                                    match kluster_delete_pod_flow(
+                                        &mut kluster_state,
+                                        &mut terminal,
+                                    ) {
+                                        Ok(Some(name)) => {
+                                            toast = Some(Toast::success(format!("Deleted pod {}", name)));
+                                            kluster_poke.store(true, Ordering::Relaxed);
+                                        }
+                                        Ok(None) => {}
+                                        Err(e) => {
+                                            toast = Some(Toast::error(format!("{e:#}")));
+                                        }
                                     }
                                 }
                             }

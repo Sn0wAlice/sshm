@@ -171,6 +171,66 @@ pub fn kluster_edit_cluster_flow<B: Backend>(
     Ok(())
 }
 
+/// `kubectl delete pod` on the currently selected pod, after a confirm
+/// modal. Returns `Ok(Some(name))` on actual deletion, `Ok(None)` on cancel
+/// or when the row isn't a pod.
+pub fn kluster_delete_pod_flow<B: Backend>(
+    state: &mut KlusterTabState,
+    terminal: &mut Terminal<B>,
+) -> Result<Option<String>> {
+    use crate::kluster::Cluster;
+    use crate::tui::tabs::kluster_tab::KlusterRow;
+    let (cluster, namespace, pod_name): (Cluster, String, String) = match state
+        .flat_rows
+        .get(state.selected)
+    {
+        Some(KlusterRow::ClusterPod { cluster_idx, pod_idx, .. }) => {
+            let cluster = state.db.clusters.get(*cluster_idx)
+                .ok_or_else(|| anyhow::anyhow!("cluster index out of range"))?
+                .clone();
+            let pods = state.cluster_pods.get(*cluster_idx)
+                .and_then(|x| x.as_ref())
+                .ok_or_else(|| anyhow::anyhow!("pod list not loaded"))?;
+            let pod = pods.get(*pod_idx)
+                .ok_or_else(|| anyhow::anyhow!("pod index out of range"))?;
+            (cluster, pod.namespace.clone(), pod.name.clone())
+        }
+        _ => return Ok(None),
+    };
+
+    enter_foreground(terminal);
+    let confirmed = super::cluster_form::run_cluster_delete_confirm(
+        &format!("pod {}/{}", namespace, pod_name),
+    );
+    if !confirmed {
+        restore_tui(terminal);
+        return Ok(None);
+    }
+    let out = crate::kluster::kube::delete_pod(&cluster, &namespace, &pod_name)
+        .context("running kubectl delete pod")?;
+    restore_tui(terminal);
+
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(anyhow::anyhow!(
+            "kubectl delete pod {}/{} failed: {}",
+            namespace,
+            pod_name,
+            if stderr.is_empty() { "non-zero exit".to_string() } else { stderr }
+        ));
+    }
+    // Optimistically drop the entry from the cached list so the UI updates
+    // immediately; the next refresh will re-confirm the state.
+    let cluster_idx = state.db.clusters.iter().position(|c| c.name == cluster.name);
+    if let Some(ci) = cluster_idx {
+        if let Some(Some(list)) = state.cluster_pods.get_mut(ci) {
+            list.retain(|p| !(p.namespace == namespace && p.name == pod_name));
+        }
+    }
+    state.rebuild_rows();
+    Ok(Some(format!("{}/{}", namespace, pod_name)))
+}
+
 /// Confirm delete via a centred modal, then drop the cluster + its cached pods.
 pub fn kluster_delete_cluster_flow<B: Backend>(
     state: &mut KlusterTabState,
