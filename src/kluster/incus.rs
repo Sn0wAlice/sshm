@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 use crossterm::{cursor::Show, execute, terminal::disable_raw_mode};
 
-use super::models::IncusInstance;
+use super::models::{IncusInstance, LifecycleAction};
 use super::shell::SHELL_PATH;
 
 struct AvailCache {
@@ -176,6 +176,31 @@ pub fn logs(
         .arg(qualified(name, remote))
         .args(["--", "sh", "-c", &inner])
         .status()
+}
+
+/// Run `incus start|stop|restart [<remote>:]<name>`. Output is captured; on
+/// failure the daemon's stderr is surfaced. `stop` and `restart` get a 5s
+/// graceful timeout.
+pub fn lifecycle(
+    name: &str,
+    remote: Option<&str>,
+    action: LifecycleAction,
+) -> Result<()> {
+    let mut cmd = Command::new("incus");
+    cmd.arg(action.subcommand()).arg(qualified(name, remote));
+    if matches!(action, LifecycleAction::Stop | LifecycleAction::Restart) {
+        cmd.arg("--timeout=5");
+    }
+    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
+    let out = cmd.output().context("running incus lifecycle command")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(anyhow::anyhow!(
+            "{}",
+            if err.is_empty() { "non-zero exit".to_string() } else { err }
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

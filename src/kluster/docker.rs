@@ -12,7 +12,7 @@ use crossterm::{
     terminal::disable_raw_mode,
 };
 
-use super::models::ContainerInfo;
+use super::models::{ContainerInfo, LifecycleAction};
 use super::shell::SHELL_PATH;
 
 /// Build the `ssh://[user@]host[:port]` URI passed to `DOCKER_HOST` for a
@@ -183,6 +183,35 @@ pub fn logs(
     }
     cmd.arg(id);
     cmd.status()
+}
+
+/// Run `docker start|stop|restart <id>` (optionally against a remote daemon).
+/// Output is captured; on failure the daemon's stderr is surfaced. `stop` and
+/// `restart` are bounded to a 5s graceful window so the UI doesn't freeze for
+/// Docker's default 10s.
+pub fn lifecycle(
+    id: &str,
+    action: LifecycleAction,
+    docker_host: Option<&str>,
+) -> Result<()> {
+    let mut cmd = Command::new("docker");
+    if let Some(u) = docker_host {
+        cmd.env("DOCKER_HOST", u);
+    }
+    cmd.arg(action.subcommand());
+    if matches!(action, LifecycleAction::Stop | LifecycleAction::Restart) {
+        cmd.args(["-t", "5"]);
+    }
+    cmd.arg(id).stdout(Stdio::null()).stderr(Stdio::piped());
+    let out = cmd.output().context("running docker lifecycle command")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(anyhow::anyhow!(
+            "{}",
+            if err.is_empty() { "non-zero exit".to_string() } else { err }
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]

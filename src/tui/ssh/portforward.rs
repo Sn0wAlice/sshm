@@ -159,10 +159,21 @@ impl PortForwardForm {
 // ============================================================================
 
 enum PickerOutcome {
-    Run(Tunnel),
+    /// Start the tunnel in the background and return to the TUI immediately.
+    RunBackground(Tunnel),
+    /// Run the tunnel on the blocking animated screen (watch mode).
+    RunForeground(Tunnel),
     Edit(usize),
     New,
     Cancel,
+}
+
+/// Outcome of [`run_port_forward`].
+pub struct PortForwardResult {
+    /// Updated tunnel list to persist on the host, when it changed.
+    pub updated_tunnels: Option<Vec<Tunnel>>,
+    /// A tunnel the user asked to start in the background.
+    pub start_background: Option<Tunnel>,
 }
 
 fn run_tunnel_picker<B: Backend>(
@@ -224,7 +235,7 @@ fn run_tunnel_picker<B: Backend>(
             f.render_stateful_widget(list, chunks[0], &mut state.clone());
 
             let help = Paragraph::new(
-                "  Enter: run  |  e: edit  |  d: delete  |  n: new tunnel  |  Esc: cancel"
+                "  Enter: start (background)  |  f: foreground  |  e: edit  |  d: delete  |  n: new  |  Esc: cancel"
             ).style(Style::default().fg(theme.muted));
             f.render_widget(help, chunks[1]);
         });
@@ -246,7 +257,12 @@ fn run_tunnel_picker<B: Backend>(
                     }
                     KeyCode::Enter => {
                         if let Some(t) = tunnels.get(sel) {
-                            return PickerOutcome::Run(t.clone());
+                            return PickerOutcome::RunBackground(t.clone());
+                        }
+                    }
+                    KeyCode::Char('f') | KeyCode::Char('F') => {
+                        if let Some(t) = tunnels.get(sel) {
+                            return PickerOutcome::RunForeground(t.clone());
                         }
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
@@ -260,7 +276,7 @@ fn run_tunnel_picker<B: Backend>(
                     KeyCode::Char(c) if c.is_ascii_digit() && c != '0' => {
                         let i = (c as usize) - ('1' as usize);
                         if let Some(t) = tunnels.get(i) {
-                            return PickerOutcome::Run(t.clone());
+                            return PickerOutcome::RunBackground(t.clone());
                         }
                     }
                     _ => {}
@@ -608,7 +624,7 @@ fn draw_tunnel_screen(
 // SSH command builder
 // ============================================================================
 
-fn build_forward_arg(t: &Tunnel) -> Vec<String> {
+pub fn build_forward_arg(t: &Tunnel) -> Vec<String> {
     match t.kind {
         TunnelKind::Local => {
             let rh = if t.remote_host.is_empty() { "localhost".to_string() } else { t.remote_host.clone() };
@@ -628,16 +644,17 @@ fn build_forward_arg(t: &Tunnel) -> Vec<String> {
 // Public entry point
 // ============================================================================
 
-/// Run the port-forward TUI for a host.
+/// Run the port-forward TUI for a host: pick / create / edit saved tunnels.
 ///
-/// Returns `Some(updated_tunnels)` when the host's tunnel list was modified
-/// (saved/edited/deleted) and should be persisted by the caller; otherwise `None`.
+/// Returns a [`PortForwardResult`] — `updated_tunnels` is set when the saved
+/// list changed and should be persisted; `start_background` is set when the
+/// user asked to start a tunnel (the caller spawns it via the `TunnelManager`).
 ///
 /// `all_hosts` is used to resolve multi-hop ProxyJump entries by saved-host name.
 pub fn run_port_forward(
     host: &Host,
     all_hosts: &HashMap<String, Host>,
-) -> Option<Vec<Tunnel>> {
+) -> PortForwardResult {
     let mut stdout_handle = stdout();
     let _ = enable_raw_mode();
     let _ = execute!(stdout_handle, EnterAlternateScreen);
@@ -646,37 +663,39 @@ pub fn run_port_forward(
 
     let mut tunnels = host.tunnels.clone();
     let original = tunnels.clone();
-    let mut tunnels_dirty = false;
     let mut edit_index: Option<usize> = None;
+
+    // Tear the modal down and build the result. `$start` is the tunnel (if
+    // any) the caller should spawn in the background.
+    macro_rules! finish {
+        ($start:expr) => {{
+            let _ = disable_raw_mode();
+            let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
+            return PortForwardResult {
+                updated_tunnels: if tunnels != original { Some(tunnels) } else { None },
+                start_background: $start,
+            };
+        }};
+    }
 
     // --- Phase 0: optional saved tunnels picker ---
     let mut form = if !tunnels.is_empty() {
         match run_tunnel_picker(&mut terminal, host, &mut tunnels) {
-            PickerOutcome::Cancel => {
-                let _ = disable_raw_mode();
-                let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-                if tunnels != original { return Some(tunnels); }
-                return None;
-            }
+            PickerOutcome::Cancel => finish!(None),
             PickerOutcome::New => PortForwardForm::new(),
             PickerOutcome::Edit(i) => {
                 edit_index = Some(i);
                 PortForwardForm::from_existing(&tunnels[i])
             }
-            PickerOutcome::Run(t) => {
-                if tunnels != original { tunnels_dirty = true; }
+            PickerOutcome::RunBackground(t) => finish!(Some(t)),
+            PickerOutcome::RunForeground(t) => {
                 run_tunnel_loop(&mut terminal, host, &t, all_hosts);
-                let _ = disable_raw_mode();
-                let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-                if tunnels_dirty { return Some(tunnels); }
-                return None;
+                finish!(None);
             }
         }
     } else {
         PortForwardForm::new()
     };
-
-    if tunnels != original { tunnels_dirty = true; }
 
     // --- Phase 1: form ---
     let tunnel_def = loop {
@@ -686,12 +705,7 @@ pub fn run_port_forward(
             if let Ok(Event::Key(k)) = event::read() {
                 if k.kind != KeyEventKind::Press { continue; }
                 match k.code {
-                    KeyCode::Esc => {
-                        let _ = disable_raw_mode();
-                        let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-                        if tunnels_dirty { return Some(tunnels); }
-                        return None;
-                    }
+                    KeyCode::Esc => finish!(None),
                     KeyCode::Tab | KeyCode::Down => form.next_field(),
                     KeyCode::BackTab | KeyCode::Up => form.prev_field(),
                     KeyCode::Left => {
@@ -715,7 +729,6 @@ pub fn run_port_forward(
                                             Some(i) if i < tunnels.len() => tunnels[i] = t.clone(),
                                             _ => tunnels.push(t.clone()),
                                         }
-                                        tunnels_dirty = true;
                                     }
                                     break t;
                                 }
@@ -739,12 +752,8 @@ pub fn run_port_forward(
         }
     };
 
-    run_tunnel_loop(&mut terminal, host, &tunnel_def, all_hosts);
-
-    let _ = disable_raw_mode();
-    let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
-
-    if tunnels_dirty { Some(tunnels) } else { None }
+    // The form's [ Start Tunnel ] button starts it in the background.
+    finish!(Some(tunnel_def));
 }
 
 fn run_tunnel_loop<B: Backend>(

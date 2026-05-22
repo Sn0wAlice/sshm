@@ -18,7 +18,7 @@ Built for developers, sysadmins, pentesters, and homelab folks who live in a ter
 - **Host management** — add, edit, delete, tag, organize into nested folders
 - **Clone host** — `y` duplicates the selected host (tunnels included) and drops you straight into the editor
 - **Fuzzy search + prefix filters** — `tag:prod host:10.* user:ubuntu`, fzf-style scoring
-- **Tunnels** — saved per-host port forwards: local (`-L`), remote (`-R`), dynamic SOCKS (`-D`)
+- **Tunnels** — saved per-host port forwards (local `-L`, remote `-R`, dynamic SOCKS `-D`); start them in the **background** and watch / stop them from the `t` dashboard
 - **Multi-hop ProxyJump** — `bastion1,bastion2`, each entry resolves against your saved hosts automatically
 - **Identity management** — push SSH public keys, generate new keys (`ed25519`, `ed25519-sk` FIDO2, `ecdsa`, `rsa`), load into `ssh-agent`
 - **ForwardAgent (`-A`) per host** — opt-in with a visible warning, badged in the list
@@ -43,6 +43,7 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 - **Kubernetes / K3s** — auto-imported from every context in `~/.kube/config` and `$KUBECONFIG`
 - **One Enter to shell** into any container / pod / instance — `/bin/sh` directly, no bash dance
 - **One `l` to follow logs** — `Ctrl+C` returns to the TUI cleanly (no app exit)
+- **Lifecycle control** — `s` starts/stops and `R` restarts Docker containers and Incus instances right from the list
 - **Pod cleanup** — `d` on a `Succeeded`/`Failed` pod runs `kubectl delete pod`
 - **Section folding** — clusters collapsed by default, `Enter` on a header toggles
 - **Live filter** — `/` fuzzy-filters containers, pods and instances across every section (force-expands while filtering)
@@ -180,7 +181,8 @@ sshm help                                # full CLI reference
 | `e` | Edit selected host |
 | `y` | Clone selected host (full copy, opens the editor) |
 | `d` | Delete selected host / folder |
-| `p` | Open port-forward menu (`-L` / `-R` / `-D`, persistent tunnels) |
+| `p` | Open port-forward menu — start a tunnel in the background (`f` runs it foreground) |
+| `t` | Open the background-tunnels dashboard (`d`/`x` stops the selected tunnel) |
 | `i` | Push identity to selected host |
 | `r` | Rename folder |
 | `Space` | Toggle host in bulk selection |
@@ -200,6 +202,8 @@ The available actions depend on what's under the cursor.
 | `Enter` | on a header | Expand / collapse the section |
 | `Enter` | on a container / pod / instance | Open `/bin/sh` (`Ctrl+D` to exit) |
 | `l` | on a container / pod / instance | Stream logs `-f` (`Ctrl+C` returns to TUI) |
+| `s` | on a Docker container / Incus instance | Start it if stopped, stop it if running |
+| `R` (Shift+r) | on a Docker container / Incus instance | Restart it |
 | `r` | always | Force a refresh now |
 | `n` | on a Docker header | Pick a saved host → register a Docker remote |
 | `n` | elsewhere | Add a new k8s/k3s cluster (TUI form) |
@@ -231,6 +235,7 @@ The available actions depend on what's under the cursor.
 | `~/.config/sshm/kluster.json` | Saved clusters + Incus remotes + Docker remotes |
 | `~/.config/sshm/settings.toml` | Defaults, health & kluster intervals |
 | `~/.config/sshm/theme.toml` | TUI color theme (optional) |
+| `~/.config/sshm/tunnels/<pid>.json` | Live background tunnels per running instance — used to clean up after a crash |
 
 ### Settings
 

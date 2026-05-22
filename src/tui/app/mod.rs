@@ -128,19 +128,22 @@ use key_flows::{run_generate_key_flow, run_known_hosts_clean_flow};
 
 pub mod fanout;
 
+pub mod tunnels;
+use tunnels::TunnelManager;
+
 pub mod kluster_worker;
 use kluster_worker::{spawn_kluster_worker, KlusterTargets, KlusterUpdate};
 
 pub mod cluster_form;
 pub mod kluster_actions;
 use kluster_actions::{
-    handle_kluster_open_logs, handle_kluster_open_shell,
+    handle_kluster_lifecycle, handle_kluster_open_logs, handle_kluster_open_shell,
     kluster_add_cluster_flow, kluster_add_docker_remote_flow, kluster_delete_cluster_flow,
     kluster_delete_docker_remote_flow, kluster_delete_pod_flow, kluster_edit_cluster_flow,
     sync_kluster_targets,
 };
 
-pub fn run_tui(db: &mut Database) {
+pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     // Source items
     let mut sort_mode: SortMode = SortMode::Name;
     let mut view_mode: ViewMode = ViewMode::Folders;
@@ -192,6 +195,10 @@ pub fn run_tui(db: &mut Database) {
     // and every keystroke is captured until it's dismissed.
     let mut help_popup = false;
 
+    // Background-tunnels dashboard overlay (opened with `t`).
+    let mut tunnels_popup = false;
+    let mut tunnels_popup_sel: usize = 0;
+
     // Tab state
     let mut active_tab = ActiveTab::Hosts;
     let mut app_config = load_settings();
@@ -234,6 +241,15 @@ pub fn run_tui(db: &mut Database) {
             "n" => kluster_state.bootstrap_imported
         )));
     }
+
+    // Surface (once) any background tunnels cleaned up after a previous crash.
+    if tunnels.recovered_orphans > 0 {
+        toast = Some(Toast::success(format!(
+            "Cleaned {} orphaned tunnel(s) from a previous session",
+            tunnels.recovered_orphans
+        )));
+        tunnels.recovered_orphans = 0;
+    }
     let kluster_targets: KlusterTargets = Arc::new(Mutex::new(
         kluster_worker::WorkerTargets::default(),
     ));
@@ -260,6 +276,9 @@ pub fn run_tui(db: &mut Database) {
         if toast.as_ref().is_some_and(|t| t.is_expired()) {
             toast = None;
         }
+
+        // Drop background tunnels whose ssh process has exited on its own.
+        tunnels.reap();
 
         // Sync the worker's enabled flag with the current config and clear
         // any stale health data when the feature is turned off.
@@ -513,6 +532,13 @@ pub fn run_tui(db: &mut Database) {
                 if help_popup {
                     crate::tui::ssh::helpbox::draw_help_popup(f, help_ctx, &theme);
                 }
+
+                // Background-tunnels dashboard overlay.
+                if tunnels_popup {
+                    crate::tui::app::tunnels::draw_tunnels_popup(
+                        f, tunnels, tunnels_popup_sel, &theme,
+                    );
+                }
             })
             .ok();
 
@@ -525,6 +551,32 @@ pub fn run_tui(db: &mut Database) {
                     if help_popup {
                         if matches!(k.code, KeyCode::Esc | KeyCode::Char('h')) {
                             help_popup = false;
+                        }
+                        continue;
+                    }
+
+                    // --- Tunnels dashboard: modal, navigate + stop tunnels ---
+                    if tunnels_popup {
+                        tunnels.reap();
+                        match k.code {
+                            KeyCode::Esc | KeyCode::Char('t') => tunnels_popup = false,
+                            KeyCode::Up => {
+                                tunnels_popup_sel = tunnels_popup_sel.saturating_sub(1);
+                            }
+                            KeyCode::Down => {
+                                if tunnels_popup_sel + 1 < tunnels.len() {
+                                    tunnels_popup_sel += 1;
+                                }
+                            }
+                            KeyCode::Char('d') | KeyCode::Char('x') => {
+                                if tunnels_popup_sel < tunnels.len() {
+                                    tunnels.stop(tunnels_popup_sel);
+                                    if tunnels_popup_sel >= tunnels.len() {
+                                        tunnels_popup_sel = tunnels.len().saturating_sub(1);
+                                    }
+                                }
+                            }
+                            _ => {}
                         }
                         continue;
                     }
@@ -544,6 +596,11 @@ pub fn run_tui(db: &mut Database) {
                             KeyCode::Right => { active_tab = active_tab.next(); continue; }
                             KeyCode::Left => { active_tab = active_tab.prev(); continue; }
                             KeyCode::Char('h') => { help_popup = true; continue; }
+                            KeyCode::Char('t') => {
+                                tunnels_popup = true;
+                                tunnels_popup_sel = 0;
+                                continue;
+                            }
                             KeyCode::Char('q') | KeyCode::Char('Q') => { q::press(); }
                             _ => {}
                         }
@@ -868,14 +925,14 @@ pub fn run_tui(db: &mut Database) {
                                             if let Some(host_clone) = host_clone {
                                                 let _ = disable_raw_mode();
                                                 let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                let updated = crate::tui::ssh::portforward::run_port_forward(
+                                                let result = crate::tui::ssh::portforward::run_port_forward(
                                                     &host_clone,
                                                     &db.hosts,
                                                 );
                                                 let _ = enable_raw_mode();
                                                 let _ = execute!(stdout(), EnterAlternateScreen);
                                                 let _ = terminal.clear();
-                                                if let Some(new_tunnels) = updated {
+                                                if let Some(new_tunnels) = result.updated_tunnels {
                                                     if let Some(host) = db.hosts.get_mut(&host_clone.name) {
                                                         host.tunnels = new_tunnels;
                                                     }
@@ -883,6 +940,16 @@ pub fn run_tui(db: &mut Database) {
                                                     items = db.hosts.values().collect();
                                                     sort_items(&mut items, sort_mode);
                                                     filtered = apply_filter(&filter, &items);
+                                                }
+                                                if let Some(t) = result.start_background {
+                                                    match tunnels.start(&host_clone, &t, &db.hosts) {
+                                                        Ok(()) => toast = Some(Toast::success(
+                                                            format!("Tunnel started in background ({})", host_clone.name)
+                                                        )),
+                                                        Err(e) => toast = Some(Toast::error(
+                                                            format!("Tunnel failed to start: {e}")
+                                                        )),
+                                                    }
                                                 }
                                             }
                                         }
@@ -1202,6 +1269,10 @@ pub fn run_tui(db: &mut Database) {
                                         &mut terminal,
                                         &mut toast,
                                     );
+                                }
+                                KlusterAction::Lifecycle(act) => {
+                                    handle_kluster_lifecycle(&kluster_state, act, &mut toast);
+                                    kluster_poke.store(true, Ordering::Relaxed);
                                 }
                                 KlusterAction::OpenLogsFollow => {
                                     handle_kluster_open_logs(

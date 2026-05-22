@@ -90,6 +90,34 @@ pub struct PodInfo {
     pub phase: String,
 }
 
+/// A start / stop / restart operation on a Docker container or Incus instance.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LifecycleAction {
+    Start,
+    Stop,
+    Restart,
+}
+
+impl LifecycleAction {
+    /// The matching `docker` / `incus` subcommand.
+    pub fn subcommand(self) -> &'static str {
+        match self {
+            LifecycleAction::Start => "start",
+            LifecycleAction::Stop => "stop",
+            LifecycleAction::Restart => "restart",
+        }
+    }
+
+    /// Past-tense verb for success toasts ("Started nginx").
+    pub fn past_tense(self) -> &'static str {
+        match self {
+            LifecycleAction::Start => "Started",
+            LifecycleAction::Stop => "Stopped",
+            LifecycleAction::Restart => "Restarted",
+        }
+    }
+}
+
 /// Snapshot of one Incus instance (container or VM).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncusInstance {

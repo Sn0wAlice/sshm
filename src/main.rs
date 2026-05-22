@@ -102,6 +102,11 @@ fn main() {
             println!("Locale:    SSHM_LANG=en|fr  (default = locale, fallback en)");
             println!("Config:    ~/.config/sshm/{{host,kluster}}.json, settings.toml, theme.toml");
         }
-        _ => loop { run_tui(&mut db) },
+        _ => {
+            // The tunnel manager outlives individual `run_tui` calls so that
+            // background tunnels survive connecting to a host and returning.
+            let mut tunnels = sshm::tui::app::tunnels::TunnelManager::new();
+            loop { run_tui(&mut db, &mut tunnels) }
+        }
     }
 }

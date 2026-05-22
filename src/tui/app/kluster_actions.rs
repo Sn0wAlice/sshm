@@ -13,6 +13,7 @@ use ratatui::{backend::Backend, Terminal};
 
 use std::collections::HashMap;
 
+use crate::kluster::LifecycleAction;
 use crate::models::{Database, Host};
 use crate::t;
 use crate::tui::ssh::toast::Toast;
@@ -128,6 +129,43 @@ pub fn handle_kluster_open_logs<B: Backend>(
     if let Err(e) = res {
         *toast = Some(Toast::error(t!("kluster.logs_failed", "error" => e)));
     }
+}
+
+/// Start / stop / restart the Docker container or Incus instance under the
+/// cursor. Runs synchronously (the call is bounded to a few seconds) and
+/// reports the outcome through `toast`; the caller pokes a refresh afterwards
+/// so the list picks up the new state. No-op on pods.
+pub fn handle_kluster_lifecycle(
+    state: &KlusterTabState,
+    action: LifecycleAction,
+    toast: &mut Option<Toast>,
+) {
+    let Some(target) = state.current_target() else {
+        *toast = Some(Toast::error(t!("kluster.no_target")));
+        return;
+    };
+    let (name, result) = match target {
+        KlusterTarget::Docker(c) => (
+            c.name.clone(),
+            crate::kluster::docker::lifecycle(&c.id, action, None),
+        ),
+        KlusterTarget::DockerRemote { container, host_uri } => (
+            container.name.clone(),
+            crate::kluster::docker::lifecycle(&container.id, action, Some(host_uri)),
+        ),
+        KlusterTarget::Incus { instance, remote } => (
+            instance.name.clone(),
+            crate::kluster::incus::lifecycle(&instance.name, remote, action),
+        ),
+        KlusterTarget::Pod { .. } => {
+            *toast = Some(Toast::error("Start/stop/restart doesn't apply to pods"));
+            return;
+        }
+    };
+    *toast = Some(match result {
+        Ok(()) => Toast::success(format!("{} {}", action.past_tense(), name)),
+        Err(e) => Toast::error(format!("{} {} failed: {}", action.subcommand(), name, e)),
+    });
 }
 
 /// Resolve every saved Docker remote to its `ssh://` URI using the SSH host

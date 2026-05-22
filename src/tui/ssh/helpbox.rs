@@ -32,10 +32,10 @@ pub enum HelpContext {
 fn help_text_for(ctx: HelpContext) -> &'static str {
     match ctx {
         HelpContext::HostNav => {
-            "↑↓ move │ h help │ Enter connect │ / filter │ a add │ e edit │ y clone │ d delete │ Space select │ X run-cmd │ c check │ p forward │ i identity │ f fav │ s sort │ q quit"
+            "↑↓ move │ h help │ Enter connect │ / filter │ a add │ e edit │ y clone │ d delete │ Space select │ X run-cmd │ c check │ p forward │ t tunnels │ i identity │ f fav │ s sort │ q quit"
         }
         HelpContext::FolderNav => {
-            "↑↓ move │ h help │ Enter expand/collapse │ / filter │ a add │ r rename │ d delete │ q quit"
+            "↑↓ move │ h help │ Enter expand/collapse │ / filter │ a add │ r rename │ d delete │ t tunnels │ q quit"
         }
         HelpContext::FilterMode => {
             "Type to filter (fuzzy) │ Esc clear │ Enter confirm"
@@ -65,7 +65,7 @@ fn help_text_for(ctx: HelpContext) -> &'static str {
             "↑↓ move │ h help │ Enter expand/collapse │ / filter │ r refresh │ n add docker remote │ d unlink │ ←→ tab │ q quit"
         }
         HelpContext::KlusterItem => {
-            "↑↓ move │ h help │ Enter shell │ l logs(-f) │ / filter │ r refresh │ ←→ tab │ q quit"
+            "↑↓ move │ h help │ Enter shell │ l logs(-f) │ s start/stop │ R restart │ / filter │ r refresh │ ←→ tab │ q quit"
         }
         HelpContext::KlusterTerminalPod => {
             "↑↓ move │ h help │ Enter shell │ l logs(-f) │ / filter │ d delete pod │ r refresh │ ←→ tab │ q quit"

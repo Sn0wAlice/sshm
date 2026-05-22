@@ -12,7 +12,9 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
 use std::collections::{HashMap, HashSet};
 
-use crate::kluster::{Cluster, ContainerInfo, IncusInstance, KlusterDb, PodInfo};
+use crate::kluster::{
+    Cluster, ContainerInfo, IncusInstance, KlusterDb, LifecycleAction, PodInfo,
+};
 use crate::tui::theme::Theme;
 
 /// Stable string key used in [`KlusterTabState::collapsed`] to identify a
@@ -417,6 +419,19 @@ pub enum KlusterAction {
     AddDockerRemote,
     /// Remove a Docker remote entry (the SSH host itself is unaffected).
     DeleteDockerRemote,
+    /// Start / stop / restart the selected Docker container or Incus instance.
+    Lifecycle(LifecycleAction),
+}
+
+/// `Some(running)` for a Docker container or Incus instance under the cursor
+/// (i.e. a row that supports start/stop/restart), `None` for pods and headers.
+fn lifecycle_running(state: &KlusterTabState) -> Option<bool> {
+    match state.current_target()? {
+        KlusterTarget::Docker(c) => Some(c.running),
+        KlusterTarget::DockerRemote { container, .. } => Some(container.running),
+        KlusterTarget::Incus { instance, .. } => Some(instance.running),
+        KlusterTarget::Pod { .. } => None,
+    }
 }
 
 pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> KlusterAction {
@@ -516,6 +531,17 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
         // Item-only actions
         KeyCode::Enter if on_item => KlusterAction::OpenShell,
         KeyCode::Char('l') if on_item => KlusterAction::OpenLogsFollow,
+        // `s` toggles start/stop on a Docker/Incus item; `R` restarts it.
+        // Both no-op on pods (k8s has no equivalent — use `d` to delete).
+        KeyCode::Char('s') if on_item => match lifecycle_running(state) {
+            Some(true) => KlusterAction::Lifecycle(LifecycleAction::Stop),
+            Some(false) => KlusterAction::Lifecycle(LifecycleAction::Start),
+            None => KlusterAction::None,
+        },
+        KeyCode::Char('R') if on_item => match lifecycle_running(state) {
+            Some(_) => KlusterAction::Lifecycle(LifecycleAction::Restart),
+            None => KlusterAction::None,
+        },
         // Cluster header CRUD
         KeyCode::Char('e') if on_cluster_header => KlusterAction::EditCluster,
         KeyCode::Char('d') if on_cluster_header => KlusterAction::DeleteCluster,
