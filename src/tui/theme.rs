@@ -72,6 +72,22 @@ struct Config {
     muted: Option<String>,
     error: Option<String>,
     success: Option<String>,
+    /// When true, the background is left transparent: `bg` resolves to
+    /// `Color::Reset` so the terminal's own background shows through. The
+    /// `bg` hex is still kept on disk so unchecking restores it.
+    transparent_bg: Option<bool>,
+}
+
+/// Raw values backing the Theme tab form — the hex strings as stored on
+/// disk (never `Color::Reset`) plus the transparent-background flag.
+pub struct ThemeFormValues {
+    pub bg: String,
+    pub fg: String,
+    pub accent: String,
+    pub muted: String,
+    pub error: String,
+    pub success: String,
+    pub transparent_bg: bool,
 }
 
 fn theme_path() -> PathBuf {
@@ -87,9 +103,15 @@ pub fn load() -> Theme {
         if let Ok(cfg) = toml::from_str::<Config>(&content) {
             let fallback = get_global_theme();
             return Theme {
-                bg: cfg.bg.as_ref()
-                    .and_then(|v| hex_to_color(v))
-                    .unwrap_or(fallback.bg),
+                // Transparent background => Color::Reset, which makes ratatui
+                // leave the terminal's native background untouched.
+                bg: if cfg.transparent_bg.unwrap_or(false) {
+                    Color::Reset
+                } else {
+                    cfg.bg.as_ref()
+                        .and_then(|v| hex_to_color(v))
+                        .unwrap_or(fallback.bg)
+                },
                 fg: cfg.fg.as_ref()
                     .and_then(|v| hex_to_color(v))
                     .unwrap_or(fallback.fg),
@@ -112,15 +134,24 @@ pub fn load() -> Theme {
     get_global_theme()
 }
 
-pub fn save_theme(bg: &str, fg: &str, accent: &str, muted: &str, error: &str, success: &str) {
+#[allow(clippy::too_many_arguments)]
+pub fn save_theme(
+    bg: &str,
+    fg: &str,
+    accent: &str,
+    muted: &str,
+    error: &str,
+    success: &str,
+    transparent_bg: bool,
+) {
     let path = theme_path();
     if let Some(parent) = path.parent() {
         let _ = fs::create_dir_all(parent);
     }
 
     let content = format!(
-        "bg = \"{}\"\nfg = \"{}\"\naccent = \"{}\"\nmuted = \"{}\"\nerror = \"{}\"\nsuccess = \"{}\"\n",
-        bg, fg, accent, muted, error, success
+        "bg = \"{}\"\nfg = \"{}\"\naccent = \"{}\"\nmuted = \"{}\"\nerror = \"{}\"\nsuccess = \"{}\"\ntransparent_bg = {}\n",
+        bg, fg, accent, muted, error, success, transparent_bg
     );
 
     let tmp = path.with_extension("toml.tmp");
@@ -144,4 +175,35 @@ pub fn get_global_theme() -> Theme {
         error: Color::Rgb(204, 102, 102),
         success: Color::Rgb(181, 189, 104),
     }
+}
+
+/// Read the raw values that back the Theme tab form: the six hex strings as
+/// stored in `theme.toml` (falling back to the default theme when a key is
+/// missing or invalid) plus the `transparent_bg` flag. Unlike [`load`], the
+/// `bg` hex is returned verbatim even when transparency is on, so the form
+/// can restore it when the user unchecks the box.
+pub fn form_values() -> ThemeFormValues {
+    let fallback = get_global_theme();
+    let mut v = ThemeFormValues {
+        bg: color_to_hex(fallback.bg),
+        fg: color_to_hex(fallback.fg),
+        accent: color_to_hex(fallback.accent),
+        muted: color_to_hex(fallback.muted),
+        error: color_to_hex(fallback.error),
+        success: color_to_hex(fallback.success),
+        transparent_bg: false,
+    };
+    if let Ok(content) = fs::read_to_string(theme_path()) {
+        if let Ok(cfg) = toml::from_str::<Config>(&content) {
+            let take = |s: Option<String>| s.filter(|h| hex_to_color(h).is_some());
+            if let Some(s) = take(cfg.bg) { v.bg = s; }
+            if let Some(s) = take(cfg.fg) { v.fg = s; }
+            if let Some(s) = take(cfg.accent) { v.accent = s; }
+            if let Some(s) = take(cfg.muted) { v.muted = s; }
+            if let Some(s) = take(cfg.error) { v.error = s; }
+            if let Some(s) = take(cfg.success) { v.success = s; }
+            v.transparent_bg = cfg.transparent_bg.unwrap_or(false);
+        }
+    }
+    v
 }

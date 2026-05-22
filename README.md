@@ -51,7 +51,7 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 ### Quality of life
 
 - **i18n** — UI strings translatable; English + French bundled. Pick via `SSHM_LANG=fr`
-- **Themes** — fully customizable colors via `theme.toml`
+- **Themes** — fully customizable colors via `theme.toml`, with an optional transparent background that uses the terminal's own
 - **Toast notifications** — non-intrusive feedback for actions
 - **Auto-export** — optionally writes a clean `~/.ssh/config` on every save
 - **CLI mode** — scriptable commands for automation
@@ -254,9 +254,13 @@ accent = "#89b4fa"
 muted = "#6c7086"
 error = "#f38ba8"
 success = "#a6e3a1"
-border = "#45475a"
-highlight = "#313244"
+transparent_bg = false
 ```
+
+Set `transparent_bg = true` (or tick **Transparent background** in the Theme
+tab) to drop the `bg` colour entirely and let your terminal's own background —
+including any transparency / blur — show through. The `bg` hex is kept on disk
+so unticking the box restores it.
 
 ### Localization
 

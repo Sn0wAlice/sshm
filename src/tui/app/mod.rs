@@ -196,7 +196,7 @@ pub fn run_tui(db: &mut Database) {
     let mut active_tab = ActiveTab::Hosts;
     let mut app_config = load_settings();
     let mut settings_state = SettingsFormState::from_config(&app_config);
-    let mut theme_state = ThemeTabState::new(&theme::load());
+    let mut theme_state = ThemeTabState::new();
     let mut help_state = HelpTabState::new();
     let mut identities_state = IdentitiesTabState::new();
 
@@ -1466,20 +1466,22 @@ pub fn run_tui(db: &mut Database) {
                         ActiveTab::Theme => {
                             match k.code {
                                 KeyCode::Esc => {
-                                    let current = theme::load();
-                                    theme_state = ThemeTabState::new(&current);
+                                    theme_state = ThemeTabState::new();
                                 }
                                 _ => {
                                     match theme_tab::handle_theme_event(k.code, &mut theme_state) {
                                         ThemeAction::ApplyPreset(idx) => {
                                             let preset = &theme::PRESETS[idx];
-                                            theme::save_theme(preset.bg, preset.fg, preset.accent, preset.muted, preset.error, preset.success);
+                                            // A preset defines a solid background, so it
+                                            // clears any transparency override.
+                                            theme::save_theme(preset.bg, preset.fg, preset.accent, preset.muted, preset.error, preset.success, false);
                                             theme_state.custom_bg = preset.bg.to_string();
                                             theme_state.custom_fg = preset.fg.to_string();
                                             theme_state.custom_accent = preset.accent.to_string();
                                             theme_state.custom_muted = preset.muted.to_string();
                                             theme_state.custom_error = preset.error.to_string();
                                             theme_state.custom_success = preset.success.to_string();
+                                            theme_state.transparent_bg = false;
                                             theme_state.dirty = false;
                                             toast = Some(Toast::success(format!("Theme: {}", preset.name)));
                                         }
@@ -1493,6 +1495,7 @@ pub fn run_tui(db: &mut Database) {
                                                     &theme_state.custom_bg, &theme_state.custom_fg,
                                                     &theme_state.custom_accent, &theme_state.custom_muted,
                                                     &theme_state.custom_error, &theme_state.custom_success,
+                                                    theme_state.transparent_bg,
                                                 );
                                                 theme_state.dirty = false;
                                                 toast = Some(Toast::success("Custom theme saved!"));

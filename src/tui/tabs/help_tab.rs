@@ -206,6 +206,8 @@ const HELP_TEXT: &str = r#"
   Presets        Select and press Enter to apply instantly
   Custom Colors  Enter hex values (#RRGGBB) for:
                    Background, Foreground, Accent, Muted, Error, Success
+  Transparent    Space toggles a transparent background — the terminal's
+                   own background shows through, overriding the bg hex
   [ Save Custom ]  Apply your custom colors
 
   Examples:
