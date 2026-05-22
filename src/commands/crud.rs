@@ -65,6 +65,8 @@ pub fn create_host(hosts: &mut HashMap<String, Host>, current_folder: Option<Str
         favorite: false,
         tunnels: vec![],
         forward_agent: false,
+        mosh: false,
+        notes: None,
     });
 }
 

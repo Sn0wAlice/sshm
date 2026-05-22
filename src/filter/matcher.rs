@@ -152,6 +152,8 @@ mod tests {
             favorite: false,
             tunnels: vec![],
             forward_agent: false,
+            mosh: false,
+            notes: None,
         }
     }
 

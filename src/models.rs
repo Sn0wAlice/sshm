@@ -96,6 +96,15 @@ pub struct Host {
     /// des hôtes de confiance (typiquement bastions). Désactivé par défaut.
     #[serde(default)]
     pub forward_agent: bool,
+    /// Connecte via `mosh` plutôt que `ssh`. mosh doit être installé localement
+    /// et sur l'hôte distant ; le port / l'identité / le ProxyJump sont passés
+    /// à mosh via `--ssh`. Désactivé par défaut.
+    #[serde(default)]
+    pub mosh: bool,
+    /// Note libre de l'utilisateur sur cet hôte (affichée dans le panneau de
+    /// détail). `None` quand aucune note n'a été saisie.
+    #[serde(default)]
+    pub notes: Option<String>,
 }
 
 /// Base de données de l'application (hosts + dossiers)

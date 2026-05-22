@@ -5,6 +5,8 @@
 //! the `selected` cursor).
 
 use crossterm::event::KeyCode;
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
@@ -24,6 +26,30 @@ fn header_key(row: &KlusterRow) -> Option<String> {
         KlusterRow::ClusterHeader { cluster_idx, .. } => Some(format!("cluster_{}", cluster_idx)),
         _ => None,
     }
+}
+
+/// True for the five section-header row variants.
+fn is_header(row: &KlusterRow) -> bool {
+    matches!(
+        row,
+        KlusterRow::DockerHeader { .. }
+            | KlusterRow::DockerRemoteHeader { .. }
+            | KlusterRow::IncusLocalHeader { .. }
+            | KlusterRow::IncusRemoteHeader { .. }
+            | KlusterRow::ClusterHeader { .. }
+    )
+}
+
+/// Fuzzy match `text` against `filter` (smart-case, fzf-style). An empty
+/// filter matches everything.
+fn item_matches(text: &str, filter: &str) -> bool {
+    if filter.is_empty() {
+        return true;
+    }
+    SkimMatcherV2::default()
+        .smart_case()
+        .fuzzy_match(text, filter)
+        .is_some()
 }
 
 /// One renderable row in the left pane. Indices reference the live snapshot
@@ -74,6 +100,12 @@ pub struct KlusterTabState {
     pub bootstrap_imported: usize,
     /// Header keys (see [`header_key`]) that are currently collapsed.
     pub collapsed: HashSet<String>,
+    /// Fuzzy filter applied to container / pod / instance rows. Empty = no
+    /// filter. While non-empty, sections are force-expanded and headers with
+    /// no matching child are hidden.
+    pub filter: String,
+    /// True while the user is typing into [`Self::filter`] (entered with `/`).
+    pub input_mode: bool,
 }
 
 impl KlusterTabState {
@@ -101,6 +133,8 @@ impl KlusterTabState {
             bootstrapped: false,
             bootstrap_imported: imported,
             collapsed,
+            filter: String::new(),
+            input_mode: false,
         };
         state.rebuild_rows();
         state
@@ -110,11 +144,14 @@ impl KlusterTabState {
     /// the worker pushes new data, and after a collapse toggle.
     pub fn rebuild_rows(&mut self) {
         let mut rows = Vec::new();
+        // While a filter is active, every section is force-expanded so matches
+        // hidden inside collapsed sections still surface.
+        let filtering = !self.filter.is_empty();
         let docker_h = KlusterRow::DockerHeader {
             count: self.docker_containers.len(),
             available: self.docker_available,
         };
-        let docker_collapsed = self.collapsed.contains("docker");
+        let docker_collapsed = !filtering && self.collapsed.contains("docker");
         rows.push(docker_h);
         if self.docker_available && !docker_collapsed {
             for i in 0..self.docker_containers.len() {
@@ -131,7 +168,7 @@ impl KlusterTabState {
                 .copied()
                 .unwrap_or(false);
             let key = format!("docker_remote_{}", ri);
-            let is_collapsed = self.collapsed.contains(&key);
+            let is_collapsed = !filtering && self.collapsed.contains(&key);
             rows.push(KlusterRow::DockerRemoteHeader { remote_idx: ri, count, reachable });
             if !is_collapsed && reachable {
                 if let Some(list) = containers {
@@ -146,7 +183,7 @@ impl KlusterTabState {
             count: self.incus_local_instances.len(),
             available: self.incus_local_available,
         };
-        let incus_local_collapsed = self.collapsed.contains("incus_local");
+        let incus_local_collapsed = !filtering && self.collapsed.contains("incus_local");
         rows.push(incus_local_h);
         if self.incus_local_available && !incus_local_collapsed {
             for i in 0..self.incus_local_instances.len() {
@@ -161,7 +198,7 @@ impl KlusterTabState {
                 .map(|v| v.len())
                 .unwrap_or(0);
             let key = format!("incus_remote_{}", ri);
-            let is_collapsed = self.collapsed.contains(&key);
+            let is_collapsed = !filtering && self.collapsed.contains(&key);
             rows.push(KlusterRow::IncusRemoteHeader { remote_idx: ri, count });
             if !is_collapsed {
                 if let Some(list) = self.incus_remote_instances.get(remote) {
@@ -175,7 +212,7 @@ impl KlusterTabState {
             let pods = self.cluster_pods.get(ci).and_then(|x| x.as_ref());
             let count = pods.map(|p| p.len()).unwrap_or(0);
             let key = format!("cluster_{}", ci);
-            let is_collapsed = self.collapsed.contains(&key);
+            let is_collapsed = !filtering && self.collapsed.contains(&key);
             rows.push(KlusterRow::ClusterHeader { cluster_idx: ci, count });
             if !is_collapsed {
                 if let Some(pods) = pods {
@@ -189,9 +226,73 @@ impl KlusterTabState {
                 }
             }
         }
+        if filtering {
+            rows = self.apply_row_filter(rows);
+        }
         self.flat_rows = rows;
         if self.selected >= self.flat_rows.len() {
             self.selected = self.flat_rows.len().saturating_sub(1);
+        }
+    }
+
+    /// Drop item rows that don't fuzzy-match [`Self::filter`], and drop any
+    /// section header left with no matching child. Assumes `rows` is the fully
+    /// expanded layout (headers immediately followed by their items).
+    fn apply_row_filter(&self, rows: Vec<KlusterRow>) -> Vec<KlusterRow> {
+        let mut out: Vec<KlusterRow> = Vec::new();
+        let mut pending_header: Option<KlusterRow> = None;
+        for row in rows {
+            if is_header(&row) {
+                // A new header supersedes any previous header that never got
+                // a match (so empty sections are dropped while filtering).
+                pending_header = Some(row);
+            } else if self.row_item_matches(&row) {
+                if let Some(h) = pending_header.take() {
+                    out.push(h);
+                }
+                out.push(row);
+            }
+        }
+        out
+    }
+
+    /// True when the item on `row` fuzzy-matches the current filter. Headers
+    /// and unknown rows return false.
+    fn row_item_matches(&self, row: &KlusterRow) -> bool {
+        let text: Option<String> = match row {
+            KlusterRow::DockerContainer(i) => self
+                .docker_containers
+                .get(*i)
+                .map(|c| format!("{} {}", c.name, c.image)),
+            KlusterRow::DockerRemoteContainer { remote_idx, container_idx } => self
+                .db
+                .docker_remotes
+                .get(*remote_idx)
+                .and_then(|r| self.docker_remote_containers.get(&r.host_alias))
+                .and_then(|v| v.get(*container_idx))
+                .map(|c| format!("{} {}", c.name, c.image)),
+            KlusterRow::ClusterPod { cluster_idx, pod_idx, .. } => self
+                .cluster_pods
+                .get(*cluster_idx)
+                .and_then(|x| x.as_ref())
+                .and_then(|p| p.get(*pod_idx))
+                .map(|p| format!("{} {}", p.namespace, p.name)),
+            KlusterRow::IncusLocalInstance(i) => self
+                .incus_local_instances
+                .get(*i)
+                .map(|inst| format!("{} {}", inst.name, inst.image)),
+            KlusterRow::IncusRemoteInstance { remote_idx, instance_idx } => self
+                .db
+                .incus_remotes
+                .get(*remote_idx)
+                .and_then(|r| self.incus_remote_instances.get(r))
+                .and_then(|v| v.get(*instance_idx))
+                .map(|inst| format!("{} {}", inst.name, inst.image)),
+            _ => return false,
+        };
+        match text {
+            Some(t) => item_matches(&t, &self.filter),
+            None => false,
         }
     }
 
@@ -319,6 +420,48 @@ pub enum KlusterAction {
 }
 
 pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> KlusterAction {
+    // While typing a filter, keystrokes edit the query; arrows still navigate.
+    if state.input_mode {
+        match key {
+            KeyCode::Esc => {
+                state.input_mode = false;
+                state.filter.clear();
+                state.selected = 0;
+                state.rebuild_rows();
+            }
+            KeyCode::Enter => state.input_mode = false,
+            KeyCode::Backspace => {
+                state.filter.pop();
+                state.selected = 0;
+                state.rebuild_rows();
+            }
+            KeyCode::Up => state.move_up(),
+            KeyCode::Down => state.move_down(),
+            KeyCode::Char(c) => {
+                state.filter.push(c);
+                state.selected = 0;
+                state.rebuild_rows();
+            }
+            _ => {}
+        }
+        return KlusterAction::None;
+    }
+
+    // `/` opens the filter; Esc clears an already-applied filter.
+    if key == KeyCode::Char('/') {
+        state.input_mode = true;
+        state.filter.clear();
+        state.selected = 0;
+        state.rebuild_rows();
+        return KlusterAction::None;
+    }
+    if key == KeyCode::Esc && !state.filter.is_empty() {
+        state.filter.clear();
+        state.selected = 0;
+        state.rebuild_rows();
+        return KlusterAction::None;
+    }
+
     let row = state.flat_rows.get(state.selected);
     let on_item = matches!(
         row,
@@ -395,10 +538,18 @@ pub fn draw_kluster_tab(f: &mut Frame, area: Rect, state: &KlusterTabState, them
     if !state.flat_rows.is_empty() {
         ls.select(Some(state.selected));
     }
+    let title = if state.input_mode {
+        format!("Kluster — filter: {}▏", state.filter)
+    } else if !state.filter.is_empty() {
+        let matches = state.flat_rows.iter().filter(|r| !is_header(r)).count();
+        format!("Kluster — filter: {} ({} match)", state.filter, matches)
+    } else {
+        "Kluster — Docker + clusters".to_string()
+    };
     let list = List::new(items)
         .block(
             Block::default()
-                .title("Kluster — Docker + clusters")
+                .title(title)
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.accent))
                 .style(Style::default().bg(theme.bg).fg(theme.fg)),

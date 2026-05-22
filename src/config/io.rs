@@ -49,6 +49,8 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
                 .and_then(|x| serde_json::from_value(x.clone()).ok())
                 .unwrap_or_default();
             let forward_agent = e.get("forward_agent").and_then(|x| x.as_bool()).unwrap_or(false);
+            let mosh = e.get("mosh").and_then(|x| x.as_bool()).unwrap_or(false);
+            let notes = e.get("notes").and_then(|x| x.as_str()).map(|s| s.to_string());
 
             if !host.is_empty() {
                 migrated.insert(alias.clone(), Host {
@@ -65,6 +67,8 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
                     favorite,
                     tunnels,
                     forward_agent,
+                    mosh,
+                    notes,
                 });
             }
         }
@@ -208,6 +212,8 @@ mod tests {
             favorite: false,
             tunnels: vec![],
             forward_agent: false,
+            mosh: false,
+            notes: None,
         }
     }
 

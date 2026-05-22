@@ -29,7 +29,7 @@ pub enum HelpContext {
 pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static> {
     let text = match ctx {
         HelpContext::HostNav => {
-            "↑↓ move │ Enter connect │ / filter │ a add │ e edit │ d delete │ c check │ p forward │ i identity │ f fav │ s sort │ q quit"
+            "↑↓ move │ Enter connect │ / filter │ a add │ e edit │ y clone │ d delete │ Space select │ X run-cmd │ c check │ p forward │ i identity │ f fav │ s sort │ q quit"
         }
         HelpContext::FolderNav => {
             "↑↓ move │ Enter expand/collapse │ / filter │ a add │ r rename │ d delete │ q quit"
@@ -53,19 +53,19 @@ pub fn get_contextual_help(ctx: HelpContext, theme: &Theme) -> Paragraph<'static
             "↑↓ move │ g generate │ p push │ a agent-add │ x agent-del │ K known-hosts │ r refresh │ ←→ tab │ q quit"
         }
         HelpContext::KlusterHeaderRuntime => {
-            "↑↓ move │ Enter expand/collapse │ r refresh │ n add cluster │ ←→ tab │ q quit"
+            "↑↓ move │ Enter expand/collapse │ / filter │ r refresh │ n add cluster │ ←→ tab │ q quit"
         }
         HelpContext::KlusterHeaderCluster => {
-            "↑↓ move │ Enter expand/collapse │ r refresh │ n add │ e edit │ d delete │ ←→ tab │ q quit"
+            "↑↓ move │ Enter expand/collapse │ / filter │ r refresh │ n add │ e edit │ d delete │ ←→ tab │ q quit"
         }
         HelpContext::KlusterHeaderDockerRemote => {
-            "↑↓ move │ Enter expand/collapse │ r refresh │ n add docker remote │ d unlink │ ←→ tab │ q quit"
+            "↑↓ move │ Enter expand/collapse │ / filter │ r refresh │ n add docker remote │ d unlink │ ←→ tab │ q quit"
         }
         HelpContext::KlusterItem => {
-            "↑↓ move │ Enter shell │ l logs(-f) │ r refresh │ ←→ tab │ q quit"
+            "↑↓ move │ Enter shell │ l logs(-f) │ / filter │ r refresh │ ←→ tab │ q quit"
         }
         HelpContext::KlusterTerminalPod => {
-            "↑↓ move │ Enter shell │ l logs(-f) │ d delete pod │ r refresh │ ←→ tab │ q quit"
+            "↑↓ move │ Enter shell │ l logs(-f) │ / filter │ d delete pod │ r refresh │ ←→ tab │ q quit"
         }
         HelpContext::Empty => {
             "a add host │ q quit │ ←→ tab"

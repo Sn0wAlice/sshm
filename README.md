@@ -16,15 +16,19 @@ Built for developers, sysadmins, pentesters, and homelab folks who live in a ter
 ### Hosts (SSH)
 
 - **Host management** — add, edit, delete, tag, organize into nested folders
+- **Clone host** — `y` duplicates the selected host (tunnels included) and drops you straight into the editor
 - **Fuzzy search + prefix filters** — `tag:prod host:10.* user:ubuntu`, fzf-style scoring
 - **Tunnels** — saved per-host port forwards: local (`-L`), remote (`-R`), dynamic SOCKS (`-D`)
 - **Multi-hop ProxyJump** — `bastion1,bastion2`, each entry resolves against your saved hosts automatically
 - **Identity management** — push SSH public keys, generate new keys (`ed25519`, `ed25519-sk` FIDO2, `ecdsa`, `rsa`), load into `ssh-agent`
 - **ForwardAgent (`-A`) per host** — opt-in with a visible warning, badged in the list
+- **Mosh per host** — opt-in toggle; connects via `mosh` instead of `ssh`, forwarding port / identity / ProxyJump automatically
+- **Per-host notes** — free-text reminder shown in the detail panel
 - **Hardware key detection** — `[HW]` badge for `*-sk` keys
 - **Frecency sort + Recently Used** — `s` cycles `name → MRU → most-used → favorites → frecency`
 - **Group by tag** — `g` toggles between folder view and tag view
 - **Bulk actions** — `Space` selects, `T` adds tags to selection, `D` deletes, `C` clears
+- **Fan-out** — `X` runs one command on every selected host over SSH, with per-host output and an ok/failed summary
 - **Quick connect** — `1`-`9` connects to the Nth visible host
 - **Health probes** — periodic TCP + SSH banner check, latency in ms, banner version (`OpenSSH_9.6`) shown inline
 
@@ -41,6 +45,7 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 - **One `l` to follow logs** — `Ctrl+C` returns to the TUI cleanly (no app exit)
 - **Pod cleanup** — `d` on a `Succeeded`/`Failed` pod runs `kubectl delete pod`
 - **Section folding** — clusters collapsed by default, `Enter` on a header toggles
+- **Live filter** — `/` fuzzy-filters containers, pods and instances across every section (force-expands while filtering)
 - **Live discovery** — background worker polls every `kluster_refresh_secs` (configurable in Settings)
 
 ### Quality of life
@@ -173,6 +178,7 @@ sshm help                                # full CLI reference
 |-----|--------|
 | `a` | Add a host (or folder when on a folder row) |
 | `e` | Edit selected host |
+| `y` | Clone selected host (full copy, opens the editor) |
 | `d` | Delete selected host / folder |
 | `p` | Open port-forward menu (`-L` / `-R` / `-D`, persistent tunnels) |
 | `i` | Push identity to selected host |
@@ -181,6 +187,7 @@ sshm help                                # full CLI reference
 | `T` (Shift+t) | Bulk-add tags to selected hosts |
 | `D` (Shift+d) | Bulk-delete selected hosts (with confirm) |
 | `C` (Shift+c) | Clear bulk selection |
+| `X` (Shift+x) | Fan-out: run a command on every selected host |
 
 ### Kluster tab
 
@@ -189,6 +196,7 @@ The available actions depend on what's under the cursor.
 | Key | When | Action |
 |-----|------|--------|
 | `↑`/`↓` `j`/`k` | always | Navigate |
+| `/` | always | Fuzzy-filter containers / pods / instances (`Esc` clears) |
 | `Enter` | on a header | Expand / collapse the section |
 | `Enter` | on a container / pod / instance | Open `/bin/sh` (`Ctrl+D` to exit) |
 | `l` | on a container / pod / instance | Stream logs `-f` (`Ctrl+C` returns to TUI) |

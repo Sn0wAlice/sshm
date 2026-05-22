@@ -126,6 +126,8 @@ fn save_and_export(db: &Database, app_config: &AppConfig) {
 pub mod key_flows;
 use key_flows::{run_generate_key_flow, run_known_hosts_clean_flow};
 
+pub mod fanout;
+
 pub mod kluster_worker;
 use kluster_worker::{spawn_kluster_worker, KlusterTargets, KlusterUpdate};
 
@@ -459,6 +461,7 @@ pub fn run_tui(db: &mut Database) {
                             }
                         }
                     }
+                    ActiveTab::Kluster if kluster_state.input_mode => HelpContext::FilterMode,
                     ActiveTab::Kluster => {
                         use crate::tui::tabs::kluster_tab::{KlusterRow, KlusterTarget};
                         match kluster_state.flat_rows.get(kluster_state.selected) {
@@ -511,7 +514,7 @@ pub fn run_tui(db: &mut Database) {
                     // --- Global: tab navigation when not editing ---
                     let tab_nav_allowed = match active_tab {
                         ActiveTab::Hosts => !input_mode && matches!(delete_mode, DeleteMode::None),
-                        ActiveTab::Kluster => true,
+                        ActiveTab::Kluster => !kluster_state.input_mode,
                         ActiveTab::Identities => true,
                         ActiveTab::Settings => !settings_state.is_editing_field(),
                         ActiveTab::Theme => !theme_state.is_editing_custom_field(),
@@ -951,6 +954,47 @@ pub fn run_tui(db: &mut Database) {
                                             list_state.select(if filtered.is_empty() { None } else { Some(0) });
                                             let _ = terminal.clear();
                                         }
+                                        'y' => {
+                                            // Clone the selected host: full copy under a
+                                            // unique `<name>-copy` alias (history reset),
+                                            // then drop into the edit form to tweak it.
+                                            let src_name: Option<String> = {
+                                                let rows = rows_for(view_mode, db, &items, &filtered, &filter, &collapsed);
+                                                rows.get(selected).and_then(|r| match r {
+                                                    Row::Host(h) => Some(h.name.clone()),
+                                                    _ => None,
+                                                })
+                                            };
+                                            if let Some(src) = src_name {
+                                                let mut clone_name = format!("{}-copy", src);
+                                                let mut n = 2;
+                                                while db.hosts.contains_key(&clone_name) {
+                                                    clone_name = format!("{}-copy-{}", src, n);
+                                                    n += 1;
+                                                }
+                                                if let Some(mut clone) = db.hosts.get(&src).cloned() {
+                                                    clone.name = clone_name.clone();
+                                                    clone.last_connected_at = None;
+                                                    clone.use_count = 0;
+                                                    clone.favorite = false;
+                                                    db.hosts.insert(clone_name.clone(), clone);
+                                                    save_and_export(db, &app_config);
+                                                    let state = HostFormState::new_edit(db, &clone_name);
+                                                    let _ = disable_raw_mode();
+                                                    let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                    run_host_form(db, state);
+                                                    let _ = enable_raw_mode();
+                                                    let _ = execute!(stdout(), EnterAlternateScreen);
+                                                    items = db.hosts.values().collect();
+                                                    sort_items(&mut items, sort_mode);
+                                                    filtered = apply_filter(&filter, &items);
+                                                    selected = 0;
+                                                    list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                                    let _ = terminal.clear();
+                                                    toast = Some(Toast::success(format!("Cloned {} → {}", src, clone_name)));
+                                                }
+                                            }
+                                        }
                                         ' ' => {
                                             // Toggle selection of the host on the current row.
                                             let target: Option<String> = {
@@ -1053,6 +1097,27 @@ pub fn run_tui(db: &mut Database) {
                                                             "tags" => new_tags.join(",")
                                                         )));
                                                     }
+                                                }
+                                            }
+                                        }
+                                        'X' => {
+                                            // Fan-out: run one command across every bulk-selected host.
+                                            if selection.is_empty() {
+                                                toast = Some(Toast::error(t!("toast.nothing_selected")));
+                                            } else {
+                                                let mut names: Vec<String> = selection.iter().cloned().collect();
+                                                names.sort();
+                                                let _ = disable_raw_mode();
+                                                let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                let result = fanout::run_fanout(&db.hosts, &names);
+                                                let _ = enable_raw_mode();
+                                                let _ = execute!(stdout(), EnterAlternateScreen);
+                                                let _ = terminal.clear();
+                                                if let Some((ok, failed)) = result {
+                                                    toast = Some(Toast::success(format!(
+                                                        "Fan-out done — {} ok, {} failed",
+                                                        ok, failed
+                                                    )));
                                                 }
                                             }
                                         }

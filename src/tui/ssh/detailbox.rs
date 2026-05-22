@@ -31,6 +31,11 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                     } else {
                         ""
                     };
+                    let mosh_line = if h.mosh { "Mosh: ● ON\n" } else { "" };
+                    let notes_line = match &h.notes {
+                        Some(n) if !n.trim().is_empty() => format!("Notes: {}\n", n.trim()),
+                        _ => String::new(),
+                    };
                     let tunnels_line = if h.tunnels.is_empty() {
                         String::new()
                     } else {
@@ -44,7 +49,7 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         h.last_connected_at.as_deref(),
                     );
                     let detail = format!(
-                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n{}{}Last used: {}\nUses: {}\nFrecency: {:.2}\n{}",
+                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n{}{}{}{}Last used: {}\nUses: {}\nFrecency: {:.2}\n{}",
                         name_display,
                         h.username,
                         h.host,
@@ -54,7 +59,9 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         h.proxy_jump.as_deref().unwrap_or_default(),
                         h.folder.as_deref().unwrap_or("-"),
                         fa_line,
+                        mosh_line,
                         tunnels_line,
+                        notes_line,
                         last_used,
                         h.use_count,
                         frecency,

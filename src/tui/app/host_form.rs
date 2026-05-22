@@ -55,7 +55,9 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
                 Constraint::Length(1), // proxyjump
                 Constraint::Length(1), // tags
                 Constraint::Length(1), // folder
+                Constraint::Length(1), // notes
                 Constraint::Length(1), // forward agent
+                Constraint::Length(1), // mosh
                 Constraint::Length(1), // actions
             ]
             .as_ref(),
@@ -85,9 +87,10 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
     f.render_widget(mk_line("ProxyJump", &state.proxy_jump, state.selected_field == 5), chunks[5]);
     f.render_widget(mk_line("Tags", &state.tags, state.selected_field == 6), chunks[6]);
     f.render_widget(mk_line("Folder", &state.folder, state.selected_field == 7), chunks[7]);
+    f.render_widget(mk_line("Notes", &state.notes, state.selected_field == 8), chunks[8]);
 
     // Forward-agent toggle row
-    let fa_selected = state.selected_field == 8;
+    let fa_selected = state.selected_field == HostFormState::FA_FIELD;
     let fa_value = if state.forward_agent { "[x]" } else { "[ ]" };
     let fa_label = "ForwardAgent (-A)";
     let fa_marker_style = if fa_selected {
@@ -112,7 +115,29 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
         Span::styled(fa_value, fa_marker_style),
         Span::styled(fa_warning.to_string(), warning_style),
     ]));
-    f.render_widget(fa_para, chunks[8]);
+    f.render_widget(fa_para, chunks[9]);
+
+    // Mosh toggle row
+    let mosh_selected = state.selected_field == HostFormState::MOSH_FIELD;
+    let mosh_value = if state.mosh { "[x]" } else { "[ ]" };
+    let mosh_marker_style = if mosh_selected {
+        Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD)
+    } else if state.mosh {
+        Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    let mosh_hint = if state.mosh {
+        "  connects with mosh instead of ssh"
+    } else {
+        "  Space to toggle (off by default)"
+    };
+    let mosh_para = Paragraph::new(Line::from(vec![
+        Span::styled("Mosh: ", Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(mosh_value, mosh_marker_style),
+        Span::styled(mosh_hint.to_string(), Style::default().fg(theme.muted)),
+    ]));
+    f.render_widget(mosh_para, chunks[10]);
 
     let save_selected = state.selected_field == HostFormState::fields_count();
     let save_style = if save_selected {
@@ -127,7 +152,7 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
         Span::styled("[ Esc = Cancel ]", Style::default().fg(theme.muted)),
     ]));
 
-    f.render_widget(actions, chunks[9]);
+    f.render_widget(actions, chunks[11]);
 
     let footer_area = Rect {
         x: inner.x,
@@ -145,7 +170,11 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
         let pj_hint = if state.selected_field == 5 {
             "ProxyJump: comma-separated multi-hop, e.g. \"bastion1,bastion2\". Each entry can be a saved host name (auto-resolved) or user@host[:port]."
         } else if state.selected_field == 8 {
+            "Notes: free-text reminder shown in the host detail panel. Not used by ssh."
+        } else if state.selected_field == HostFormState::FA_FIELD {
             "ForwardAgent (-A): forwards your local ssh-agent to this host. Only enable on hosts you fully trust — root there can use your keys."
+        } else if state.selected_field == HostFormState::MOSH_FIELD {
+            "Mosh: connect with mosh instead of ssh (roaming, low-latency). Requires mosh installed locally and on the host."
         } else {
             "Tab/Shift+Tab or ↑/↓ to move • Type to edit • Enter to save when [ Save ] is selected • Esc to cancel"
         };
@@ -221,6 +250,11 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
         }
     };
 
+    let notes = {
+        let v = state.notes.trim();
+        if v.is_empty() { None } else { Some(v.to_string()) }
+    };
+
     if state.is_edit {
         if let Some(orig_name) = &state.original_name {
             let (last_connected_at, use_count, favorite, tunnels) = db
@@ -243,6 +277,8 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
                 favorite,
                 tunnels,
                 forward_agent: state.forward_agent,
+                mosh: state.mosh,
+                notes: notes.clone(),
             };
             db.hosts.insert(new_host.name.clone(), new_host);
         }
@@ -261,6 +297,8 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
             favorite: false,
             tunnels: vec![],
             forward_agent: state.forward_agent,
+            mosh: state.mosh,
+            notes,
         };
         db.hosts.insert(name.to_string(), host_obj);
     }

@@ -54,6 +54,8 @@ pub fn parse_ssh_config_text(
             favorite: false,
             tunnels: vec![],
             forward_agent: false,
+            mosh: false,
+            notes: None,
         });
     }
     out
@@ -139,6 +141,8 @@ Host concrete
                 favorite: false,
                 tunnels: vec![],
                 forward_agent: false,
+                mosh: false,
+                notes: None,
             },
         );
         let parsed = parse_ssh_config_text(txt, &existing);

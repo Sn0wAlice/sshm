@@ -55,17 +55,50 @@ const HELP_TEXT: &str = r#"
   /              Open the fuzzy search filter
   a              Add a new host (inherits folder context)
   e              Edit the selected host
+  y              Clone the selected host (opens the edit form)
   d              Delete the selected host or folder
   r              Rename the selected folder
   p              Port forwarding (SSH tunnel)
   c              Check host reachability (TCP ping)
   i              Manage identity file for the selected host
+  Space          Select / deselect a host for bulk actions
+  X              Run a command on every selected host (fan-out)
 
   Examples:
     • Select "web-prod" → Enter    → opens ssh root@10.0.1.5
     • Select "web-prod" → e        → edit name, host, port, user, tags…
+    • Select "web-prod" → y        → creates "web-prod-copy", opens editor
     • Select a folder   → a        → new host is created inside that folder
     • Select "old-box"  → d        → confirmation modal, then deleted
+
+  ─── Bulk Actions & Fan-out ─────────────────────
+
+  Press Space to add hosts to a selection set, then act on all of them:
+
+  T              Add tags to every selected host
+  D              Delete every selected host (with confirmation)
+  C              Clear the current selection
+  X              Run one shell command on every selected host
+
+  Fan-out ('X') prompts for a command, shows the target hosts, asks for
+  confirmation, then runs the command over SSH on each host in turn and
+  prints the per-host output followed by an ok/failed summary.
+
+  Examples:
+    • Space ×3 → X → "uptime"        → uptime of three hosts in a row
+    • Space ×N → X → "apt update"    → refresh package lists fleet-wide
+    • Space ×N → T → "prod,web"      → tag a batch of hosts at once
+
+  ─── Mosh & Notes ───────────────────────────────
+
+  In the host editor (a / e / y):
+
+  • Mosh    Toggle to connect with `mosh` instead of `ssh` — useful on
+            roaming or high-latency links. Requires mosh installed both
+            locally and on the remote host. Port / identity / ProxyJump
+            are forwarded to mosh automatically.
+  • Notes   Free-text reminder shown in the host Details panel. Purely
+            informational — never passed to ssh.
 
   ─── Host Status Check ──────────────────────────
 
