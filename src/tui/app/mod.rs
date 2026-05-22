@@ -188,6 +188,10 @@ pub fn run_tui(db: &mut Database) {
     let mut delete_mode = DeleteMode::None;
     let mut delete_button_index: usize = 0;
 
+    // Help popup overlay: when true, `h` has opened the full-shortcut popup
+    // and every keystroke is captured until it's dismissed.
+    let mut help_popup = false;
+
     // Tab state
     let mut active_tab = ActiveTab::Hosts;
     let mut app_config = load_settings();
@@ -493,7 +497,7 @@ pub fn run_tui(db: &mut Database) {
                     ActiveTab::Help => HelpContext::HelpTab,
                 };
                 f.render_widget(
-                    crate::tui::ssh::helpbox::get_contextual_help(help_ctx, &theme),
+                    crate::tui::ssh::helpbox::get_contextual_help(help_ctx, &theme, vchunks[2].width),
                     vchunks[2],
                 );
 
@@ -503,6 +507,11 @@ pub fn run_tui(db: &mut Database) {
                         crate::tui::ssh::toast::render_toast(f, size, t, &theme);
                     }
                 }
+
+                // Help popup overlay — full shortcut list, above everything.
+                if help_popup {
+                    crate::tui::ssh::helpbox::draw_help_popup(f, help_ctx, &theme);
+                }
             })
             .ok();
 
@@ -510,6 +519,14 @@ pub fn run_tui(db: &mut Database) {
         if event::poll(Duration::from_millis(150)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
                 if k.kind == KeyEventKind::Press {
+
+                    // --- Help popup: modal, swallows every keystroke ---
+                    if help_popup {
+                        if matches!(k.code, KeyCode::Esc | KeyCode::Char('h')) {
+                            help_popup = false;
+                        }
+                        continue;
+                    }
 
                     // --- Global: tab navigation when not editing ---
                     let tab_nav_allowed = match active_tab {
@@ -525,6 +542,7 @@ pub fn run_tui(db: &mut Database) {
                         match k.code {
                             KeyCode::Right => { active_tab = active_tab.next(); continue; }
                             KeyCode::Left => { active_tab = active_tab.prev(); continue; }
+                            KeyCode::Char('h') => { help_popup = true; continue; }
                             KeyCode::Char('q') | KeyCode::Char('Q') => { q::press(); }
                             _ => {}
                         }
