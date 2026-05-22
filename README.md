@@ -213,6 +213,7 @@ The available actions depend on what's under the cursor.
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Navigate keys in `~/.ssh` |
+| `/` | Fuzzy-filter keys by file name / type / comment (`Esc` clears) |
 | `g` | Generate a new key (interactive: ed25519 / ed25519-sk / ecdsa / rsa) |
 | `p` | Push selected pubkey to a host |
 | `a` | Add selected key to `ssh-agent` |

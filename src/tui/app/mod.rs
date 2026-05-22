@@ -491,6 +491,7 @@ pub fn run_tui(db: &mut Database) {
                             None => HelpContext::Empty,
                         }
                     }
+                    ActiveTab::Identities if identities_state.input_mode => HelpContext::FilterMode,
                     ActiveTab::Identities => HelpContext::IdentitiesTab,
                     ActiveTab::Settings => HelpContext::SettingsTab,
                     ActiveTab::Theme => HelpContext::ThemeTab,
@@ -532,7 +533,7 @@ pub fn run_tui(db: &mut Database) {
                     let tab_nav_allowed = match active_tab {
                         ActiveTab::Hosts => !input_mode && matches!(delete_mode, DeleteMode::None),
                         ActiveTab::Kluster => !kluster_state.input_mode,
-                        ActiveTab::Identities => true,
+                        ActiveTab::Identities => !identities_state.input_mode,
                         ActiveTab::Settings => !settings_state.is_editing_field(),
                         ActiveTab::Theme => !theme_state.is_editing_custom_field(),
                         ActiveTab::Help => true,

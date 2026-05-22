@@ -53,7 +53,7 @@ fn help_text_for(ctx: HelpContext) -> &'static str {
             "↑↓ scroll │ h help │ PageUp/PageDn fast scroll │ Home top │ ←→ tab │ q quit"
         }
         HelpContext::IdentitiesTab => {
-            "↑↓ move │ h help │ g generate │ p push │ a agent-add │ x agent-del │ K known-hosts │ r refresh │ ←→ tab │ q quit"
+            "↑↓ move │ h help │ / filter │ g generate │ p push │ a agent-add │ x agent-del │ K known-hosts │ r refresh │ ←→ tab │ q quit"
         }
         HelpContext::KlusterHeaderRuntime => {
             "↑↓ move │ h help │ Enter expand/collapse │ / filter │ r refresh │ n add cluster │ ←→ tab │ q quit"
