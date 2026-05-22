@@ -33,6 +33,20 @@ pub struct AppConfig {
     /// Kluster tab.
     #[serde(default = "default_kluster_log_tail_lines")]
     pub kluster_log_tail_lines: u32,
+    /// Command prefix used to open an SSH session in a new terminal window
+    /// (the `o` hotkey). Empty = auto-detect. Example: `kitty -e`,
+    /// `wezterm start --`, `gnome-terminal --`, `alacritty -e`.
+    #[serde(default)]
+    pub external_terminal: String,
+    /// Emit native desktop notifications (tunnel dropped, host up/down).
+    /// Enabled by default; toggle from the Settings tab.
+    #[serde(default = "default_notifications_enabled")]
+    pub notifications_enabled: bool,
+    /// Custom icon for desktop notifications (path, `~` allowed). Empty = OS
+    /// default. On macOS this needs `terminal-notifier` installed — plain
+    /// `osascript` can't override the notification icon.
+    #[serde(default)]
+    pub notification_icon: String,
 }
 
 fn default_port() -> u16 { 22 }
@@ -42,6 +56,7 @@ fn default_health_ttl_secs() -> u64 { 30 }
 fn default_health_probe_timeout_ms() -> u64 { 1500 }
 fn default_kluster_refresh_secs() -> u64 { 10 }
 fn default_kluster_log_tail_lines() -> u32 { 100 }
+fn default_notifications_enabled() -> bool { true }
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -55,6 +70,9 @@ impl Default for AppConfig {
             health_probe_timeout_ms: default_health_probe_timeout_ms(),
             kluster_refresh_secs: default_kluster_refresh_secs(),
             kluster_log_tail_lines: default_kluster_log_tail_lines(),
+            external_terminal: String::new(),
+            notifications_enabled: true,
+            notification_icon: String::new(),
         }
     }
 }

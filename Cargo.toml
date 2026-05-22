@@ -1,6 +1,6 @@
 [package]
 name = "sshm"
-version = "1.4.2"
+version = "1.4.3"
 edition = "2021"
 description = "Fast SSH + Docker + Incus + Kubernetes manager for the terminal"
 authors = ["Sn0wAlice"]

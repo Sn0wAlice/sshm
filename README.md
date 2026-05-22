@@ -54,6 +54,8 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 - **i18n** — UI strings translatable; English + French bundled. Pick via `SSHM_LANG=fr`
 - **Themes** — fully customizable colors via `theme.toml`, with an optional transparent background that uses the terminal's own
 - **Toast notifications** — non-intrusive feedback for actions
+- **Desktop notifications** — native OS alerts (`notify-send` / `osascript`) when a background tunnel drops or a host changes reachability
+- **Open in a new terminal** — `o` launches the SSH session in a separate terminal window (auto-detected, or set `external_terminal`)
 - **Auto-export** — optionally writes a clean `~/.ssh/config` on every save
 - **CLI mode** — scriptable commands for automation
 
@@ -182,7 +184,8 @@ sshm help                                # full CLI reference
 | `y` | Clone selected host (full copy, opens the editor) |
 | `d` | Delete selected host / folder |
 | `p` | Open port-forward menu — start a tunnel in the background (`f` runs it foreground) |
-| `t` | Open the background-tunnels dashboard (`d`/`x` stops the selected tunnel) |
+| `t` | Background-tunnels dashboard — `d`/`x` stop a tunnel, `o` open a local tunnel's URL |
+| `o` | Open the SSH session in a new terminal window |
 | `i` | Push identity to selected host |
 | `r` | Rename folder |
 | `Space` | Toggle host in bulk selection |
@@ -248,8 +251,27 @@ The Settings tab (`Tab → Settings`) exposes:
 - **Probe Connect Timeout** — TCP connect timeout in ms (banner read uses ~1/3)
 - **Kluster Refresh Interval** — seconds between Docker / kubectl / Incus refreshes
 - **Kluster Log Tail** — default `--tail N` for `l` (logs)
+- **Desktop notifications** — toggle native OS alerts (tunnel dropped, host up/down)
+
+The Settings tab groups these into labelled sections (Defaults, Export, Health checks, Kluster, Notifications).
 
 All values are live: hit Save and the background workers pick up the new TTL on the next tick.
+
+**`external_terminal`** — a `settings.toml`-only key (not shown in the Settings tab). It's the command prefix used by the `o` hotkey to open a session in a new terminal window; the SSH command is appended to it. Leave it empty to auto-detect (`wezterm`, `kitty`, `alacritty`, `gnome-terminal`, `konsole`, `xterm`, or `Terminal.app` on macOS). Examples:
+
+```toml
+external_terminal = "kitty -e"
+external_terminal = "wezterm start --"
+external_terminal = "gnome-terminal --"
+```
+
+**`notification_icon`** — another `settings.toml`-only key: a path (`~` allowed) to a custom icon for desktop notifications.
+
+```toml
+notification_icon = "~/.config/sshm/icon.png"
+```
+
+On **Linux** it's passed straight to `notify-send -i`. On **macOS** the default `osascript` notification *cannot* override its icon (it's always osascript's) — install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) and SSHM will use it automatically to honour the custom icon.
 
 ### Theme example
 

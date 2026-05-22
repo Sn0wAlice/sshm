@@ -202,6 +202,8 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     // Tab state
     let mut active_tab = ActiveTab::Hosts;
     let mut app_config = load_settings();
+    crate::os::set_notifications_enabled(app_config.notifications_enabled);
+    crate::os::set_notification_icon(&app_config.notification_icon);
     let mut settings_state = SettingsFormState::from_config(&app_config);
     let mut theme_state = ThemeTabState::new();
     let mut help_state = HelpTabState::new();
@@ -292,6 +294,17 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
         if auto_enabled {
             // Drain pending health-check results from the background worker.
             while let Ok((name, status)) = health_rx.try_recv() {
+                // Desktop-notify on a reachable<->unreachable transition. The
+                // first probe (no prior entry) is silent — only real changes.
+                if let Some(prev) = host_status.get(&name) {
+                    let was = matches!(prev, HostStatus::Reachable { .. });
+                    let now = matches!(status, HostStatus::Reachable { .. });
+                    if was && !now {
+                        crate::os::notify("SSHM — host unreachable", &name);
+                    } else if !was && now {
+                        crate::os::notify("SSHM — host back online", &name);
+                    }
+                }
                 host_status.insert(name, status);
             }
             // Keep the worker's target list in sync with the current DB.
@@ -559,7 +572,9 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                     if tunnels_popup {
                         tunnels.reap();
                         match k.code {
-                            KeyCode::Esc | KeyCode::Char('t') => tunnels_popup = false,
+                            KeyCode::Esc | KeyCode::Char('t') | KeyCode::Char('q') => {
+                                tunnels_popup = false;
+                            }
                             KeyCode::Up => {
                                 tunnels_popup_sel = tunnels_popup_sel.saturating_sub(1);
                             }
@@ -574,6 +589,22 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                     if tunnels_popup_sel >= tunnels.len() {
                                         tunnels_popup_sel = tunnels.len().saturating_sub(1);
                                     }
+                                }
+                            }
+                            KeyCode::Char('o') => {
+                                // Open a local (-L) tunnel's localhost URL in the browser.
+                                match tunnels.active.get(tunnels_popup_sel) {
+                                    Some(at) if at.tunnel.kind == crate::models::TunnelKind::Local => {
+                                        let url = format!("http://localhost:{}", at.tunnel.local_port);
+                                        match crate::os::open_url(&url) {
+                                            Ok(()) => toast = Some(Toast::success(format!("Opened {url}"))),
+                                            Err(e) => toast = Some(Toast::error(e)),
+                                        }
+                                    }
+                                    Some(_) => toast = Some(Toast::error(
+                                        "Open in browser only works for local (-L) tunnels".to_string()
+                                    )),
+                                    None => {}
                                 }
                             }
                             _ => {}
@@ -950,6 +981,26 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                             format!("Tunnel failed to start: {e}")
                                                         )),
                                                     }
+                                                }
+                                            }
+                                        }
+                                        'o' => {
+                                            // Open the SSH session in a new terminal window.
+                                            let host_clone = {
+                                                let rows = rows_for(view_mode, db, &items, &filtered, &filter, &collapsed);
+                                                if let Some(Row::Host(h)) = rows.get(selected) {
+                                                    Some((*h).clone())
+                                                } else { None }
+                                            };
+                                            if let Some(host_clone) = host_clone {
+                                                let argv = crate::ssh::client::build_ssh_argv(&host_clone, &db.hosts);
+                                                match crate::os::open_in_terminal(&argv, &app_config.external_terminal) {
+                                                    Ok(()) => toast = Some(Toast::success(
+                                                        format!("Opened {} in a new terminal", host_clone.name)
+                                                    )),
+                                                    Err(e) => toast = Some(Toast::error(
+                                                        format!("New terminal: {e}")
+                                                    )),
                                                 }
                                             }
                                         }
@@ -1495,6 +1546,8 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     app_config.default_identity_file = settings_state.default_identity_file.trim().to_string();
                                                     app_config.export_path = settings_state.export_path.trim().to_string();
                                                     app_config.auto_health_check = settings_state.auto_health_check;
+                                                    app_config.notifications_enabled = settings_state.notifications_enabled;
+                                                    crate::os::set_notifications_enabled(app_config.notifications_enabled);
                                                     if let Ok(v) = settings_state.health_ttl_secs.trim().parse::<u64>() {
                                                         app_config.health_ttl_secs = v.max(1);
                                                     }

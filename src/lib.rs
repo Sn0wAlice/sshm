@@ -1,6 +1,7 @@
 //! Library root for sshm
 pub mod models;
 pub mod util;
+pub mod os;
 
 pub mod config;
 pub mod ssh;

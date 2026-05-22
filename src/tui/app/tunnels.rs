@@ -284,18 +284,22 @@ impl TunnelManager {
     }
 
     /// Drop tunnels whose `ssh` process has exited on its own (port clash,
-    /// connection lost, remote closed it…).
+    /// connection lost, remote closed it…) and desktop-notify for each.
     pub fn reap(&mut self) {
-        let before = self.active.len();
+        let mut closed: Vec<String> = Vec::new();
         self.active.retain_mut(|t| match t.child.try_wait() {
             Ok(Some(_)) => {
                 unregister_pid(t.child.id());
+                closed.push(format!("{}  ({})", tunnel_route(&t.tunnel), t.host_name));
                 false
             }
             _ => true,
         });
-        if self.active.len() != before {
+        if !closed.is_empty() {
             self.persist();
+            for c in &closed {
+                crate::os::notify("SSHM — tunnel closed", c);
+            }
         }
     }
 
@@ -470,7 +474,7 @@ pub fn draw_tunnels_popup(
     }
 
     f.render_widget(
-        Paragraph::new("  ↑↓ move   d/x stop   Esc/t close")
+        Paragraph::new("  ↑↓ move   d/x stop   o open url   Esc/t/q close")
             .style(Style::default().fg(theme.muted)),
         chunks[1],
     );
