@@ -183,6 +183,20 @@ impl KlusterTabState {
                 }
             }
         }
+        // Local Incus section. Kept with the other locals, above every remote.
+        let incus_local_h = KlusterRow::IncusLocalHeader {
+            count: self.incus_local_instances.len(),
+            available: self.incus_local_available,
+        };
+        let incus_local_collapsed = !filtering && self.collapsed.contains("incus_local");
+        rows.push(incus_local_h);
+        if self.incus_local_available && !incus_local_collapsed {
+            for i in 0..self.incus_local_instances.len() {
+                rows.push(KlusterRow::IncusLocalInstance(i));
+            }
+        }
+
+        // ---- Remotes, below every local section ----
         // Remote Docker daemons (over SSH).
         for (ri, remote) in self.db.docker_remotes.iter().enumerate() {
             let containers = self.docker_remote_containers.get(&remote.host_alias);
@@ -201,18 +215,6 @@ impl KlusterTabState {
                         rows.push(KlusterRow::DockerRemoteContainer { remote_idx: ri, container_idx: ii });
                     }
                 }
-            }
-        }
-        // Local Incus section.
-        let incus_local_h = KlusterRow::IncusLocalHeader {
-            count: self.incus_local_instances.len(),
-            available: self.incus_local_available,
-        };
-        let incus_local_collapsed = !filtering && self.collapsed.contains("incus_local");
-        rows.push(incus_local_h);
-        if self.incus_local_available && !incus_local_collapsed {
-            for i in 0..self.incus_local_instances.len() {
-                rows.push(KlusterRow::IncusLocalInstance(i));
             }
         }
         // Remote Incus sections.
@@ -655,9 +657,9 @@ fn render_row<'a>(
         KlusterRow::AppleHeader { count, available } => {
             let glyph = if state.collapsed.contains("apple") { "▸" } else { "▾" };
             let label = if *available {
-                format!("{} Apple container ({})", glyph, count)
+                format!("{} Apple container (local) ({})", glyph, count)
             } else {
-                format!("{} Apple container (unavailable)", glyph)
+                format!("{} Apple container (local) (unavailable)", glyph)
             };
             let style = if *available {
                 Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)

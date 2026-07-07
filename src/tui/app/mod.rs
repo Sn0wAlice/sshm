@@ -205,6 +205,9 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
 
     // Tab state
     let mut active_tab = ActiveTab::Hosts;
+    // True once the Kluster tab has been opened this session — gates the
+    // one-time start of its background discovery worker.
+    let mut kluster_started = false;
     let mut app_config = load_settings();
     crate::os::set_notifications_enabled(app_config.notifications_enabled);
     crate::os::set_notification_icon(&app_config.notification_icon);
@@ -262,7 +265,11 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     sync_kluster_targets(&kluster_targets, &mut kluster_state, &db.hosts);
     let (kluster_tx, kluster_rx) = mpsc::channel::<KlusterUpdate>();
     let kluster_poke = Arc::new(AtomicBool::new(true)); // first refresh ASAP
-    let kluster_enabled = Arc::new(AtomicBool::new(true));
+    // The Kluster discovery worker (docker/kubectl/incus/apple polling) stays
+    // dormant until the user opens the Kluster tab at least once this session —
+    // a pure-SSH user never pays for container/cluster probing. Flipped true by
+    // the gate at the top of the event loop.
+    let kluster_enabled = Arc::new(AtomicBool::new(false));
     let kluster_interval_secs =
         Arc::new(AtomicU64::new(app_config.kluster_refresh_secs.max(2)));
     spawn_kluster_worker(
@@ -283,6 +290,17 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
         // Expire toast
         if toast.as_ref().is_some_and(|t| t.is_expired()) {
             toast = None;
+        }
+
+        // Lazily start the Kluster discovery worker the first time the user
+        // lands on the Kluster tab. Until then it never polls docker/kubectl/
+        // incus/apple — so a session that only ever connects over SSH pays
+        // nothing for container/cluster discovery. `poke` forces an immediate
+        // first pass instead of waiting a full interval.
+        if !kluster_started && matches!(active_tab, ActiveTab::Kluster) {
+            kluster_started = true;
+            kluster_enabled.store(true, Ordering::Relaxed);
+            kluster_poke.store(true, Ordering::Relaxed);
         }
 
         // Drop background tunnels whose ssh process has exited on its own.
