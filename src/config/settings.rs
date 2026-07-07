@@ -17,6 +17,12 @@ pub struct AppConfig {
     /// Enabled by default; user can turn it off from the Settings tab.
     #[serde(default = "default_auto_health_check")]
     pub auto_health_check: bool,
+    /// Pause the background health worker while an interactive SSH session
+    /// is in the foreground, and resume it on return. Avoids the network
+    /// noise of probing every host while you're actually working on one.
+    /// Enabled by default; toggle from the Settings tab.
+    #[serde(default = "default_pause_health_on_session")]
+    pub pause_health_on_session: bool,
     /// How often (seconds) the background worker re-probes every host.
     /// Doubles as the cache TTL — entries older than this are re-probed.
     #[serde(default = "default_health_ttl_secs")]
@@ -52,6 +58,7 @@ pub struct AppConfig {
 fn default_port() -> u16 { 22 }
 fn default_username() -> String { "root".to_string() }
 fn default_auto_health_check() -> bool { true }
+fn default_pause_health_on_session() -> bool { true }
 fn default_health_ttl_secs() -> u64 { 30 }
 fn default_health_probe_timeout_ms() -> u64 { 1500 }
 fn default_kluster_refresh_secs() -> u64 { 10 }
@@ -66,6 +73,7 @@ impl Default for AppConfig {
             default_identity_file: String::new(),
             export_path: String::new(),
             auto_health_check: true,
+            pause_health_on_session: true,
             health_ttl_secs: default_health_ttl_secs(),
             health_probe_timeout_ms: default_health_probe_timeout_ms(),
             kluster_refresh_secs: default_kluster_refresh_secs(),

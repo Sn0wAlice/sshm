@@ -814,6 +814,12 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                 }
                                                 Row::Host(h) => {
                                                     let host_clone = (*h).clone();
+                                                    // Silence the background health worker for the
+                                                    // duration of the foreground session; it resumes
+                                                    // when `n` re-enters after we return.
+                                                    if app_config.pause_health_on_session {
+                                                        health_enabled.store(false, Ordering::Relaxed);
+                                                    }
                                                     let _ = disable_raw_mode();
                                                     let _ = execute!(stdout(), LeaveAlternateScreen);
                                                     crate::ssh::client::launch_ssh(&host_clone, &db.hosts, None);
@@ -1270,6 +1276,9 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                             if let Some(name) = host_name {
                                                 let host_clone = db.hosts.get(&name).cloned();
                                                 if let Some(host_clone) = host_clone {
+                                                    if app_config.pause_health_on_session {
+                                                        health_enabled.store(false, Ordering::Relaxed);
+                                                    }
                                                     let _ = disable_raw_mode();
                                                     let _ = execute!(stdout(), LeaveAlternateScreen);
                                                     crate::ssh::client::launch_ssh(&host_clone, &db.hosts, None);
@@ -1546,6 +1555,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     app_config.default_identity_file = settings_state.default_identity_file.trim().to_string();
                                                     app_config.export_path = settings_state.export_path.trim().to_string();
                                                     app_config.auto_health_check = settings_state.auto_health_check;
+                                                    app_config.pause_health_on_session = settings_state.pause_health_on_session;
                                                     app_config.notifications_enabled = settings_state.notifications_enabled;
                                                     crate::os::set_notifications_enabled(app_config.notifications_enabled);
                                                     if let Ok(v) = settings_state.health_ttl_secs.trim().parse::<u64>() {

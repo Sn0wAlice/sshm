@@ -12,6 +12,7 @@ pub struct SettingsFormState {
     pub default_identity_file: String,
     pub export_path: String,
     pub auto_health_check: bool,
+    pub pause_health_on_session: bool,
     pub health_ttl_secs: String,
     pub health_probe_timeout_ms: String,
     pub kluster_refresh_secs: String,
@@ -29,6 +30,10 @@ const KLUSTER_REFRESH_FIELD: usize = 7;
 const KLUSTER_TAIL_FIELD: usize = 8;
 /// Index of the boolean `notifications_enabled` field.
 const NOTIFY_FIELD: usize = 9;
+/// Index of the boolean `pause_health_on_session` field. Numbered after the
+/// others so existing text-field indices keep their meaning; placed in the
+/// Health checks section via `SECTIONS`.
+const PAUSE_HEALTH_FIELD: usize = 10;
 
 /// Settings grouped into labelled sections — drives the form layout.
 struct Section {
@@ -39,7 +44,7 @@ struct Section {
 const SECTIONS: &[Section] = &[
     Section { title: "Defaults for new hosts", fields: &[0, 1, 2] },
     Section { title: "Export",                 fields: &[3] },
-    Section { title: "Health checks",          fields: &[AUTO_HEALTH_FIELD, HEALTH_TTL_FIELD, HEALTH_TIMEOUT_FIELD] },
+    Section { title: "Health checks",          fields: &[AUTO_HEALTH_FIELD, PAUSE_HEALTH_FIELD, HEALTH_TTL_FIELD, HEALTH_TIMEOUT_FIELD] },
     Section { title: "Kluster",                fields: &[KLUSTER_REFRESH_FIELD, KLUSTER_TAIL_FIELD] },
     Section { title: "Notifications",          fields: &[NOTIFY_FIELD] },
 ];
@@ -52,6 +57,7 @@ fn field_label(i: usize) -> &'static str {
         2 => "Default Identity File",
         3 => "Export Path",
         AUTO_HEALTH_FIELD => "Auto Health Check",
+        PAUSE_HEALTH_FIELD => "Pause During SSH Session",
         HEALTH_TTL_FIELD => "Health Refresh / Cache TTL (s)",
         HEALTH_TIMEOUT_FIELD => "Probe Connect Timeout (ms)",
         KLUSTER_REFRESH_FIELD => "Kluster Refresh Interval (s)",
@@ -69,6 +75,7 @@ impl SettingsFormState {
             default_identity_file: config.default_identity_file.clone(),
             export_path: config.export_path.clone(),
             auto_health_check: config.auto_health_check,
+            pause_health_on_session: config.pause_health_on_session,
             health_ttl_secs: config.health_ttl_secs.to_string(),
             health_probe_timeout_ms: config.health_probe_timeout_ms.to_string(),
             kluster_refresh_secs: config.kluster_refresh_secs.to_string(),
@@ -79,7 +86,7 @@ impl SettingsFormState {
         }
     }
 
-    pub fn fields_count() -> usize { 10 }
+    pub fn fields_count() -> usize { 11 }
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
@@ -132,6 +139,11 @@ impl SettingsFormState {
         match self.selected_field {
             AUTO_HEALTH_FIELD => {
                 self.auto_health_check = !self.auto_health_check;
+                self.dirty = true;
+                true
+            }
+            PAUSE_HEALTH_FIELD => {
+                self.pause_health_on_session = !self.pause_health_on_session;
                 self.dirty = true;
                 true
             }
@@ -217,11 +229,11 @@ fn field_line(state: &SettingsFormState, i: usize, theme: &Theme) -> Line<'stati
     };
     let label_span = Span::styled(format!("   {:<32}", field_label(i)), label_style);
 
-    if i == AUTO_HEALTH_FIELD || i == NOTIFY_FIELD {
-        let on = if i == AUTO_HEALTH_FIELD {
-            state.auto_health_check
-        } else {
-            state.notifications_enabled
+    if i == AUTO_HEALTH_FIELD || i == PAUSE_HEALTH_FIELD || i == NOTIFY_FIELD {
+        let on = match i {
+            AUTO_HEALTH_FIELD => state.auto_health_check,
+            PAUSE_HEALTH_FIELD => state.pause_health_on_session,
+            _ => state.notifications_enabled,
         };
         let val = if on { "[x] on" } else { "[ ] off" };
         let val_style = if on {
