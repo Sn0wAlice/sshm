@@ -57,6 +57,7 @@ pub enum KlusterUpdate {
 pub fn spawn_kluster_worker(
     targets: KlusterTargets,
     stop: Arc<AtomicBool>,
+    enabled: Arc<AtomicBool>,
     poke: Arc<AtomicBool>,
     result_tx: mpsc::Sender<KlusterUpdate>,
     interval_secs: Arc<AtomicU64>,
@@ -66,6 +67,14 @@ pub fn spawn_kluster_worker(
         loop {
             if stop.load(Ordering::Relaxed) {
                 break;
+            }
+            // Paused (e.g. while an interactive SSH session is in the
+            // foreground) — hold off polling and clear any pending poke.
+            if !enabled.load(Ordering::Relaxed) {
+                poke.store(false, Ordering::Relaxed);
+                next_pass = Instant::now();
+                thread::sleep(Duration::from_millis(250));
+                continue;
             }
             let due = Instant::now() >= next_pass;
             let poked = poke.swap(false, Ordering::Relaxed);

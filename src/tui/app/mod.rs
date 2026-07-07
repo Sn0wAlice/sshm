@@ -258,11 +258,13 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     sync_kluster_targets(&kluster_targets, &mut kluster_state, &db.hosts);
     let (kluster_tx, kluster_rx) = mpsc::channel::<KlusterUpdate>();
     let kluster_poke = Arc::new(AtomicBool::new(true)); // first refresh ASAP
+    let kluster_enabled = Arc::new(AtomicBool::new(true));
     let kluster_interval_secs =
         Arc::new(AtomicU64::new(app_config.kluster_refresh_secs.max(2)));
     spawn_kluster_worker(
         Arc::clone(&kluster_targets),
         Arc::clone(&health_stop), // share the stop flag — same lifetime
+        Arc::clone(&kluster_enabled),
         Arc::clone(&kluster_poke),
         kluster_tx,
         Arc::clone(&kluster_interval_secs),
@@ -814,11 +816,13 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                 }
                                                 Row::Host(h) => {
                                                     let host_clone = (*h).clone();
-                                                    // Silence the background health worker for the
-                                                    // duration of the foreground session; it resumes
+                                                    // Silence the background workers (host health +
+                                                    // Kluster docker/kubectl/incus polling) for the
+                                                    // duration of the foreground session; they resume
                                                     // when `n` re-enters after we return.
                                                     if app_config.pause_health_on_session {
                                                         health_enabled.store(false, Ordering::Relaxed);
+                                                        kluster_enabled.store(false, Ordering::Relaxed);
                                                     }
                                                     let _ = disable_raw_mode();
                                                     let _ = execute!(stdout(), LeaveAlternateScreen);
@@ -1278,6 +1282,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                 if let Some(host_clone) = host_clone {
                                                     if app_config.pause_health_on_session {
                                                         health_enabled.store(false, Ordering::Relaxed);
+                                                        kluster_enabled.store(false, Ordering::Relaxed);
                                                     }
                                                     let _ = disable_raw_mode();
                                                     let _ = execute!(stdout(), LeaveAlternateScreen);
