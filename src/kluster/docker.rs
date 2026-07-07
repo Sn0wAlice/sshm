@@ -12,7 +12,7 @@ use crossterm::{
     terminal::disable_raw_mode,
 };
 
-use super::models::{ContainerInfo, LifecycleAction};
+use super::models::{ContainerDetail, ContainerInfo, DetailSection, LifecycleAction};
 use super::shell::SHELL_PATH;
 
 /// Build the `ssh://[user@]host[:port]` URI passed to `DOCKER_HOST` for a
@@ -215,6 +215,135 @@ pub fn lifecycle(
     Ok(())
 }
 
+/// Build the rich detail view for one Docker container from `docker inspect`,
+/// plus a short log tail. `docker_host = Some(uri)` routes over SSH.
+pub fn inspect_detail(id: &str, docker_host: Option<&str>) -> Result<ContainerDetail> {
+    let mut cmd = Command::new("docker");
+    if let Some(u) = docker_host { cmd.env("DOCKER_HOST", u); }
+    let out = cmd
+        .args(["inspect", id])
+        .stderr(Stdio::null())
+        .output()
+        .context("running `docker inspect`")?;
+    if !out.status.success() {
+        return Err(anyhow::anyhow!("docker inspect exited {}", out.status));
+    }
+    let raw = String::from_utf8_lossy(&out.stdout);
+    let mut detail = parse_inspect(id, &raw)
+        .ok_or_else(|| anyhow::anyhow!("could not parse docker inspect JSON"))?;
+    // Best-effort recent logs.
+    let mut lcmd = Command::new("docker");
+    if let Some(u) = docker_host { lcmd.env("DOCKER_HOST", u); }
+    if let Ok(o) = lcmd
+        .args(["logs", "--tail", "20", id])
+        .stderr(Stdio::piped())
+        .stdout(Stdio::piped())
+        .output()
+    {
+        // docker sends container stdout on our stdout and stderr on ours;
+        // merge both so the tail reflects what the container actually logged.
+        let mut lines: Vec<String> = String::from_utf8_lossy(&o.stdout).lines().map(String::from).collect();
+        lines.extend(String::from_utf8_lossy(&o.stderr).lines().map(String::from));
+        detail.log_tail = lines;
+    }
+    Ok(detail)
+}
+
+/// Pure parser: `docker inspect` JSON (array) → the first element as a
+/// [`ContainerDetail`]. Defensive against missing fields across engine versions.
+pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
+    let value: serde_json::Value = serde_json::from_str(raw).ok()?;
+    let obj = value.as_array().and_then(|a| a.first()).unwrap_or(&value);
+
+    let name = obj
+        .get("Name")
+        .and_then(|x| x.as_str())
+        .map(|s| s.trim_start_matches('/').to_string())
+        .unwrap_or_else(|| id.to_string());
+    let config = obj.get("Config");
+    let state = obj.get("State");
+
+    let mut overview = DetailSection::new("Overview");
+    overview.push("Name", &name);
+    overview.push("Image", config.and_then(|c| c.get("Image")).and_then(|x| x.as_str()).unwrap_or(""));
+    overview.push("Status", state.and_then(|s| s.get("Status")).and_then(|x| x.as_str()).unwrap_or(""));
+    if let Some(pid) = state.and_then(|s| s.get("Pid")).and_then(|x| x.as_u64()) {
+        if pid != 0 { overview.push("PID", pid.to_string()); }
+    }
+    overview.push("Created", obj.get("Created").and_then(|x| x.as_str()).unwrap_or(""));
+    overview.push("Started", state.and_then(|s| s.get("StartedAt")).and_then(|x| x.as_str()).unwrap_or(""));
+
+    // Networking — top-level IP plus each named network.
+    let mut net = DetailSection::new("Networking");
+    let netset = obj.get("NetworkSettings");
+    if let Some(ip) = netset.and_then(|n| n.get("IPAddress")).and_then(|x| x.as_str()) {
+        net.push("IPv4", ip);
+    }
+    if let Some(gw) = netset.and_then(|n| n.get("Gateway")).and_then(|x| x.as_str()) {
+        net.push("Gateway", gw);
+    }
+    if let Some(mac) = netset.and_then(|n| n.get("MacAddress")).and_then(|x| x.as_str()) {
+        net.push("MAC", mac);
+    }
+    if let Some(networks) = netset.and_then(|n| n.get("Networks")).and_then(|x| x.as_object()) {
+        for (nname, nval) in networks {
+            if let Some(ip) = nval.get("IPAddress").and_then(|x| x.as_str()) {
+                if !ip.is_empty() { net.push(format!("net:{}", nname), ip); }
+            }
+        }
+    }
+
+    // Ports — NetworkSettings.Ports maps "80/tcp" → [ {HostIp, HostPort} ].
+    let mut ports = DetailSection::new("Ports");
+    if let Some(pmap) = netset.and_then(|n| n.get("Ports")).and_then(|x| x.as_object()) {
+        for (cport, bindings) in pmap {
+            match bindings.as_array() {
+                Some(arr) if !arr.is_empty() => {
+                    for b in arr {
+                        let hip = b.get("HostIp").and_then(|x| x.as_str()).unwrap_or("0.0.0.0");
+                        let hport = b.get("HostPort").and_then(|x| x.as_str()).unwrap_or("");
+                        ports.push(format!("{}:{}", hip, hport), format!("→ {}", cport));
+                    }
+                }
+                _ => ports.push(cport.clone(), "(exposed, not published)".to_string()),
+            }
+        }
+    }
+
+    // Mounts.
+    let mut mounts = DetailSection::new("Volumes");
+    if let Some(arr) = obj.get("Mounts").and_then(|x| x.as_array()) {
+        for m in arr {
+            let dst = m.get("Destination").and_then(|x| x.as_str()).unwrap_or("");
+            let src = m.get("Source").and_then(|x| x.as_str()).unwrap_or("");
+            let rw = m.get("RW").and_then(|x| x.as_bool()).unwrap_or(true);
+            if !dst.is_empty() {
+                let mode = if rw { "rw" } else { "ro" };
+                let val = if src.is_empty() { format!("(volume, {})", mode) } else { format!("{} ({})", src, mode) };
+                mounts.push(dst.to_string(), val);
+            }
+        }
+    }
+
+    // Command / entrypoint.
+    let mut command = DetailSection::new("Command");
+    if let Some(ep) = config.and_then(|c| c.get("Entrypoint")).and_then(|x| x.as_array()) {
+        let joined: Vec<String> = ep.iter().filter_map(|a| a.as_str().map(String::from)).collect();
+        command.push("Entrypoint", joined.join(" "));
+    }
+    if let Some(cmd) = config.and_then(|c| c.get("Cmd")).and_then(|x| x.as_array()) {
+        let joined: Vec<String> = cmd.iter().filter_map(|a| a.as_str().map(String::from)).collect();
+        command.push("Cmd", joined.join(" "));
+    }
+    command.push("WorkingDir", config.and_then(|c| c.get("WorkingDir")).and_then(|x| x.as_str()).unwrap_or(""));
+
+    let sections: Vec<DetailSection> = [overview, net, ports, mounts, command]
+        .into_iter()
+        .filter(|s| !s.is_empty())
+        .collect();
+    Some(ContainerDetail { title: name, sections, log_tail: Vec::new() })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -242,5 +371,41 @@ mod tests {
         // Only 3 fields → skipped.
         let raw = "abc\tname\timage\n";
         assert!(parse_docker_ps(raw).is_empty());
+    }
+
+    const INSPECT: &str = r#"[
+      {
+        "Name": "/web",
+        "Created": "2026-01-01T00:00:00Z",
+        "State": { "Status": "running", "Pid": 4321, "StartedAt": "2026-01-01T00:00:01Z" },
+        "Config": { "Image": "nginx:1.27", "Cmd": ["nginx","-g","daemon off;"], "Entrypoint": ["/docker-entrypoint.sh"], "WorkingDir": "/" },
+        "NetworkSettings": {
+          "IPAddress": "172.17.0.2",
+          "Gateway": "172.17.0.1",
+          "Ports": { "80/tcp": [ { "HostIp": "0.0.0.0", "HostPort": "8080" } ] },
+          "Networks": { "bridge": { "IPAddress": "172.17.0.2" } }
+        },
+        "Mounts": [ { "Source": "/data", "Destination": "/var/www", "RW": true } ]
+      }
+    ]"#;
+
+    #[test]
+    fn parse_inspect_sections() {
+        let d = parse_inspect("cid", INSPECT).unwrap();
+        assert_eq!(d.title, "web");
+        let titles: Vec<&str> = d.sections.iter().map(|s| s.title.as_str()).collect();
+        assert_eq!(titles, vec!["Overview", "Networking", "Ports", "Volumes", "Command"]);
+        let overview = &d.sections[0];
+        assert!(overview.rows.iter().any(|(k, v)| k == "Image" && v == "nginx:1.27"));
+        assert!(overview.rows.iter().any(|(k, v)| k == "PID" && v == "4321"));
+        let ports = &d.sections[2];
+        assert!(ports.rows.iter().any(|(k, v)| k == "0.0.0.0:8080" && v == "→ 80/tcp"));
+        let mounts = &d.sections[3];
+        assert!(mounts.rows.iter().any(|(k, v)| k == "/var/www" && v == "/data (rw)"));
+    }
+
+    #[test]
+    fn parse_inspect_garbage() {
+        assert!(parse_inspect("x", "nope").is_none());
     }
 }

@@ -40,12 +40,14 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 
 - **Docker (local)** — auto-detected if `docker` is on PATH and the daemon is up
 - **Docker (remote)** — pick any saved SSH host, sshm sets `DOCKER_HOST=ssh://...` and tunnels everything natively. No port to open, no TLS, no socket setup
+- **Apple `container` (macOS)** — Apple's native container runtime (macOS 26+, Apple silicon) auto-detected when the `container` CLI and its system service are up. Lists / shells / logs / start-stop, same as Docker
 - **Incus (local)** — auto-detected, lists containers and VMs
 - **Incus (remote)** — auto-imported from `incus remote list`
 - **Kubernetes / K3s** — auto-imported from every context in `~/.kube/config` and `$KUBECONFIG`
 - **One Enter to shell** into any container / pod / instance — `/bin/sh` directly, no bash dance
+- **Rich detail view** — `i` opens a scrollable inspect panel: overview (image, status, CPU/mem, platform), networking (IPs, gateway, MAC), published ports, volumes, entrypoint/command, and a live log tail. Backed by `docker`/`container inspect`
 - **One `l` to follow logs** — `Ctrl+C` returns to the TUI cleanly (no app exit)
-- **Lifecycle control** — `s` starts/stops and `R` restarts Docker containers and Incus instances right from the list
+- **Lifecycle control** — `s` starts/stops and `R` restarts Docker/Apple containers and Incus instances right from the list
 - **Pod cleanup** — `d` on a `Succeeded`/`Failed` pod runs `kubectl delete pod`
 - **Section folding** — clusters collapsed by default, `Enter` on a header toggles
 - **Live filter** — `/` fuzzy-filters containers, pods and instances across every section (force-expands while filtering)
@@ -207,9 +209,10 @@ The available actions depend on what's under the cursor.
 | `/` | always | Fuzzy-filter containers / pods / instances (`Esc` clears) |
 | `Enter` | on a header | Expand / collapse the section |
 | `Enter` | on a container / pod / instance | Open `/bin/sh` (`Ctrl+D` to exit) |
+| `i` | on a container / pod / instance | Open the rich detail (inspect) panel — scroll with `↑`/`↓`, `Esc` closes |
 | `l` | on a container / pod / instance | Stream logs `-f` (`Ctrl+C` returns to TUI) |
-| `s` | on a Docker container / Incus instance | Start it if stopped, stop it if running |
-| `R` (Shift+r) | on a Docker container / Incus instance | Restart it |
+| `s` | on a Docker/Apple container / Incus instance | Start it if stopped, stop it if running |
+| `R` (Shift+r) | on a Docker/Apple container / Incus instance | Restart it |
 | `r` | always | Force a refresh now |
 | `n` | on a Docker header | Pick a saved host → register a Docker remote |
 | `n` | elsewhere | Add a new k8s/k3s cluster (TUI form) |

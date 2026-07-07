@@ -13,7 +13,7 @@ use ratatui::{backend::Backend, Terminal};
 
 use std::collections::HashMap;
 
-use crate::kluster::LifecycleAction;
+use crate::kluster::{ContainerDetail, DetailSection, LifecycleAction};
 use crate::models::{Database, Host};
 use crate::t;
 use crate::tui::ssh::toast::Toast;
@@ -77,6 +77,7 @@ pub fn handle_kluster_open_shell<B: Backend>(
     enter_foreground(terminal);
     let res = match target {
         KlusterTarget::Docker(c) => crate::kluster::docker::exec_shell(&c.id, None),
+        KlusterTarget::Apple(c) => crate::kluster::apple::exec_shell(&c.id),
         KlusterTarget::DockerRemote { container, host_uri } => {
             crate::kluster::docker::exec_shell(&container.id, Some(host_uri))
         }
@@ -113,6 +114,7 @@ pub fn handle_kluster_open_logs<B: Backend>(
     let _sigint_guard = IgnoreSigint::new();
     let res = match target {
         KlusterTarget::Docker(c) => crate::kluster::docker::logs(&c.id, tail, follow, None),
+        KlusterTarget::Apple(c) => crate::kluster::apple::logs(&c.id, tail, follow),
         KlusterTarget::DockerRemote { container, host_uri } => {
             crate::kluster::docker::logs(&container.id, tail, follow, Some(host_uri))
         }
@@ -128,6 +130,52 @@ pub fn handle_kluster_open_logs<B: Backend>(
     restore_tui(terminal);
     if let Err(e) = res {
         *toast = Some(Toast::error(t!("kluster.logs_failed", "error" => e)));
+    }
+}
+
+/// Build the rich detail view for the item under the cursor. Docker (local +
+/// remote) and Apple containers get a full `inspect`-backed view; Incus
+/// instances and k8s pods fall back to a compact view from the list snapshot
+/// (no extra shell-out). Returns `None` (with a toast) when there's no item.
+pub fn build_kluster_detail(
+    state: &KlusterTabState,
+    toast: &mut Option<Toast>,
+) -> Option<ContainerDetail> {
+    let Some(target) = state.current_target() else {
+        *toast = Some(Toast::error(t!("kluster.no_target")));
+        return None;
+    };
+    let result: Result<ContainerDetail> = match target {
+        KlusterTarget::Docker(c) => crate::kluster::docker::inspect_detail(&c.id, None),
+        KlusterTarget::DockerRemote { container, host_uri } => {
+            crate::kluster::docker::inspect_detail(&container.id, Some(host_uri))
+        }
+        KlusterTarget::Apple(c) => crate::kluster::apple::inspect_detail(&c.id),
+        KlusterTarget::Incus { instance, remote } => {
+            let mut ov = DetailSection::new("Overview");
+            ov.push("Name", &instance.name);
+            ov.push("Kind", &instance.kind);
+            ov.push("Status", &instance.status);
+            ov.push("Image", &instance.image);
+            ov.push("Remote", remote.unwrap_or("local"));
+            Ok(ContainerDetail { title: instance.name.clone(), sections: vec![ov], log_tail: Vec::new() })
+        }
+        KlusterTarget::Pod { cluster, pod, .. } => {
+            let mut ov = DetailSection::new("Overview");
+            ov.push("Pod", &pod.name);
+            ov.push("Namespace", &pod.namespace);
+            ov.push("Phase", &pod.phase);
+            ov.push("Cluster", &cluster.name);
+            ov.push("Containers", pod.containers.join(", "));
+            Ok(ContainerDetail { title: pod.name.clone(), sections: vec![ov], log_tail: Vec::new() })
+        }
+    };
+    match result {
+        Ok(d) => Some(d),
+        Err(e) => {
+            *toast = Some(Toast::error(format!("inspect failed: {e}")));
+            None
+        }
     }
 }
 
@@ -148,6 +196,10 @@ pub fn handle_kluster_lifecycle(
         KlusterTarget::Docker(c) => (
             c.name.clone(),
             crate::kluster::docker::lifecycle(&c.id, action, None),
+        ),
+        KlusterTarget::Apple(c) => (
+            c.name.clone(),
+            crate::kluster::apple::lifecycle(&c.id, action),
         ),
         KlusterTarget::DockerRemote { container, host_uri } => (
             container.name.clone(),

@@ -22,6 +22,7 @@ use crate::tui::theme::Theme;
 fn header_key(row: &KlusterRow) -> Option<String> {
     match row {
         KlusterRow::DockerHeader { .. } => Some("docker".into()),
+        KlusterRow::AppleHeader { .. } => Some("apple".into()),
         KlusterRow::DockerRemoteHeader { remote_idx, .. } => Some(format!("docker_remote_{}", remote_idx)),
         KlusterRow::IncusLocalHeader { .. } => Some("incus_local".into()),
         KlusterRow::IncusRemoteHeader { remote_idx, .. } => Some(format!("incus_remote_{}", remote_idx)),
@@ -35,6 +36,7 @@ fn is_header(row: &KlusterRow) -> bool {
     matches!(
         row,
         KlusterRow::DockerHeader { .. }
+            | KlusterRow::AppleHeader { .. }
             | KlusterRow::DockerRemoteHeader { .. }
             | KlusterRow::IncusLocalHeader { .. }
             | KlusterRow::IncusRemoteHeader { .. }
@@ -60,6 +62,9 @@ fn item_matches(text: &str, filter: &str) -> bool {
 pub enum KlusterRow {
     DockerHeader { count: usize, available: bool },
     DockerContainer(usize),
+    /// Apple `container` runtime (macOS) — local only.
+    AppleHeader { count: usize, available: bool },
+    AppleContainer(usize),
     /// One header per saved Docker remote (over SSH). `remote_idx` indexes
     /// `db.docker_remotes`, `reachable` is the last status reported by the
     /// worker.
@@ -83,6 +88,8 @@ pub struct KlusterTabState {
     pub db: KlusterDb,
     pub docker_available: bool,
     pub docker_containers: Vec<ContainerInfo>,
+    pub apple_available: bool,
+    pub apple_containers: Vec<ContainerInfo>,
     /// Indexed by `db.clusters[i].name`. `None` = not refreshed yet.
     pub cluster_pods: Vec<Option<Vec<PodInfo>>>,
     pub incus_local_available: bool,
@@ -123,6 +130,8 @@ impl KlusterTabState {
             db,
             docker_available: false,
             docker_containers: Vec::new(),
+            apple_available: false,
+            apple_containers: Vec::new(),
             cluster_pods,
             incus_local_available: false,
             incus_local_instances: Vec::new(),
@@ -158,6 +167,20 @@ impl KlusterTabState {
         if self.docker_available && !docker_collapsed {
             for i in 0..self.docker_containers.len() {
                 rows.push(KlusterRow::DockerContainer(i));
+            }
+        }
+        // Apple `container` (macOS). Only shown once the runtime reports as
+        // available, so Linux users never see an "unavailable" line.
+        if self.apple_available {
+            let apple_collapsed = !filtering && self.collapsed.contains("apple");
+            rows.push(KlusterRow::AppleHeader {
+                count: self.apple_containers.len(),
+                available: true,
+            });
+            if !apple_collapsed {
+                for i in 0..self.apple_containers.len() {
+                    rows.push(KlusterRow::AppleContainer(i));
+                }
             }
         }
         // Remote Docker daemons (over SSH).
@@ -266,6 +289,10 @@ impl KlusterTabState {
                 .docker_containers
                 .get(*i)
                 .map(|c| format!("{} {}", c.name, c.image)),
+            KlusterRow::AppleContainer(i) => self
+                .apple_containers
+                .get(*i)
+                .map(|c| format!("{} {}", c.name, c.image)),
             KlusterRow::DockerRemoteContainer { remote_idx, container_idx } => self
                 .db
                 .docker_remotes
@@ -339,6 +366,9 @@ impl KlusterTabState {
             KlusterRow::DockerContainer(i) => {
                 self.docker_containers.get(*i).map(KlusterTarget::Docker)
             }
+            KlusterRow::AppleContainer(i) => {
+                self.apple_containers.get(*i).map(KlusterTarget::Apple)
+            }
             KlusterRow::DockerRemoteContainer { remote_idx, container_idx } => {
                 let remote = self.db.docker_remotes.get(*remote_idx)?;
                 let host_uri = self.docker_remote_uris.get(&remote.host_alias)?;
@@ -384,6 +414,8 @@ impl KlusterTabState {
 /// Resolved target the action handlers in `app::mod` work with.
 pub enum KlusterTarget<'a> {
     Docker(&'a ContainerInfo),
+    /// Container on Apple's macOS `container` runtime.
+    Apple(&'a ContainerInfo),
     /// Container running on a remote Docker daemon reached via SSH.
     /// `host_uri` is the `ssh://user@host:port` value to set as `DOCKER_HOST`.
     DockerRemote {
@@ -421,6 +453,8 @@ pub enum KlusterAction {
     DeleteDockerRemote,
     /// Start / stop / restart the selected Docker container or Incus instance.
     Lifecycle(LifecycleAction),
+    /// Open the rich detail view (inspect) for the selected item.
+    OpenDetail,
 }
 
 /// `Some(running)` for a Docker container or Incus instance under the cursor
@@ -428,6 +462,7 @@ pub enum KlusterAction {
 fn lifecycle_running(state: &KlusterTabState) -> Option<bool> {
     match state.current_target()? {
         KlusterTarget::Docker(c) => Some(c.running),
+        KlusterTarget::Apple(c) => Some(c.running),
         KlusterTarget::DockerRemote { container, .. } => Some(container.running),
         KlusterTarget::Incus { instance, .. } => Some(instance.running),
         KlusterTarget::Pod { .. } => None,
@@ -481,6 +516,7 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
     let on_item = matches!(
         row,
         Some(KlusterRow::DockerContainer(_))
+            | Some(KlusterRow::AppleContainer(_))
             | Some(KlusterRow::DockerRemoteContainer { .. })
             | Some(KlusterRow::ClusterPod { .. })
             | Some(KlusterRow::IncusLocalInstance(_))
@@ -489,6 +525,7 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
     let on_header = matches!(
         row,
         Some(KlusterRow::DockerHeader { .. })
+            | Some(KlusterRow::AppleHeader { .. })
             | Some(KlusterRow::DockerRemoteHeader { .. })
             | Some(KlusterRow::IncusLocalHeader { .. })
             | Some(KlusterRow::IncusRemoteHeader { .. })
@@ -530,6 +567,7 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
         }
         // Item-only actions
         KeyCode::Enter if on_item => KlusterAction::OpenShell,
+        KeyCode::Char('i') if on_item => KlusterAction::OpenDetail,
         KeyCode::Char('l') if on_item => KlusterAction::OpenLogsFollow,
         // `s` toggles start/stop on a Docker/Incus item; `R` restarts it.
         // Both no-op on pods (k8s has no equivalent — use `d` to delete).
@@ -612,6 +650,24 @@ fn render_row<'a>(
         }
         KlusterRow::DockerContainer(i) => {
             let c = &state.docker_containers[*i];
+            render_docker_container(c, theme)
+        }
+        KlusterRow::AppleHeader { count, available } => {
+            let glyph = if state.collapsed.contains("apple") { "▸" } else { "▾" };
+            let label = if *available {
+                format!("{} Apple container ({})", glyph, count)
+            } else {
+                format!("{} Apple container (unavailable)", glyph)
+            };
+            let style = if *available {
+                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(theme.muted).add_modifier(Modifier::BOLD)
+            };
+            ListItem::new(Line::from(Span::styled(label, style)))
+        }
+        KlusterRow::AppleContainer(i) => {
+            let c = &state.apple_containers[*i];
             render_docker_container(c, theme)
         }
         KlusterRow::DockerRemoteHeader { remote_idx, count, reachable } => {

@@ -118,6 +118,42 @@ impl LifecycleAction {
     }
 }
 
+/// One titled group of label→value rows in the rich detail view (e.g.
+/// "Networking" holding `IPv4 → 192.168.64.3`). Purely presentational.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DetailSection {
+    pub title: String,
+    pub rows: Vec<(String, String)>,
+}
+
+impl DetailSection {
+    pub fn new(title: impl Into<String>) -> Self {
+        DetailSection { title: title.into(), rows: Vec::new() }
+    }
+    /// Push a `label → value` row, skipping empty values so the view stays
+    /// terse (no rows of blanks for fields the runtime didn't report).
+    pub fn push(&mut self, label: impl Into<String>, value: impl Into<String>) {
+        let value = value.into();
+        if !value.trim().is_empty() {
+            self.rows.push((label.into(), value));
+        }
+    }
+    pub fn is_empty(&self) -> bool {
+        self.rows.is_empty()
+    }
+}
+
+/// Parsed, runtime-agnostic detail for one container/instance, built from an
+/// `inspect` call. Rendered by the Kluster detail popup.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContainerDetail {
+    /// Header line (usually the container name).
+    pub title: String,
+    pub sections: Vec<DetailSection>,
+    /// Last few log lines, when the runtime could produce them cheaply.
+    pub log_tail: Vec<String>,
+}
+
 /// Snapshot of one Incus instance (container or VM).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct IncusInstance {

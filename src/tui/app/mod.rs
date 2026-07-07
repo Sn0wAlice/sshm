@@ -137,10 +137,10 @@ use kluster_worker::{spawn_kluster_worker, KlusterTargets, KlusterUpdate};
 pub mod cluster_form;
 pub mod kluster_actions;
 use kluster_actions::{
-    handle_kluster_lifecycle, handle_kluster_open_logs, handle_kluster_open_shell,
-    kluster_add_cluster_flow, kluster_add_docker_remote_flow, kluster_delete_cluster_flow,
-    kluster_delete_docker_remote_flow, kluster_delete_pod_flow, kluster_edit_cluster_flow,
-    sync_kluster_targets,
+    build_kluster_detail, handle_kluster_lifecycle, handle_kluster_open_logs,
+    handle_kluster_open_shell, kluster_add_cluster_flow, kluster_add_docker_remote_flow,
+    kluster_delete_cluster_flow, kluster_delete_docker_remote_flow, kluster_delete_pod_flow,
+    kluster_edit_cluster_flow, sync_kluster_targets,
 };
 
 pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
@@ -194,6 +194,10 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     // Help popup overlay: when true, `h` has opened the full-shortcut popup
     // and every keystroke is captured until it's dismissed.
     let mut help_popup = false;
+
+    // Kluster rich-detail overlay (opened with `i` on a container/pod row).
+    let mut kluster_detail: Option<crate::kluster::ContainerDetail> = None;
+    let mut kluster_detail_scroll: usize = 0;
 
     // Background-tunnels dashboard overlay (opened with `t`).
     let mut tunnels_popup = false;
@@ -320,6 +324,10 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
         let mut kluster_dirty = false;
         while let Ok(update) = kluster_rx.try_recv() {
             match update {
+                KlusterUpdate::Apple { available, containers } => {
+                    kluster_state.apple_available = available;
+                    kluster_state.apple_containers = containers;
+                }
                 KlusterUpdate::Docker { available, containers } => {
                     kluster_state.docker_available = available;
                     kluster_state.docker_containers = containers;
@@ -505,6 +513,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                         match kluster_state.flat_rows.get(kluster_state.selected) {
                             Some(KlusterRow::ClusterHeader { .. }) => HelpContext::KlusterHeaderCluster,
                             Some(KlusterRow::DockerHeader { .. })
+                            | Some(KlusterRow::AppleHeader { .. })
                             | Some(KlusterRow::IncusLocalHeader { .. })
                             | Some(KlusterRow::IncusRemoteHeader { .. }) => HelpContext::KlusterHeaderRuntime,
                             Some(KlusterRow::DockerRemoteHeader { .. }) => HelpContext::KlusterHeaderDockerRemote,
@@ -519,6 +528,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                 if terminal { HelpContext::KlusterTerminalPod } else { HelpContext::KlusterItem }
                             }
                             Some(KlusterRow::DockerContainer(_))
+                            | Some(KlusterRow::AppleContainer(_))
                             | Some(KlusterRow::DockerRemoteContainer { .. })
                             | Some(KlusterRow::IncusLocalInstance(_))
                             | Some(KlusterRow::IncusRemoteInstance { .. }) => HelpContext::KlusterItem,
@@ -543,6 +553,13 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                     }
                 }
 
+                // Kluster detail overlay — rich inspect view for one item.
+                if let Some(ref detail) = kluster_detail {
+                    crate::tui::tabs::kluster_detail::draw_kluster_detail(
+                        f, detail, &mut kluster_detail_scroll, &theme,
+                    );
+                }
+
                 // Help popup overlay — full shortcut list, above everything.
                 if help_popup {
                     crate::tui::ssh::helpbox::draw_help_popup(f, help_ctx, &theme);
@@ -561,6 +578,36 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
         if event::poll(Duration::from_millis(150)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
                 if k.kind == KeyEventKind::Press {
+
+                    // --- Kluster detail: modal, scroll + close ---
+                    if let Some(ref detail) = kluster_detail {
+                        let total = crate::tui::tabs::kluster_detail::detail_line_count(detail);
+                        let page = 10;
+                        match k.code {
+                            KeyCode::Esc | KeyCode::Char('i') | KeyCode::Char('q') => {
+                                kluster_detail = None;
+                                kluster_detail_scroll = 0;
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                kluster_detail_scroll =
+                                    (kluster_detail_scroll + 1).min(total.saturating_sub(1));
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                kluster_detail_scroll = kluster_detail_scroll.saturating_sub(1);
+                            }
+                            KeyCode::PageDown => {
+                                kluster_detail_scroll =
+                                    (kluster_detail_scroll + page).min(total.saturating_sub(1));
+                            }
+                            KeyCode::PageUp => {
+                                kluster_detail_scroll = kluster_detail_scroll.saturating_sub(page);
+                            }
+                            KeyCode::Home => kluster_detail_scroll = 0,
+                            KeyCode::End => kluster_detail_scroll = total.saturating_sub(1),
+                            _ => {}
+                        }
+                        continue;
+                    }
 
                     // --- Help popup: modal, swallows every keystroke ---
                     if help_popup {
@@ -1364,6 +1411,10 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                         &mut terminal,
                                         &mut toast,
                                     );
+                                }
+                                KlusterAction::OpenDetail => {
+                                    kluster_detail = build_kluster_detail(&kluster_state, &mut toast);
+                                    kluster_detail_scroll = 0;
                                 }
                                 KlusterAction::AddCluster => {
                                     if let Err(e) = kluster_add_cluster_flow(

@@ -34,6 +34,11 @@ pub enum KlusterUpdate {
         available: bool,
         containers: Vec<ContainerInfo>,
     },
+    /// Result for Apple's macOS `container` runtime.
+    Apple {
+        available: bool,
+        containers: Vec<ContainerInfo>,
+    },
     /// Result for a remote Docker daemon (keyed by Host alias).
     DockerRemote {
         host_alias: String,
@@ -88,6 +93,19 @@ pub fn spawn_kluster_worker(
                     Vec::new()
                 };
                 let _ = result_tx.send(KlusterUpdate::Docker { available, containers });
+
+                // Apple `container` (macOS) — local only, no remotes.
+                crate::kluster::apple::invalidate_cache();
+                let apple_avail = crate::kluster::apple::available();
+                let apple_containers = if apple_avail {
+                    crate::kluster::apple::list_containers().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let _ = result_tx.send(KlusterUpdate::Apple {
+                    available: apple_avail,
+                    containers: apple_containers,
+                });
 
                 // Snapshot the worker targets once per cycle (avoid holding the
                 // lock across slow shell-outs).
