@@ -105,6 +105,15 @@ pub struct Host {
     /// détail). `None` quand aucune note n'a été saisie.
     #[serde(default)]
     pub notes: Option<String>,
+    /// Commande à exécuter automatiquement à la connexion (mappée sur l'option
+    /// ssh `RemoteCommand`, avec `-t` pour forcer un TTY). Par défaut, la
+    /// commande est lancée puis on enchaîne sur un shell interactif de login
+    /// (`; exec $SHELL -l` ajouté automatiquement) — sinon ssh fermerait la
+    /// session dès la fin de la commande. Si la commande contient `exec `,
+    /// elle est utilisée telle quelle (l'utilisateur gère le shell lui-même).
+    /// `None` = shell de login normal. Ignoré en mode mosh.
+    #[serde(default)]
+    pub remote_command: Option<String>,
 }
 
 /// Base de données de l'application (hosts + dossiers)

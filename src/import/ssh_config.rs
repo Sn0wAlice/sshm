@@ -56,6 +56,7 @@ pub fn parse_ssh_config_text(
             forward_agent: false,
             mosh: false,
             notes: None,
+            remote_command: None,
         });
     }
     out
@@ -143,6 +144,7 @@ Host concrete
                 forward_agent: false,
                 mosh: false,
                 notes: None,
+                remote_command: None,
             },
         );
         let parsed = parse_ssh_config_text(txt, &existing);

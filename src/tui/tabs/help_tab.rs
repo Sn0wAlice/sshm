@@ -56,6 +56,7 @@ const HELP_TEXT: &str = r#"
   a              Add a new host (inherits folder context)
   e              Edit the selected host
   y              Clone the selected host (opens the edit form)
+  Y              Copy the connection string (user@host) to the clipboard
   d              Delete the selected host or folder
   r              Rename the selected folder
   p              Port forwarding (SSH tunnel)
@@ -89,7 +90,7 @@ const HELP_TEXT: &str = r#"
     • Space ×N → X → "apt update"    → refresh package lists fleet-wide
     • Space ×N → T → "prod,web"      → tag a batch of hosts at once
 
-  ─── Mosh & Notes ───────────────────────────────
+  ─── Mosh, Run-on-connect & Notes ───────────────
 
   In the host editor (a / e / y):
 
@@ -97,6 +98,13 @@ const HELP_TEXT: &str = r#"
             roaming or high-latency links. Requires mosh installed both
             locally and on the remote host. Port / identity / ProxyJump
             are forwarded to mosh automatically.
+  • Run on connect
+            A command run on the host right after login (ssh RemoteCommand,
+            with -t to force a TTY). By default it runs and then drops you
+            into a normal interactive shell — e.g. `cd /srv && git status`.
+            To take over the session yourself (one-shot, or your own shell),
+            start the command with `exec ` and it's used verbatim. Ignored
+            in mosh mode.
   • Notes   Free-text reminder shown in the host Details panel. Purely
             informational — never passed to ssh.
 

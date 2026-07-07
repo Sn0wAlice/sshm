@@ -61,6 +61,7 @@ mod tests {
             forward_agent: false,
             mosh: false,
             notes: None,
+            remote_command: None,
         }
     }
 

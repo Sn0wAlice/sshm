@@ -1142,6 +1142,23 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                 }
                                             }
                                         }
+                                        'Y' => {
+                                            // Copy the selected host's connection string
+                                            // (`user@host`) to the system clipboard.
+                                            let target: Option<(String, String)> = {
+                                                let rows = rows_for(view_mode, db, &items, &filtered, &filter, &collapsed);
+                                                rows.get(selected).and_then(|r| match r {
+                                                    Row::Host(h) => Some((h.name.clone(), format!("{}@{}", h.username, h.host))),
+                                                    _ => None,
+                                                })
+                                            };
+                                            if let Some((hname, conn)) = target {
+                                                toast = Some(match crate::os::copy_to_clipboard(&conn) {
+                                                    Ok(()) => Toast::success(format!("Copied {} ({})", conn, hname)),
+                                                    Err(e) => Toast::error(format!("Clipboard: {e}")),
+                                                });
+                                            }
+                                        }
                                         ' ' => {
                                             // Toggle selection of the host on the current row.
                                             let target: Option<String> = {

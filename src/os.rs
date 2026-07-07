@@ -116,6 +116,55 @@ fn notify_unconditional(title: &str, body: &str) {
         .spawn();
 }
 
+/// Copy `text` to the system clipboard. macOS uses `pbcopy`; Linux tries
+/// `wl-copy` (Wayland), then `xclip`, then `xsel` (X11). Returns an error
+/// string when no clipboard tool is available or the write fails.
+pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+
+    // (binary, args) candidates, in priority order per platform.
+    let candidates: &[(&str, &[&str])] = if cfg!(target_os = "macos") {
+        &[("pbcopy", &[])]
+    } else {
+        &[
+            ("wl-copy", &[]),
+            ("xclip", &["-selection", "clipboard"]),
+            ("xsel", &["--clipboard", "--input"]),
+        ]
+    };
+
+    let mut last_err = "no clipboard tool found (install xclip, xsel or wl-clipboard)".to_string();
+    for (bin, args) in candidates {
+        if !bin_exists(bin) {
+            continue;
+        }
+        match Command::new(bin)
+            .args(*args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+        {
+            Ok(mut child) => {
+                if let Some(mut stdin) = child.stdin.take() {
+                    if let Err(e) = stdin.write_all(text.as_bytes()) {
+                        last_err = format!("{bin}: {e}");
+                        continue;
+                    }
+                }
+                // Drop stdin (via wait) so the tool sees EOF and exits.
+                return match child.wait() {
+                    Ok(status) if status.success() => Ok(()),
+                    Ok(status) => Err(format!("{bin} exited with {status}")),
+                    Err(e) => Err(format!("{bin}: {e}")),
+                };
+            }
+            Err(e) => last_err = format!("{bin}: {e}"),
+        }
+    }
+    Err(last_err)
+}
+
 /// Open `url` (or a path) with the system handler — `open` on macOS,
 /// `xdg-open` on Linux.
 pub fn open_url(url: &str) -> Result<(), String> {

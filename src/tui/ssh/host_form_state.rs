@@ -11,6 +11,7 @@ pub struct HostFormState {
     pub tags: String,
     pub folder: String,
     pub notes: String,
+    pub remote_command: String,
     pub forward_agent: bool,
     pub mosh: bool,
     pub selected_field: usize,
@@ -33,6 +34,7 @@ impl HostFormState {
             tags: String::new(),
             folder: current_folder.unwrap_or_default(),
             notes: String::new(),
+            remote_command: String::new(),
             forward_agent: false,
             mosh: false,
             selected_field: 0,
@@ -54,6 +56,7 @@ impl HostFormState {
                 tags: tags_to_string(&h.tags),
                 folder: h.folder.clone().unwrap_or_default(),
                 notes: h.notes.clone().unwrap_or_default(),
+                remote_command: h.remote_command.clone().unwrap_or_default(),
                 forward_agent: h.forward_agent,
                 mosh: h.mosh,
                 selected_field: 0,
@@ -68,14 +71,16 @@ impl HostFormState {
 
     pub fn fields_count() -> usize {
         // name, host, port, username, identity_file, proxy_jump, tags, folder,
-        // notes, forward_agent, mosh
-        11
+        // notes, remote_command, forward_agent, mosh
+        12
     }
 
+    /// Field index of the run-on-connect command row.
+    pub const REMOTE_CMD_FIELD: usize = 9;
     /// Field index of the ForwardAgent toggle row.
-    pub const FA_FIELD: usize = 9;
+    pub const FA_FIELD: usize = 10;
     /// Field index of the mosh toggle row.
-    pub const MOSH_FIELD: usize = 10;
+    pub const MOSH_FIELD: usize = 11;
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1); // +1 for Save
@@ -100,6 +105,7 @@ impl HostFormState {
             6 => Some(&mut self.tags),
             7 => Some(&mut self.folder),
             8 => Some(&mut self.notes),
+            9 => Some(&mut self.remote_command),
             _ => None,
         }
     }

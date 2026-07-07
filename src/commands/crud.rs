@@ -67,6 +67,7 @@ pub fn create_host(hosts: &mut HashMap<String, Host>, current_folder: Option<Str
         forward_agent: false,
         mosh: false,
         notes: None,
+        remote_command: None,
     });
 }
 

@@ -32,7 +32,7 @@ pub enum HelpContext {
 fn help_text_for(ctx: HelpContext) -> &'static str {
     match ctx {
         HelpContext::HostNav => {
-            "↑↓ move │ h help │ Enter connect │ o new-term │ / filter │ a add │ e edit │ y clone │ d delete │ Space select │ X run-cmd │ c check │ p forward │ t tunnels │ i identity │ f fav │ s sort │ q quit"
+            "↑↓ move │ h help │ Enter connect │ o new-term │ / filter │ a add │ e edit │ y clone │ Y copy │ d delete │ Space select │ X run-cmd │ c check │ p forward │ t tunnels │ i identity │ f fav │ s sort │ q quit"
         }
         HelpContext::FolderNav => {
             "↑↓ move │ h help │ Enter expand/collapse │ / filter │ a add │ r rename │ d delete │ t tunnels │ q quit"

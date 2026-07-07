@@ -23,6 +23,8 @@ Built for developers, sysadmins, pentesters, and homelab folks who live in a ter
 - **Identity management** — push SSH public keys, generate new keys (`ed25519`, `ed25519-sk` FIDO2, `ecdsa`, `rsa`), load into `ssh-agent`
 - **ForwardAgent (`-A`) per host** — opt-in with a visible warning, badged in the list
 - **Mosh per host** — opt-in toggle; connects via `mosh` instead of `ssh`, forwarding port / identity / ProxyJump automatically
+- **Run-on-connect** — a per-host command run at login (`RemoteCommand` + `-t`), then you land in a normal shell; start it with `exec ` to take over the session yourself
+- **Copy connection string** — `Y` copies `user@host` to the clipboard (`pbcopy` / `wl-copy` / `xclip` / `xsel`)
 - **Per-host notes** — free-text reminder shown in the detail panel
 - **Hardware key detection** — `[HW]` badge for `*-sk` keys
 - **Frecency sort + Recently Used** — `s` cycles `name → MRU → most-used → favorites → frecency`
@@ -182,6 +184,7 @@ sshm help                                # full CLI reference
 | `a` | Add a host (or folder when on a folder row) |
 | `e` | Edit selected host |
 | `y` | Clone selected host (full copy, opens the editor) |
+| `Y` (Shift+y) | Copy the connection string (`user@host`) to the clipboard |
 | `d` | Delete selected host / folder |
 | `p` | Open port-forward menu — start a tunnel in the background (`f` runs it foreground) |
 | `t` | Background-tunnels dashboard — `d`/`x` stop a tunnel, `o` open a local tunnel's URL |

@@ -69,6 +69,7 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
                     forward_agent,
                     mosh,
                     notes,
+                    remote_command: None,
                 });
             }
         }
@@ -214,6 +215,7 @@ mod tests {
             forward_agent: false,
             mosh: false,
             notes: None,
+            remote_command: None,
         }
     }
 
