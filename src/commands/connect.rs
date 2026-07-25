@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use inquire::Select;
 use crate::models::Host;
-use crate::ssh::client::launch_ssh;
+use crate::ssh::client::launch_ssh_with_recovery;
 
 /// Launch `ssh` on the selected host. Returns the name of the host that was
 /// actually launched (so callers can bump connection history), or `None` if
@@ -24,7 +24,7 @@ pub fn connect_host(
     };
 
     if let Some(h) = hosts.get(&name) {
-        launch_ssh(h, hosts, Some(extra));
+        launch_ssh_with_recovery(h, hosts, Some(extra));
         return Some(h.name.clone());
     }
     let matching: Vec<&Host> = hosts.values().filter(|h| h.name.contains(&name)).collect();
@@ -35,7 +35,7 @@ pub fn connect_host(
         }
         1 => {
             let h = matching[0];
-            launch_ssh(h, hosts, Some(extra));
+            launch_ssh_with_recovery(h, hosts, Some(extra));
             Some(h.name.clone())
         }
         _ => {

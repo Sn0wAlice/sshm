@@ -70,7 +70,15 @@ pub fn build_ssh_argv(h: &Host, all_hosts: &HashMap<String, Host>) -> Vec<String
 ///
 /// `all_hosts` est utilisé pour résoudre une chaîne `proxy_jump` multi-hop
 /// dont les entrées peuvent être des noms d'hôtes sauvegardés.
-pub fn launch_ssh(h: &Host, all_hosts: &HashMap<String, Host>, overrides: Option<&[String]>) {
+///
+/// Renvoie le statut de sortie du processus (`None` si le binaire n'a pas pu
+/// être lancé), pour que l'appelant puisse réagir à un échec — par ex. proposer
+/// de nettoyer `known_hosts` quand la clé de l'hôte a changé.
+pub fn launch_ssh(
+    h: &Host,
+    all_hosts: &HashMap<String, Host>,
+    overrides: Option<&[String]>,
+) -> Option<std::process::ExitStatus> {
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), Show);
 
@@ -80,8 +88,58 @@ pub fn launch_ssh(h: &Host, all_hosts: &HashMap<String, Host>, overrides: Option
     if let Some(args) = overrides {
         cmd.args(args);
     }
-    if cmd.status().is_err() && h.mosh {
-        eprintln!("sshm: failed to launch `mosh` — is it installed and on PATH?");
+    match cmd.status() {
+        Ok(status) => Some(status),
+        Err(_) => {
+            if h.mosh {
+                eprintln!("sshm: failed to launch `mosh` — is it installed and on PATH?");
+            }
+            None
+        }
+    }
+}
+
+/// Lance la connexion puis, si `ssh` a échoué parce que la clé de l'hôte a
+/// changé, propose de purger l'entrée `known_hosts` obsolète et de se
+/// reconnecter dans la foulée.
+///
+/// À appeler pendant que le terminal normal est actif (raw mode désactivé,
+/// écran alternatif quitté) : le bandeau d'avertissement d'OpenSSH reste alors
+/// visible juste au-dessus de l'invite de confirmation.
+pub fn launch_ssh_with_recovery(
+    h: &Host,
+    all_hosts: &HashMap<String, Host>,
+    overrides: Option<&[String]>,
+) {
+    let status = launch_ssh(h, all_hosts, overrides);
+
+    // Only bother probing when ssh actually exited non-zero. A changed host key
+    // makes ssh bail with status 255 before any shell starts.
+    let failed = matches!(status, Some(s) if !s.success());
+    if !failed {
+        return;
+    }
+    if !crate::ssh::known_hosts::host_key_changed(&h.host, h.port) {
+        return;
+    }
+
+    println!();
+    let confirmed = inquire::Confirm::new(&format!(
+        "⚠  The host key for {} has changed. Remove the stale key from known_hosts and reconnect?",
+        h.host
+    ))
+    .with_default(false)
+    .prompt()
+    .unwrap_or(false);
+    if !confirmed {
+        return;
+    }
+
+    match crate::ssh::known_hosts::remove_known_host_port(&h.host, h.port) {
+        Ok(()) => {
+            let _ = launch_ssh(h, all_hosts, overrides);
+        }
+        Err(e) => eprintln!("sshm: failed to clean known_hosts for {}: {e}", h.host),
     }
 }
 

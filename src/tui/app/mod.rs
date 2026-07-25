@@ -891,7 +891,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     }
                                                     let _ = disable_raw_mode();
                                                     let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                    crate::ssh::client::launch_ssh(&host_clone, &db.hosts, None);
+                                                    crate::ssh::client::launch_ssh_with_recovery(&host_clone, &db.hosts, None);
                                                     let _ = enable_raw_mode();
                                                     let _ = execute!(stdout(), EnterAlternateScreen);
                                                     clear_console();
@@ -1368,7 +1368,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     }
                                                     let _ = disable_raw_mode();
                                                     let _ = execute!(stdout(), LeaveAlternateScreen);
-                                                    crate::ssh::client::launch_ssh(&host_clone, &db.hosts, None);
+                                                    crate::ssh::client::launch_ssh_with_recovery(&host_clone, &db.hosts, None);
                                                     let _ = enable_raw_mode();
                                                     let _ = execute!(stdout(), EnterAlternateScreen);
                                                     clear_console();
