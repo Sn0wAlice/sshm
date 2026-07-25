@@ -62,6 +62,7 @@ const HELP_TEXT: &str = r#"
   p              Port forwarding (SSH tunnel)
   c              Check host reachability (TCP ping)
   i              Manage identity file for the selected host
+  F              Host key: show / pin / forget the fingerprint
   Space          Select / deselect a host for bulk actions
   X              Run a command on every selected host (fan-out)
 

@@ -60,6 +60,7 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 - **Toast notifications** — non-intrusive feedback for actions
 - **Desktop notifications** — native OS alerts (`notify-send` / `osascript`) when a background tunnel drops or a host changes reachability
 - **Open in a new terminal** — `o` launches the SSH session in a separate terminal window (auto-detected, or set `external_terminal`)
+- **Host-key trust** — vet fingerprints with `F`; on connect, a never-seen host offers trust-on-first-use with its fingerprint shown, and a *changed* host key is detected and offers to wipe the stale `known_hosts` entry and reconnect
 - **Auto-export** — optionally writes a clean `~/.ssh/config` on every save
 - **CLI mode** — scriptable commands for automation
 
@@ -191,6 +192,7 @@ sshm help                                # full CLI reference
 | `p` | Open port-forward menu — start a tunnel in the background (`f` runs it foreground) |
 | `t` | Background-tunnels dashboard — `d`/`x` stop a tunnel, `o` open a local tunnel's URL |
 | `o` | Open the SSH session in a new terminal window |
+| `F` (Shift+f) | Host key — show the pinned vs. live fingerprint, then pin (trust), forget, or replace it |
 | `i` | Push identity to selected host |
 | `r` | Rename folder |
 | `Space` | Toggle host in bulk selection |

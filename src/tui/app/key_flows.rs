@@ -80,6 +80,92 @@ pub fn run_known_hosts_clean_flow() -> std::io::Result<Option<String>> {
     Ok(Some(host))
 }
 
+/// What the fingerprint inspector did, so the caller can toast appropriately.
+pub enum FingerprintOutcome {
+    Pinned,
+    Forgotten,
+    Nothing,
+}
+
+/// Interactive host-key inspector for a single host (the `F` action). Prints the
+/// pinned key from `known_hosts` alongside the key the server presents right
+/// now, states whether they match, and offers to pin (trust-on-first-use),
+/// forget, or replace a stale key. `hostname`/`port` identify the target.
+pub fn run_host_fingerprint_flow(
+    hostname: &str,
+    port: u16,
+) -> std::io::Result<FingerprintOutcome> {
+    use crate::ssh::known_hosts;
+    use inquire::Select;
+
+    let pinned = known_hosts::pinned_fingerprints(hostname, port);
+    let live = known_hosts::scan_fingerprints(hostname, port);
+
+    println!();
+    println!("Host key — {hostname}:{port}");
+    println!();
+    if pinned.is_empty() {
+        println!("  Pinned (known_hosts): (none)");
+    } else {
+        for k in &pinned {
+            println!("  Pinned (known_hosts): {k}");
+        }
+    }
+    if live.is_empty() {
+        println!("  Live (server):        (unreachable)");
+    } else {
+        for k in &live {
+            println!("  Live (server):        {k}");
+        }
+    }
+
+    // Verdict — compared on fingerprint, ignoring which algorithm matched.
+    let matches = !pinned.is_empty()
+        && live.iter().any(|l| pinned.iter().any(|p| p.fingerprint == l.fingerprint));
+    println!();
+    match (pinned.is_empty(), live.is_empty()) {
+        (true, false) => println!("  ⧗ Not pinned yet — this would be a trust-on-first-use."),
+        (false, true) => println!("  ? Host unreachable — showing the pinned key only."),
+        _ if matches => println!("  ✓ Match — the pinned key matches the server."),
+        (false, false) => println!("  ✗ CHANGED — the pinned key does NOT match the server!"),
+        (true, true) => println!("  ? No key on either side."),
+    }
+    println!();
+
+    // Offer only the actions that make sense for the current state.
+    let mut options: Vec<&str> = Vec::new();
+    if !live.is_empty() && pinned.is_empty() {
+        options.push("Pin this key (trust on first use)");
+    }
+    if !live.is_empty() && !pinned.is_empty() && !matches {
+        options.push("Replace — forget the stale key and pin the current one");
+    }
+    if !pinned.is_empty() {
+        options.push("Forget — remove from known_hosts");
+    }
+    options.push("Close");
+
+    let Ok(choice) = Select::new("Action:", options).prompt() else {
+        return Ok(FingerprintOutcome::Nothing);
+    };
+    match choice {
+        "Pin this key (trust on first use)" => {
+            known_hosts::pin_host(hostname, port)?;
+            Ok(FingerprintOutcome::Pinned)
+        }
+        "Replace — forget the stale key and pin the current one" => {
+            known_hosts::remove_known_host_port(hostname, port)?;
+            known_hosts::pin_host(hostname, port)?;
+            Ok(FingerprintOutcome::Pinned)
+        }
+        "Forget — remove from known_hosts" => {
+            known_hosts::remove_known_host_port(hostname, port)?;
+            Ok(FingerprintOutcome::Forgotten)
+        }
+        _ => Ok(FingerprintOutcome::Nothing),
+    }
+}
+
 /// Best-effort hostname for default key comments.
 pub fn hostname_best_effort() -> String {
     std::process::Command::new("hostname")

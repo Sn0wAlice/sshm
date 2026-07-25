@@ -21,6 +21,8 @@ agent_remove_failed = "ssh-add -d failed: {error}"
 no_key_selected = "No key selected"
 known_hosts_removed = "Removed {host} from known_hosts"
 known_hosts_clean_failed = "known_hosts clean failed: {error}"
+fingerprint_pinned = "Pinned {host} to known_hosts"
+fingerprint_failed = "Host key action failed: {error}"
 quick_connect_oob = "No host #{n} in the visible list"
 
 [kluster]

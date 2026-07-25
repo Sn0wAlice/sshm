@@ -124,7 +124,7 @@ fn save_and_export(db: &Database, app_config: &AppConfig) {
 // Interactive key generation / known_hosts flows → see `key_flows` submodule.
 
 pub mod key_flows;
-use key_flows::{run_generate_key_flow, run_known_hosts_clean_flow};
+use key_flows::{run_generate_key_flow, run_known_hosts_clean_flow, run_host_fingerprint_flow, FingerprintOutcome};
 
 pub mod fanout;
 
@@ -936,6 +936,38 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                 filtered = apply_filter(&filter, &items);
                                                 selected = 0;
                                                 list_state.select(if filtered.is_empty() { None } else { Some(0) });
+                                                let _ = terminal.clear();
+                                            }
+                                        }
+                                        'F' => {
+                                            let rows = rows_for(view_mode, db, &items, &filtered, &filter, &collapsed);
+                                            if let Some(Row::Host(h)) = rows.get(selected) {
+                                                let (host, port) = (h.host.clone(), h.port);
+                                                let _ = disable_raw_mode();
+                                                let _ = execute!(stdout(), LeaveAlternateScreen);
+                                                match run_host_fingerprint_flow(&host, port) {
+                                                    Ok(FingerprintOutcome::Pinned) => {
+                                                        toast = Some(Toast::success(t!(
+                                                            "toast.fingerprint_pinned",
+                                                            "host" => host.clone()
+                                                        )));
+                                                    }
+                                                    Ok(FingerprintOutcome::Forgotten) => {
+                                                        toast = Some(Toast::success(t!(
+                                                            "toast.known_hosts_removed",
+                                                            "host" => host.clone()
+                                                        )));
+                                                    }
+                                                    Ok(FingerprintOutcome::Nothing) => {}
+                                                    Err(e) => {
+                                                        toast = Some(Toast::error(t!(
+                                                            "toast.fingerprint_failed",
+                                                            "error" => e
+                                                        )));
+                                                    }
+                                                }
+                                                let _ = enable_raw_mode();
+                                                let _ = execute!(stdout(), EnterAlternateScreen);
                                                 let _ = terminal.clear();
                                             }
                                         }

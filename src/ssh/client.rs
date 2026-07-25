@@ -111,6 +111,13 @@ pub fn launch_ssh_with_recovery(
     all_hosts: &HashMap<String, Host>,
     overrides: Option<&[String]>,
 ) {
+    // Trust-on-first-use: for a host we've never pinned, show its live
+    // fingerprint and let the user vet it here rather than blindly answering
+    // ssh's raw "(yes/no)?" prompt. Declining aborts the connection.
+    if !tofu_gate(h) {
+        return;
+    }
+
     let status = launch_ssh(h, all_hosts, overrides);
 
     // Only bother probing when ssh actually exited non-zero. A changed host key
@@ -141,6 +148,47 @@ pub fn launch_ssh_with_recovery(
         }
         Err(e) => eprintln!("sshm: failed to clean known_hosts for {}: {e}", h.host),
     }
+}
+
+/// Trust-on-first-use gate, run just before the first connection to a host.
+///
+/// Returns `true` to proceed with the connection, `false` to abort. Pinned
+/// hosts (a local `known_hosts` lookup, no network) sail straight through. For
+/// an unpinned, reachable host it prints the live fingerprint and asks the user
+/// to trust it: yes pins the key and connects, no aborts. If the key can't be
+/// fetched (host down, `ssh-keyscan` missing) it proceeds and lets `ssh` handle
+/// verification itself, so this never blocks a connection it couldn't vet.
+fn tofu_gate(h: &Host) -> bool {
+    use crate::ssh::known_hosts;
+
+    if known_hosts::is_pinned(&h.host, h.port) {
+        return true;
+    }
+
+    let keys = known_hosts::scan_fingerprints(&h.host, h.port);
+    if keys.is_empty() {
+        // Couldn't reach / fingerprint the host — don't stand in ssh's way.
+        return true;
+    }
+
+    println!();
+    println!(
+        "The authenticity of host '{}' (port {}) can't be established — it isn't in known_hosts yet.",
+        h.host, h.port
+    );
+    for k in &keys {
+        println!("  {k}");
+    }
+    let trust = inquire::Confirm::new("Trust this host key and connect?")
+        .with_default(false)
+        .prompt()
+        .unwrap_or(false);
+    if trust {
+        if let Err(e) = known_hosts::pin_host(&h.host, h.port) {
+            eprintln!("sshm: could not pin host key: {e}");
+        }
+    }
+    trust
 }
 
 #[cfg(test)]
