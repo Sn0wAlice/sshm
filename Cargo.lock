@@ -1678,6 +1678,22 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand",
+ "sshm-core",
+ "toml",
+]
+
+[[package]]
+name = "sshm-core"
+version = "1.5.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dirs",
+ "fuzzy-matcher",
+ "regex",
+ "serde",
+ "serde_json",
+ "shellexpand",
  "ssh_config",
  "toml",
 ]

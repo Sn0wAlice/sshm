@@ -1,0 +1,43 @@
+[package]
+name = "sshm"
+description = "Fast SSH + Docker + Incus + Kubernetes manager for the terminal"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+readme = "../../README.md"
+
+# The published binary keeps its historical name and path: target/release/sshm.
+[[bin]]
+name = "sshm"
+path = "src/main.rs"
+
+[lib]
+name = "sshm"
+path = "src/lib.rs"
+
+[dependencies]
+sshm-core.workspace = true
+
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+shellexpand.workspace = true
+regex.workspace = true
+toml.workspace = true
+libc.workspace = true
+fuzzy-matcher.workspace = true
+
+inquire.workspace = true
+prettytable.workspace = true
+ratatui.workspace = true
+crossterm.workspace = true
+
+openssl = { workspace = true, optional = true }
+
+[features]
+vendored-openssl = ["openssl"]

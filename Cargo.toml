@@ -1,31 +1,35 @@
-[package]
-name = "sshm"
+[workspace]
+members = ["crates/sshm-core", "crates/sshm"]
+resolver = "2"
+
+[workspace.package]
 version = "1.5.1"
 edition = "2021"
-description = "Fast SSH + Docker + Incus + Kubernetes manager for the terminal"
 authors = ["Sn0wAlice"]
 license = "Apache-2.0"
 repository = "https://github.com/Sn0wAlice/sshm"
 homepage = "https://github.com/Sn0wAlice/sshm"
-readme = "README.md"
 
-[dependencies]
+[workspace.dependencies]
+# Shared across crates — pin once here, reference with `.workspace = true`.
 serde = { version = "1.0.219", features = ["derive"] }
-dirs = "6.0.0"
 serde_json = "1.0.140"
-inquire = { version = "0.7.5", default-features = true }
-prettytable = "0.10.0"
+dirs = "6.0.0"
 ssh_config = "0.1.0"
-ratatui = "0.30.0"
-crossterm = "0.29.0"
 regex = "1.11.1"
 fuzzy-matcher = "0.3"
 shellexpand = "3"
 toml = "0.9.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
-openssl = { version = "0.10", features = ["vendored"], optional = true }
 anyhow = "1.0"
 libc = "0.2"
 
-[features]
-vendored-openssl = ["openssl"]
+# Frontend-only (TUI/CLI) — deliberately kept out of sshm-core's dependency tree.
+inquire = { version = "0.7.5", default-features = true }
+prettytable = "0.10.0"
+ratatui = "0.30.0"
+crossterm = "0.29.0"
+openssl = { version = "0.10", features = ["vendored"] }
+
+# Internal
+sshm-core = { path = "crates/sshm-core" }

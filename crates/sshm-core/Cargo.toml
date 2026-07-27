@@ -1,0 +1,29 @@
+[package]
+name = "sshm-core"
+description = "Frontend-agnostic engine for sshm: models, config IO, ssh/kluster command construction, filter, history, i18n"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+
+[lib]
+name = "sshm_core"
+path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+dirs.workspace = true
+ssh_config.workspace = true
+regex.workspace = true
+fuzzy-matcher.workspace = true
+shellexpand.workspace = true
+toml.workspace = true
+chrono.workspace = true
+anyhow.workspace = true
+
+# NOTE: no ratatui / crossterm / inquire here — core must stay free of any
+# terminal-UI dependency (see workspace-level constraint). Terminal handover is
+# delegated to the frontend via `tty::set_release_hook`.
