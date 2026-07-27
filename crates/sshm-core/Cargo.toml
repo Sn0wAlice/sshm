@@ -25,6 +25,15 @@ chrono.workspace = true
 anyhow.workspace = true
 notify.workspace = true
 
+# Optional: derive `specta::Type` on the IPC-facing structs for the desktop
+# GUI. Off by default, so the TUI build and `cargo tree -p sshm-core` stay lean
+# (no specta unless a frontend asks for it).
+specta = { workspace = true, optional = true }
+
+[features]
+# Enable `specta::Type` derives on public model/config/kluster types.
+specta = ["dep:specta"]
+
 [dev-dependencies]
 tempfile.workspace = true
 

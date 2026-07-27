@@ -114,6 +114,43 @@ sudo cp target/release/sshm /usr/local/bin/
 
 The Kluster tab degrades gracefully — sections show `(unavailable)` when the corresponding CLI / daemon isn't reachable.
 
+### Desktop GUI (Tauri 2)
+
+The repo is a Cargo workspace:
+
+```
+crates/sshm-core   # frontend-agnostic engine (models, config IO, ssh/kluster, filter, i18n)
+crates/sshm        # the TUI + CLI (binary `sshm`) — unchanged
+crates/sshm-gui    # the desktop app (binary `sshm-desktop`), Svelte + Tauri 2
+```
+
+The GUI shares the exact same on-disk database (`~/.config/sshm/*`), so a host added
+in the terminal shows up in the app live, and vice-versa. It's a *launcher*: ssh
+sessions open in your external terminal (never embedded), and it never reads or
+writes private-key contents — only paths, exactly like the TUI.
+
+```bash
+# One-time: install the frontend toolchain
+cd crates/sshm-gui
+npm install
+
+# Dev (hot-reload UI + Rust)
+npm run tauri dev        # alias: gui:dev
+
+# Production bundle (.app / .dmg / .deb / AppImage)
+npm run tauri build      # alias: gui:build
+```
+
+Requirements: Node 18+ and the Tauri prerequisites for your OS
+(macOS: Xcode CLT; Linux: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `librsvg2-dev`).
+Typed IPC (`tauri-specta`) derives the TypeScript types from the Rust structs, so the
+frontend and backend never drift — the generated `crates/sshm-gui/src/lib/bindings.ts`
+is refreshed on every `tauri dev`, or headlessly with
+`cargo test -p sshm-desktop export_bindings`.
+
+`cargo build --release` at the workspace root builds only the TUI (`target/release/sshm`);
+the desktop app is built explicitly (`-p sshm-desktop` or via the Tauri CLI).
+
 ## Usage
 
 ### TUI (recommended)

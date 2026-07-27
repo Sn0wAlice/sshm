@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Type de tunnel SSH.
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum TunnelKind {
     /// `-L` Local forward: localhost:local_port -> remote:remote_port (via SSH host)
@@ -31,6 +32,7 @@ impl TunnelKind {
 }
 
 /// Définition d'un tunnel SSH sauvegardable.
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Tunnel {
     /// Libellé court (ex : "Postgres prod").
@@ -49,6 +51,7 @@ pub struct Tunnel {
 }
 
 /// Représente une entrée d'hôte SSH (schéma v2).
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Host {
     /// Alias (clé logique)
@@ -122,6 +125,7 @@ pub struct SourceSig {
 }
 
 /// Base de données de l'application (hosts + dossiers)
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Database {
     #[serde(default)]
@@ -133,6 +137,7 @@ pub struct Database {
     /// (`#[serde(skip)]`, so the on-disk JSON is unchanged); lets
     /// [`Database::reload_if_changed`] short-circuit when nothing changed.
     #[serde(skip)]
+    #[cfg_attr(feature = "specta", specta(skip))]
     pub(crate) source_sig: Option<SourceSig>,
 }
 

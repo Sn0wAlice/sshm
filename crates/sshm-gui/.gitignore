@@ -1,0 +1,8 @@
+node_modules/
+dist/
+# Tauri build artifacts / generated schemas
+src-tauri/gen/
+
+# The app icons are real sources — override the global `Icon?` (macOS) ignore.
+!src-tauri/icons/
+!src-tauri/icons/*.png

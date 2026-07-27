@@ -167,3 +167,101 @@ Last-writer-wins; no merge engine (per spec).
   fsevent-sys/inotify only). ✅
 - On-disk formats unchanged (skip field isn't serialized; writers emit the same
   canonical bytes). ✅
+
+## Phase 3 — `sshm-gui` (Tauri 2 desktop app, launcher mode)
+
+New crate `crates/sshm-gui` — a Tauri 2 desktop app (binary `sshm-desktop`,
+`publish = false`), Svelte + TypeScript (Vite) frontend, sharing the exact same
+on-disk DB as the TUI.
+
+### Layout
+
+```
+crates/sshm-gui/
+├── package.json, vite.config.ts, svelte.config.js, tsconfig*.json, index.html
+├── src/                      # Svelte frontend
+│   ├── App.svelte, main.ts, app.css
+│   └── lib/{bindings.ts (generated), ipc.ts, stores.ts, components/*.svelte}
+└── src-tauri/                # Rust backend (the workspace member)
+    ├── Cargo.toml, build.rs, tauri.conf.json, capabilities/default.json, icons/
+    └── src/{main,lib,commands,dto,events,state,tunnels_mgr}.rs
+```
+
+`default-members` in the workspace root is `[sshm-core, sshm]`, so `cargo build
+--release` (debian/rules, release.yml) still builds only the TUI. The GUI is
+built with `-p sshm-desktop` or the Tauri CLI.
+
+### Typed IPC (no hand-written TS)
+
+- `sshm-core` gained an **optional, off-by-default `specta` feature** that adds
+  `#[cfg_attr(feature = "specta", derive(specta::Type))]` to the IPC-facing
+  structs (`Host`, `Tunnel`, `TunnelKind`, `AppConfig`, `Database`, the kluster
+  types, `TunnelRecord`). Default core builds (and `cargo tree -p sshm-core`)
+  stay specta-free — the constraint that no terminal-UI/heavy dep leaks into the
+  default tree is preserved; specta only appears when the GUI enables it.
+- The GUI enables `sshm-core/specta` and uses `tauri-specta` +
+  `specta-typescript` to generate `src/lib/bindings.ts` from the command
+  signatures (pinned: specta `=2.0.0-rc.22`, tauri-specta `=2.0.0-rc.21`,
+  specta-typescript `=0.0.9`). Regenerated on every `tauri dev`, or headlessly by
+  the `export_bindings` test — that test *is* how the committed bindings are
+  produced, so CI can diff them. `u64` settings map to JS `number`; the file
+  carries a `// @ts-nocheck` header so its own generated imports don't trip
+  `noUnusedLocals` while components importing from it stay fully type-checked.
+
+### Commands (all thin wrappers over core)
+
+Hosts/folders (list w/ core filter, get, save, delete, clone, folder CRUD),
+connect (via `os::open_in_terminal` — external terminal, never embedded),
+settings (get/save), identities (`scan_ssh_dir`, generate, agent add/remove,
+push pubkey), kluster (overview + docker/pods/incus list, docker/incus
+lifecycle, shell/logs via external terminal), tunnels (list across instances,
+per-host saved tunnels, start/stop). Mutations go through core so `host.json`
+stays canonical and `~/.ssh/config` auto-export keeps working.
+
+### Shared tunnel substrate
+
+New `sshm_core::tunnels`: `build_forward_arg` / `build_tunnel_argv` (the
+`ssh -N` argv), and `TunnelRecord` + `read_all_records` — the shared
+`~/.config/sshm/tunnels/<pid>.json` format. The GUI's `GuiTunnels` spawns/kills
+its own children and writes this format; the TUI's existing manager writes the
+same field shape, so both dashboards interoperate. (The TUI's manager was left
+untouched to avoid regression; it and `GuiTunnels` share the on-disk contract,
+not the struct — a future cleanup could unify them.)
+
+### Live sync
+
+The backend spawns a thread that blocks on `sshm_core::watch::ConfigWatcher` and
+emits a typed `DbChangedEvent` for each debounced change; `App.svelte` listens
+and refreshes the host list — so a host added from the TUI appears in the app
+without a restart.
+
+### Security
+
+Strict Tauri capability: `core:default` only — no shell/opener/fs plugins. Every
+privileged action (spawning ssh, opening a terminal, reading `~/.ssh`) runs in
+the Rust backend behind an explicit command, never via a frontend-reachable
+plugin. CSP enabled (`default-src 'self'`, no remote origins). The GUI never
+reads or writes private-key contents — only paths, like the TUI.
+
+### CI (`.github/workflows/ci.yml`)
+
+- `rust` job: `cargo test --workspace --exclude sshm-desktop` + clippy `-D
+  warnings` on core+TUI.
+- `gui` job (ubuntu + macos): `npm ci && npm run check` (svelte-check) and
+  `cargo check -p sshm-desktop` (Linux installs the webkit2gtk deps).
+
+### Acceptance (Phase 3)
+
+- `cargo check -p sshm-desktop` → clean; clippy on the crate → clean. ✅
+- `npm run check` (svelte-check) → 0 errors / 0 warnings; `npm run build` →
+  produces `dist/`. ✅
+- Bindings generated from core structs (no hand-written duplicate TS). ✅
+- Default `cargo build --release` unaffected (GUI excluded); core tree still free
+  of ratatui/crossterm/inquire/specta by default. ✅
+- Shared DB: GUI reads/writes the same `host.json`/`kluster.json`/`settings.toml`
+  and live-reloads on external change. ✅
+
+### Phase 4 (embedded terminal) — not started
+
+Left as the optional follow-up per the plan (portable-pty + xterm.js), with the
+external-terminal button as the always-available fallback.

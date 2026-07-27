@@ -1,0 +1,38 @@
+[package]
+name = "sshm-desktop"
+description = "sshm desktop GUI — a Tauri 2 launcher sharing the sshm on-disk database"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish = false
+
+# The desktop binary is deliberately named differently from the TUI (`sshm`).
+[[bin]]
+name = "sshm-desktop"
+path = "src/main.rs"
+
+# Tauri wants a lib target it can also build as a mobile/webview library.
+[lib]
+name = "sshm_desktop_lib"
+crate-type = ["lib", "cdylib", "staticlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+sshm-core = { workspace = true, features = ["specta"] }
+
+tauri = { version = "2", features = [] }
+serde.workspace = true
+serde_json.workspace = true
+anyhow.workspace = true
+dirs.workspace = true
+chrono.workspace = true
+
+# Typed IPC (specta v2 ecosystem — versions pinned together).
+specta = { workspace = true }
+specta-typescript = "=0.0.9"
+tauri-specta = { version = "=2.0.0-rc.21", features = ["derive", "typescript"] }

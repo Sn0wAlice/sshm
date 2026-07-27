@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Minimal capability for the sshm desktop window: core defaults only. No shell/opener/fs plugins are enabled — every privileged action (spawning ssh, opening an external terminal, reading ~/.ssh) happens in the Rust backend behind an explicit command, never through a frontend-reachable plugin.",
+  "windows": ["main"],
+  "permissions": ["core:default"]
+}

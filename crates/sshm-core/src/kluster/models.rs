@@ -2,6 +2,7 @@ use serde::{Deserialize, Serialize};
 
 /// Display flavour for a saved cluster — purely cosmetic, drives the badge in
 /// the tab. Detection is naïve (substring on context name), users can toggle.
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Default)]
 pub enum ClusterKind {
     #[default]
@@ -31,6 +32,7 @@ impl ClusterKind {
 /// One saved cluster entry. `kubeconfig` and `context` are both optional;
 /// when omitted, `kubectl` is invoked with no `--kubeconfig`/`--context`
 /// flags and falls back to the standard env / `current-context` rules.
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Cluster {
     pub name: String,
@@ -47,6 +49,7 @@ pub struct Cluster {
 /// A reference to a remote Docker daemon reached over SSH. The actual
 /// connection details are looked up from the saved Host map (`host.json`)
 /// at runtime, so renaming/editing the SSH host's user/port flows through.
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DockerRemote {
     /// Name of an entry in the SSH Host DB (`Host.name`).
@@ -54,6 +57,7 @@ pub struct DockerRemote {
 }
 
 /// On-disk representation for `kluster.json`.
+#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct KlusterDb {
     #[serde(default)]
@@ -68,7 +72,8 @@ pub struct KlusterDb {
 }
 
 /// Snapshot of one Docker container at the moment of `docker ps`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContainerInfo {
     pub id: String,
     pub name: String,
@@ -78,7 +83,8 @@ pub struct ContainerInfo {
 }
 
 /// Snapshot of one k8s pod at the moment of `kubectl get pods`.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PodInfo {
     pub namespace: String,
     pub name: String,
@@ -88,7 +94,8 @@ pub struct PodInfo {
 }
 
 /// A start / stop / restart operation on a Docker container or Incus instance.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum LifecycleAction {
     Start,
     Stop,
@@ -117,7 +124,8 @@ impl LifecycleAction {
 
 /// One titled group of label→value rows in the rich detail view (e.g.
 /// "Networking" holding `IPv4 → 192.168.64.3`). Purely presentational.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DetailSection {
     pub title: String,
     pub rows: Vec<(String, String)>,
@@ -142,7 +150,8 @@ impl DetailSection {
 
 /// Parsed, runtime-agnostic detail for one container/instance, built from an
 /// `inspect` call. Rendered by the Kluster detail popup.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ContainerDetail {
     /// Header line (usually the container name).
     pub title: String,
@@ -152,7 +161,8 @@ pub struct ContainerDetail {
 }
 
 /// Snapshot of one Incus instance (container or VM).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[cfg_attr(feature = "specta", derive(specta::Type))]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct IncusInstance {
     pub name: String,
     /// `container` or `virtual-machine`.
