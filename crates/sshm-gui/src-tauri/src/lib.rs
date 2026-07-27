@@ -77,8 +77,41 @@ pub fn make_builder() -> Builder<tauri::Wry> {
         .events(collect_events![DbChangedEvent, TermOutputEvent, TermExitEvent])
 }
 
+/// GUI apps launched from Finder/Dock inherit only a minimal `PATH`, so tools
+/// like `docker` / `kubectl` / `incus` / `ssh` (and the embedded shell) can't be
+/// found. Recover the real `PATH` from the user's login shell and set it
+/// process-wide, so every `Command` (and PTY child) resolves binaries normally.
+#[cfg(unix)]
+fn fix_path_from_login_shell() {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+    let marker = "__SSHM_PATH__";
+    let script = format!("printf '{marker}%s' \"$PATH\"");
+    let Ok(out) = std::process::Command::new(&shell)
+        .args(["-l", "-c", &script])
+        .output()
+    else {
+        return;
+    };
+    if !out.status.success() {
+        return;
+    }
+    let s = String::from_utf8_lossy(&out.stdout);
+    if let Some(idx) = s.find(marker) {
+        let path = s[idx + marker.len()..].trim();
+        if !path.is_empty() {
+            std::env::set_var("PATH", path);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn fix_path_from_login_shell() {}
+
 /// Run the desktop app.
 pub fn run() {
+    // Must run before anything spawns a subprocess (kluster discovery, PTYs, …).
+    fix_path_from_login_shell();
+
     let builder = make_builder();
 
     // In dev, regenerate the TS bindings on every launch so the frontend and

@@ -39,6 +39,28 @@ impl PtySession {
             cmd.cwd(home);
         }
 
+        // Inherit the launching environment so the child finds PATH/HOME/etc.
+        // (portable-pty doesn't guarantee inheritance; a GUI app launched from
+        // Finder/Dock also starts with a minimal env — a login shell fills the
+        // rest.)
+        for (key, val) in std::env::vars() {
+            cmd.env(key, val);
+        }
+        // Force a terminal type the webview actually emulates (xterm.js). Without
+        // this, a GUI-launched app has no `TERM`, so shells/prompts (starship,
+        // powerlevel10k, …) fall back to "dumb" and render broken — and
+        // `ssh`/`docker exec -it` forward this to the remote/container too.
+        cmd.env("TERM", "xterm-256color");
+        cmd.env("COLORTERM", "truecolor");
+        // A UTF-8 locale so powerline/unicode prompt glyphs render, when the
+        // launching environment provides none.
+        let has_locale = ["LC_ALL", "LC_CTYPE", "LANG"]
+            .iter()
+            .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()));
+        if !has_locale {
+            cmd.env("LANG", "en_US.UTF-8");
+        }
+
         let child = pair.slave.spawn_command(cmd).context("spawn in pty")?;
         // Drop the slave handle so the child owns the only slave fd; when it
         // exits, the master read side sees EOF.
