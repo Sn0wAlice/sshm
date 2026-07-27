@@ -90,16 +90,26 @@
   });
 </script>
 
-<div class="term" bind:this={el}></div>
+<!-- The gap lives on the wrapper's padding; xterm goes in the inner box that
+     the FitAddon measures, so the empty space below is real (not "filled" by
+     extra rows). -->
+<div class="wrap">
+  <div class="term" bind:this={el}></div>
+</div>
 
 <style>
-  .term {
+  .wrap {
     width: 100%;
     height: 100%;
     background: #0b0f18;
-    /* Extra bottom room so the last row never sits flush against the window
-       edge (the fit addon rounds rows down to this padded height). */
-    padding: 8px 12px 20px;
+    padding: 8px 12px 22px;
+    display: flex;
+    flex-direction: column;
+  }
+  .term {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
   }
   :global(.xterm) {
     height: 100%;
