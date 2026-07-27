@@ -97,12 +97,17 @@
     width: 100%;
     height: 100%;
     background: #0b0f18;
-    padding: 6px 8px;
+    /* Extra bottom room so the last row never sits flush against the window
+       edge (the fit addon rounds rows down to this padded height). */
+    padding: 8px 10px 14px;
   }
   :global(.xterm) {
     height: 100%;
   }
   :global(.xterm-viewport) {
     background-color: transparent !important;
+  }
+  :global(.xterm-viewport)::-webkit-scrollbar {
+    width: 8px;
   }
 </style>
