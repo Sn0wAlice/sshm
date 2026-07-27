@@ -181,9 +181,10 @@ async klusterIncusLifecycle(name: string, action: LifecycleAction, remote: strin
 }
 },
 /**
- * Open a shell into a Docker container in an external terminal.
+ * Open a shell into a Docker container as an embedded terminal session.
+ * Returns the session id.
  */
-async klusterDockerShell(id: string, hostAlias: string | null) : Promise<Result<null, string>> {
+async klusterDockerShell(id: string, hostAlias: string | null) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("kluster_docker_shell", { id, hostAlias }) };
 } catch (e) {
@@ -192,9 +193,9 @@ async klusterDockerShell(id: string, hostAlias: string | null) : Promise<Result<
 }
 },
 /**
- * Tail a Docker container's logs in an external terminal.
+ * Tail a Docker container's logs as an embedded terminal session.
  */
-async klusterDockerLogs(id: string, hostAlias: string | null) : Promise<Result<null, string>> {
+async klusterDockerLogs(id: string, hostAlias: string | null) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("kluster_docker_logs", { id, hostAlias }) };
 } catch (e) {
@@ -203,9 +204,9 @@ async klusterDockerLogs(id: string, hostAlias: string | null) : Promise<Result<n
 }
 },
 /**
- * Open a shell into a k8s pod in an external terminal.
+ * Open a shell into a k8s pod as an embedded terminal session.
  */
-async klusterPodShell(cluster: Cluster, namespace: string, pod: string) : Promise<Result<null, string>> {
+async klusterPodShell(cluster: Cluster, namespace: string, pod: string) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("kluster_pod_shell", { cluster, namespace, pod }) };
 } catch (e) {
@@ -214,9 +215,9 @@ async klusterPodShell(cluster: Cluster, namespace: string, pod: string) : Promis
 }
 },
 /**
- * Open a shell into an Incus instance in an external terminal.
+ * Open a shell into an Incus instance as an embedded terminal session.
  */
-async klusterIncusShell(name: string, remote: string | null) : Promise<Result<null, string>> {
+async klusterIncusShell(name: string, remote: string | null) : Promise<Result<string, string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("kluster_incus_shell", { name, remote }) };
 } catch (e) {
@@ -267,12 +268,24 @@ async reloadDb() : Promise<Host[]> {
     return await TAURI_INVOKE("reload_db");
 },
 /**
- * Open an embedded ssh session to `host_name` at `cols`×`rows`. Returns the
- * session id; output then arrives as `TermOutputEvent`s carrying that id.
+ * Open an embedded ssh session to `host_name`. Returns the session id; output
+ * then arrives as `TermOutputEvent`s carrying that id. Mosh is rejected (it
+ * stays external-terminal only).
  */
-async termOpen(hostName: string, cols: number, rows: number) : Promise<Result<string, string>> {
+async termOpen(hostName: string) : Promise<Result<string, string>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("term_open", { hostName, cols, rows }) };
+    return { status: "ok", data: await TAURI_INVOKE("term_open", { hostName }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open a local shell (the user's `$SHELL`, else `/bin/sh`) in the app.
+ */
+async termOpenLocal() : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("term_open_local") };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };

@@ -7,8 +7,8 @@ export const activeSection = writable<Section>("hosts");
 
 // Top strip: the host manager plus one tab per open embedded terminal.
 export interface Session {
-  id: string; // frontend id (also drives the Terminal component)
-  host: string;
+  id: string; // frontend id (drives the tab / Terminal component)
+  backendId: string; // the PTY session id in the Rust backend
   title: string;
 }
 export const sessions = writable<Session[]>([]);
@@ -20,9 +20,10 @@ export const folders = writable<string[]>([]);
 export const selectedHostName = writable<string | null>(null);
 
 let sessionSeq = 0;
-export function openSession(host: string): string {
+/** Open a tab for an already-spawned backend PTY session. */
+export function addSession(backendId: string, title: string): string {
   const id = `t${++sessionSeq}`;
-  sessions.update((s) => [...s, { id, host, title: host }]);
+  sessions.update((s) => [...s, { id, backendId, title }]);
   activeView.set(id);
   return id;
 }

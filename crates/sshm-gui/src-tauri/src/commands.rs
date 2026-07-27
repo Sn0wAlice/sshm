@@ -4,7 +4,7 @@
 
 use std::collections::BTreeSet;
 
-use tauri::State;
+use tauri::{AppHandle, State};
 
 use sshm_core::config::io::{save_db, load_db};
 use sshm_core::config::path::config_path;
@@ -403,87 +403,109 @@ pub fn kluster_incus_lifecycle(
     kluster::incus::lifecycle(&name, remote.as_deref(), action).map_err(|e| format!("{e:#}"))
 }
 
-/// Open a shell into a Docker container in an external terminal.
+/// Open a shell into a Docker container as an embedded terminal session.
+/// Returns the session id.
 #[tauri::command]
 #[specta::specta]
 pub fn kluster_docker_shell(
+    app: AppHandle,
     state: State<AppState>,
     id: String,
     host_alias: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let uri = {
         let db = state.db.lock().unwrap();
         resolve_docker_host(&db, host_alias.as_deref())
     };
-    let inner = format!("docker exec -it {id} /bin/sh");
     let argv = match uri {
-        Some(u) => vec!["/bin/sh".into(), "-c".into(), format!("DOCKER_HOST={u} {inner}")],
+        Some(u) => vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!("DOCKER_HOST={u} docker exec -it {id} /bin/sh"),
+        ],
         None => vec!["docker".into(), "exec".into(), "-it".into(), id, "/bin/sh".into()],
     };
-    sshm_core::os::open_in_terminal(&argv, &load_settings().external_terminal)
+    crate::terminal::spawn_session(&app, &state, argv)
 }
 
-/// Tail a Docker container's logs in an external terminal.
+/// Tail a Docker container's logs as an embedded terminal session.
 #[tauri::command]
 #[specta::specta]
 pub fn kluster_docker_logs(
+    app: AppHandle,
     state: State<AppState>,
     id: String,
     host_alias: Option<String>,
-) -> Result<(), String> {
+) -> Result<String, String> {
     let uri = {
         let db = state.db.lock().unwrap();
         resolve_docker_host(&db, host_alias.as_deref())
     };
     let tail = load_settings().kluster_log_tail_lines;
-    let inner = format!("docker logs -f --tail {tail} {id}");
     let argv = match uri {
-        Some(u) => vec!["/bin/sh".into(), "-c".into(), format!("DOCKER_HOST={u} {inner}")],
-        None => host_shell_argv(&inner),
+        Some(u) => vec![
+            "/bin/sh".into(),
+            "-c".into(),
+            format!("DOCKER_HOST={u} docker logs -f --tail {tail} {id}"),
+        ],
+        None => vec![
+            "docker".into(),
+            "logs".into(),
+            "-f".into(),
+            "--tail".into(),
+            tail.to_string(),
+            id,
+        ],
     };
-    sshm_core::os::open_in_terminal(&argv, &load_settings().external_terminal)
+    crate::terminal::spawn_session(&app, &state, argv)
 }
 
-/// Open a shell into a k8s pod in an external terminal.
+/// Open a shell into a k8s pod as an embedded terminal session.
 #[tauri::command]
 #[specta::specta]
 pub fn kluster_pod_shell(
+    app: AppHandle,
+    state: State<AppState>,
     cluster: Cluster,
     namespace: String,
     pod: String,
-) -> Result<(), String> {
-    let mut inner = String::from("kubectl");
+) -> Result<String, String> {
+    let mut argv = vec!["kubectl".to_string()];
     if let Some(kc) = &cluster.kubeconfig {
-        inner.push_str(&format!(" --kubeconfig {kc}"));
+        argv.push("--kubeconfig".into());
+        argv.push(kc.clone());
     }
     if let Some(ctx) = &cluster.context {
-        inner.push_str(&format!(" --context {ctx}"));
+        argv.push("--context".into());
+        argv.push(ctx.clone());
     }
-    inner.push_str(&format!(" exec -it -n {namespace} {pod} -- /bin/sh"));
-    let argv = host_shell_argv(&inner);
-    sshm_core::os::open_in_terminal(&argv, &load_settings().external_terminal)
+    argv.extend([
+        "exec".into(),
+        "-it".into(),
+        "-n".into(),
+        namespace,
+        pod,
+        "--".into(),
+        "/bin/sh".into(),
+    ]);
+    crate::terminal::spawn_session(&app, &state, argv)
 }
 
-/// Open a shell into an Incus instance in an external terminal.
+/// Open a shell into an Incus instance as an embedded terminal session.
 #[tauri::command]
 #[specta::specta]
-pub fn kluster_incus_shell(name: String, remote: Option<String>) -> Result<(), String> {
+pub fn kluster_incus_shell(
+    app: AppHandle,
+    state: State<AppState>,
+    name: String,
+    remote: Option<String>,
+) -> Result<String, String> {
     let target = match remote {
         Some(r) if !r.is_empty() => format!("{r}:{name}"),
         _ => name,
     };
     let argv = vec!["incus".into(), "exec".into(), target, "--".into(), "/bin/sh".into()];
-    sshm_core::os::open_in_terminal(&argv, &load_settings().external_terminal)
-}
-
-/// Wrap a command string so it runs in a login shell inside the external
-/// terminal (keeps the window around after the command exits).
-fn host_shell_argv(inner: &str) -> Vec<String> {
-    vec![
-        "/bin/sh".into(),
-        "-c".into(),
-        format!("{inner}; exec ${{SHELL:-/bin/sh}} -l"),
-    ]
+    crate::terminal::spawn_session(&app, &state, argv)
 }
 
 // ---------------------------------------------------------------------------

@@ -69,6 +69,7 @@ pub fn make_builder() -> Builder<tauri::Wry> {
             commands::stop_tunnel,
             commands::reload_db,
             terminal::term_open,
+            terminal::term_open_local,
             terminal::term_write,
             terminal::term_resize,
             terminal::term_close,

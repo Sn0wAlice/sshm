@@ -41,7 +41,7 @@
       <!-- Terminals stay mounted (hidden) while inactive so sessions survive tab switches. -->
       {#each sessionList as s (s.id)}
         <div class="pane" class:show={$activeView === s.id}>
-          <Terminal host={s.host} />
+          <Terminal backendId={s.backendId} />
         </div>
       {/each}
 

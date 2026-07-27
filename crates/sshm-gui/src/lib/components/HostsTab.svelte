@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Host } from "../bindings";
-  import { commands, tryRun } from "../ipc";
-  import { hosts, folders, selectedHostName, openSession, pushToast } from "../stores";
+  import { commands, tryRun, openHostSession } from "../ipc";
+  import { hosts, folders, selectedHostName, pushToast } from "../stores";
   import { hostIcon } from "../hostIcon";
   import HostForm from "./HostForm.svelte";
   import HostDetail from "./HostDetail.svelte";
@@ -9,7 +9,7 @@
 
   let query = "";
   let filtered: Host[] = [];
-  let folderFilter: string | null = null;
+  let currentPath = ""; // "" = root; folders drill down, non-recursive
   let editing: Host | null = null;
   let showForm = false;
   let menu: { host: Host; x: number; y: number } | null = null;
@@ -30,17 +30,54 @@
     }, 90);
   }
 
-  $: shown = folderFilter ? filtered.filter((h) => h.folder === folderFilter) : filtered;
+  // --- Folder navigation (drill-down, not a flat recursive list) ---
+  $: searching = query.trim().length > 0;
 
-  interface Group {
-    name: string;
-    count: number;
+  // Every folder path that exists (each nested path expanded to its ancestors).
+  $: allPaths = collectFolderPaths($folders, $hosts);
+  function collectFolderPaths(fs: string[], all: Host[]): Set<string> {
+    const set = new Set<string>();
+    const add = (f: string) => {
+      let acc = "";
+      for (const seg of f.split("/").filter(Boolean)) {
+        acc = acc ? `${acc}/${seg}` : seg;
+        set.add(acc);
+      }
+    };
+    for (const f of fs) add(f);
+    for (const h of all) if (h.folder) add(h.folder);
+    return set;
   }
-  $: groups = buildGroups($hosts);
-  function buildGroups(all: Host[]): Group[] {
-    const counts = new Map<string, number>();
-    for (const h of all) if (h.folder) counts.set(h.folder, (counts.get(h.folder) ?? 0) + 1);
-    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, count]) => ({ name, count }));
+
+  // Immediate children of the current folder only.
+  $: subfolders = childFolders(allPaths, currentPath);
+  function childFolders(paths: Set<string>, path: string): string[] {
+    const out: string[] = [];
+    for (const p of paths) {
+      const idx = p.lastIndexOf("/");
+      const parent = idx === -1 ? "" : p.slice(0, idx);
+      if (parent === path) out.push(p);
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  }
+
+  // Hosts to show: when searching, the flat match set; otherwise just the hosts
+  // that live directly in the current folder (root = no folder).
+  $: dirHosts = searching ? filtered : filtered.filter((h) => (h.folder ?? "") === currentPath);
+
+  function subtreeCount(path: string): number {
+    return $hosts.filter((h) => h.folder === path || (h.folder ?? "").startsWith(`${path}/`)).length;
+  }
+  function folderLabel(path: string): string {
+    return path.split("/").pop() ?? path;
+  }
+  function openFolder(path: string): void {
+    currentPath = path;
+    selectedHostName.set(null);
+  }
+  function goUp(): void {
+    const idx = currentPath.lastIndexOf("/");
+    currentPath = idx === -1 ? "" : currentPath.slice(0, idx);
   }
 
   $: selected = $hosts.find((h) => h.name === $selectedHostName) ?? null;
@@ -65,9 +102,9 @@
 
   // Enter / CONNECT: connect when the search narrows to a single host.
   function connectFromSearch(): void {
-    if (shown.length === 1) {
-      openSession(shown[0].name);
-    } else if (shown.length === 0) {
+    if (dirHosts.length === 1) {
+      openHostSession(dirHosts[0].name);
+    } else if (dirHosts.length === 0) {
       pushToast("err", "No matching host");
     } else {
       pushToast("err", "Narrow the search to one host, or click a host to connect");
@@ -88,7 +125,7 @@
   }
   function mConnect(h: Host): void {
     closeMenu();
-    openSession(h.name);
+    openHostSession(h.name);
   }
   async function mExternal(h: Host): Promise<void> {
     closeMenu();
@@ -143,56 +180,69 @@
     </div>
 
     <div class="toolbar">
-      <button class="primary" on:click={newHost}><Icon name="plus" size={14} /> NEW HOST</button>
+      <button class="primary" on:click={newHost}><Icon name="plus" size={14} /> New host</button>
       <button on:click={newFolder}><Icon name="folder" size={14} /> New folder</button>
-      {#if folderFilter}
-        <button class="chip" on:click={() => (folderFilter = null)}>
-          {folderFilter} <Icon name="close" size={12} />
-        </button>
+      {#if !searching && currentPath}
+        <div class="crumbs">
+          <button class="crumb" on:click={() => openFolder("")}>Home</button>
+          {#each currentPath.split("/") as seg, i}
+            <span class="sep">/</span>
+            <button class="crumb" on:click={() => openFolder(currentPath.split("/").slice(0, i + 1).join("/"))}>{seg}</button>
+          {/each}
+        </div>
       {/if}
       <div class="spacer"></div>
-      <span class="muted small">{shown.length} host{shown.length === 1 ? "" : "s"}</span>
+      <span class="muted small">{dirHosts.length} host{dirHosts.length === 1 ? "" : "s"}</span>
     </div>
 
     <div class="scroll cards">
-      {#if groups.length && !folderFilter && !query.trim()}
-        <div class="section">Groups</div>
+      {#if !searching && (currentPath || subfolders.length)}
+        <div class="section">Folders</div>
         <div class="grid">
-          {#each groups as g (g.name)}
-            <button class="card group" on:click={() => (folderFilter = g.name)}>
-              <div class="gic"><Icon name="folder" size={20} /></div>
+          {#if currentPath}
+            <button class="card folder up" on:click={goUp}>
+              <div class="gic"><Icon name="folder" size={18} /></div>
+              <div class="col"><div class="ttl">..</div><div class="sub muted">back</div></div>
+            </button>
+          {/if}
+          {#each subfolders as f (f)}
+            <button class="card folder" on:click={() => openFolder(f)}>
+              <div class="gic"><Icon name="folder" size={18} /></div>
               <div class="col">
-                <div class="ttl">{g.name}</div>
-                <div class="sub muted">{g.count} host{g.count === 1 ? "" : "s"}</div>
+                <div class="ttl">{folderLabel(f)}</div>
+                <div class="sub muted">{subtreeCount(f)} host{subtreeCount(f) === 1 ? "" : "s"}</div>
               </div>
             </button>
           {/each}
         </div>
       {/if}
 
-      <div class="section">Hosts</div>
-      <div class="grid">
-        {#each shown as h (h.name)}
-          <button
-            class="card host"
-            class:sel={$selectedHostName === h.name}
-            title="Click to connect · right-click for options"
-            on:click={() => openSession(h.name)}
-            on:contextmenu={(e) => openMenu(e, h)}
-          >
-            <div class="hic" style="background:{hostIcon(h).bg}">{hostIcon(h).label}</div>
-            <div class="col grow">
-              <div class="ttl">{h.name}</div>
-              <div class="sub muted mono">{h.username}@{h.host}</div>
-            </div>
-            {#if h.tags && h.tags.length}
-              <div class="minitags">{#each h.tags.slice(0, 3) as t}<span class="tag">{t}</span>{/each}</div>
-            {/if}
-          </button>
-        {/each}
-      </div>
-      {#if shown.length === 0}
-        <div class="empty muted">No hosts here. Click “NEW HOST” to add one.</div>
+      {#if dirHosts.length}
+        <div class="section">{searching ? "Results" : "Hosts"}</div>
+        <div class="grid">
+          {#each dirHosts as h (h.name)}
+            <button
+              class="card host"
+              class:sel={$selectedHostName === h.name}
+              title="Click to connect · right-click for options"
+              on:click={() => openHostSession(h.name)}
+              on:contextmenu={(e) => openMenu(e, h)}
+            >
+              <div class="hic" style="background:{hostIcon(h).bg}">{hostIcon(h).label}</div>
+              <div class="col grow">
+                <div class="ttl">{h.name}</div>
+                <div class="sub muted mono">{h.username}@{h.host}</div>
+              </div>
+              {#if h.tags && h.tags.length}
+                <div class="minitags">{#each h.tags.slice(0, 3) as t}<span class="tag">{t}</span>{/each}</div>
+              {/if}
+            </button>
+          {/each}
+        </div>
+      {:else if !subfolders.length}
+        <div class="empty muted">
+          {searching ? "No matching host." : "Nothing here yet. Add a host or folder."}
+        </div>
       {/if}
     </div>
   </div>
@@ -280,10 +330,25 @@
     align-items: center;
     gap: 6px;
   }
-  .chip {
-    background: var(--accent-soft);
-    color: var(--accent);
-    border-color: transparent;
+  .crumbs {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    font-size: 12.5px;
+  }
+  .crumbs .crumb {
+    background: none;
+    border: none;
+    padding: 3px 6px;
+    color: var(--fg-dim);
+    border-radius: 6px;
+  }
+  .crumbs .crumb:hover {
+    background: var(--bg-3);
+    color: var(--fg);
+  }
+  .crumbs .sep {
+    color: var(--fg-faint);
   }
   .cards {
     flex: 1;
@@ -308,25 +373,33 @@
     text-align: left;
     background: var(--bg-2);
     border: 1px solid var(--border);
-    border-radius: 12px;
-    padding: 12px 14px;
+    border-radius: 11px;
+    padding: 11px 13px;
   }
   .card:hover {
-    border-color: var(--accent);
+    border-color: #3a3a40;
     background: var(--bg-3);
   }
   .card.sel {
-    border-color: var(--accent);
-    background: var(--accent-soft);
+    border-color: var(--ring);
+    background: var(--bg-3);
+    box-shadow: 0 0 0 1px var(--ring) inset;
+  }
+  .card.folder .ttl {
+    font-weight: 600;
+  }
+  .card.up .gic {
+    opacity: 0.7;
   }
   .gic {
-    width: 40px;
-    height: 40px;
-    border-radius: 10px;
-    background: linear-gradient(135deg, #1c4fd6, #2b6cff);
+    width: 38px;
+    height: 38px;
+    border-radius: 9px;
+    background: var(--bg-4);
+    border: 1px solid var(--border);
     display: grid;
     place-items: center;
-    color: #fff;
+    color: var(--fg-dim);
     flex: none;
   }
   .hic {

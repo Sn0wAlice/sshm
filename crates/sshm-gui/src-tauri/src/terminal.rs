@@ -1,7 +1,7 @@
-//! Embedded-terminal sessions: spawn `ssh` inside a PTY and stream it to the
-//! webview (xterm.js). Output is pushed as [`TermOutputEvent`]s; input/resize/
-//! close come back as commands. Mosh hosts are rejected here — they stay
-//! external-terminal only.
+//! Embedded-terminal sessions: spawn a command inside a PTY and stream it to
+//! the webview (xterm.js). Output is pushed as [`TermOutputEvent`]s; input/
+//! resize/close come back as commands. Used for ssh sessions, a local shell,
+//! and kluster (docker/kube/incus) shell & logs — all in-app.
 
 use std::collections::HashMap;
 use std::io::Read;
@@ -14,6 +14,10 @@ use sshm_core::ssh::client::build_ssh_argv;
 
 use crate::events::{TermExitEvent, TermOutputEvent};
 use crate::state::AppState;
+
+/// Initial PTY size; the widget resizes it to the real dimensions on mount.
+const INIT_COLS: u16 = 80;
+const INIT_ROWS: u16 = 24;
 
 /// Live embedded sessions, keyed by a monotonic id.
 #[derive(Default)]
@@ -35,30 +39,15 @@ impl Sessions {
     }
 }
 
-/// Open an embedded ssh session to `host_name` at `cols`×`rows`. Returns the
-/// session id; output then arrives as `TermOutputEvent`s carrying that id.
-#[tauri::command]
-#[specta::specta]
-pub fn term_open(
-    app: AppHandle,
-    state: State<AppState>,
-    host_name: String,
-    cols: u16,
-    rows: u16,
+/// Spawn `argv` in a PTY, register it, start its output pump, and return the
+/// new session id. Shared by every embedded-terminal entry point.
+pub(crate) fn spawn_session(
+    app: &AppHandle,
+    state: &AppState,
+    argv: Vec<String>,
 ) -> Result<String, String> {
-    let argv = {
-        let db = state.db.lock().unwrap();
-        let host = db
-            .hosts
-            .get(&host_name)
-            .ok_or_else(|| format!("host '{host_name}' not found"))?;
-        if host.mosh {
-            return Err("mosh sessions open in an external terminal, not embedded".into());
-        }
-        build_ssh_argv(host, &db.hosts)
-    };
-
-    let session = PtySession::spawn(&argv, cols.max(2), rows.max(2)).map_err(|e| format!("{e:#}"))?;
+    let session =
+        PtySession::spawn(&argv, INIT_COLS, INIT_ROWS).map_err(|e| format!("{e:#}"))?;
     let reader = session.output_reader().map_err(|e| format!("{e:#}"))?;
 
     let id = {
@@ -69,7 +58,6 @@ pub fn term_open(
         id
     };
 
-    // Pump PTY output → typed events until EOF (child exit / kill).
     let handle = app.clone();
     let sid = id.clone();
     std::thread::Builder::new()
@@ -91,6 +79,37 @@ pub fn term_open(
         .map_err(|e| e.to_string())?;
 
     Ok(id)
+}
+
+/// Open an embedded ssh session to `host_name`. Returns the session id; output
+/// then arrives as `TermOutputEvent`s carrying that id. Mosh is rejected (it
+/// stays external-terminal only).
+#[tauri::command]
+#[specta::specta]
+pub fn term_open(app: AppHandle, state: State<AppState>, host_name: String) -> Result<String, String> {
+    let argv = {
+        let db = state.db.lock().unwrap();
+        let host = db
+            .hosts
+            .get(&host_name)
+            .ok_or_else(|| format!("host '{host_name}' not found"))?;
+        if host.mosh {
+            return Err("mosh sessions open in an external terminal, not embedded".into());
+        }
+        build_ssh_argv(host, &db.hosts)
+    };
+    spawn_session(&app, &state, argv)
+}
+
+/// Open a local shell (the user's `$SHELL`, else `/bin/sh`) in the app.
+#[tauri::command]
+#[specta::specta]
+pub fn term_open_local(app: AppHandle, state: State<AppState>) -> Result<String, String> {
+    let shell = std::env::var("SHELL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or_else(|| "/bin/sh".to_string());
+    spawn_session(&app, &state, vec![shell])
 }
 
 #[tauri::command]

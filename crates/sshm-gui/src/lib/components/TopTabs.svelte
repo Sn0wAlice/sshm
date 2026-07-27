@@ -1,5 +1,6 @@
 <script lang="ts">
   import { sessions, activeView, closeSession } from "../stores";
+  import { openLocalSession } from "../ipc";
   import Icon from "./Icon.svelte";
 </script>
 
@@ -25,6 +26,10 @@
       </button>
     </div>
   {/each}
+
+  <button class="newtab" title="New local terminal" on:click={() => openLocalSession()}>
+    <Icon name="plus" size={15} />
+  </button>
 
   <div class="drag" data-tauri-drag-region></div>
 </div>
@@ -91,6 +96,20 @@
   .home span {
     font-weight: 700;
     letter-spacing: 0.3px;
+  }
+  .newtab {
+    align-self: center;
+    display: flex;
+    background: transparent;
+    border: none;
+    color: var(--fg-dim);
+    padding: 6px;
+    border-radius: 7px;
+    margin: 0 2px 4px;
+  }
+  .newtab:hover {
+    background: var(--bg-3);
+    color: var(--fg);
   }
   .drag {
     flex: 1;

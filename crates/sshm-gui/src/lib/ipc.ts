@@ -5,7 +5,8 @@
 // toast so component code stays terse.
 
 import type { Result } from "./bindings";
-import { pushToast } from "./stores";
+import { commands } from "./bindings";
+import { addSession, pushToast } from "./stores";
 
 export * from "./bindings";
 export { commands, events } from "./bindings";
@@ -39,3 +40,27 @@ export async function tryRun<T>(
     return undefined;
   }
 }
+
+/**
+ * Await a command that spawns a backend PTY session (returns its id), then open
+ * a terminal tab for it. Toasts on error. Used by ssh / local / kluster shells.
+ */
+export async function openBackendSession(
+  p: Promise<Result<string, string>>,
+  title: string,
+): Promise<void> {
+  const r = await p;
+  if (r.status === "error") {
+    pushToast("err", r.error);
+    return;
+  }
+  addSession(r.data, title);
+}
+
+/** Open an embedded ssh session to a saved host. */
+export const openHostSession = (host: string): Promise<void> =>
+  openBackendSession(commands.termOpen(host), host);
+
+/** Open a local shell in a new tab. */
+export const openLocalSession = (): Promise<void> =>
+  openBackendSession(commands.termOpenLocal(), "local");

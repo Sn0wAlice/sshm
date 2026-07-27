@@ -1,8 +1,8 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
   import type { Host } from "../bindings";
-  import { commands, tryRun } from "../ipc";
-  import { openSession, selectedHostName, pushToast } from "../stores";
+  import { commands, tryRun, openHostSession } from "../ipc";
+  import { selectedHostName } from "../stores";
   import { hostIcon } from "../hostIcon";
   import Icon from "./Icon.svelte";
 
@@ -13,8 +13,7 @@
   $: ic = hostIcon(host);
 
   function connect(): void {
-    openSession(host.name);
-    pushToast("ok", `Connecting to ${host.name}…`);
+    openHostSession(host.name);
   }
   async function external(): Promise<void> {
     await tryRun(commands.connectHost(host.name), `Opening ${host.name} in your terminal…`);

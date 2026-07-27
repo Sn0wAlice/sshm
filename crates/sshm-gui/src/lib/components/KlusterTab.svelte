@@ -8,7 +8,7 @@
     Cluster,
     LifecycleAction,
   } from "../bindings";
-  import { commands, tryRun } from "../ipc";
+  import { commands, tryRun, openBackendSession } from "../ipc";
 
   type Kind = "docker" | "pods" | "incus";
   interface Source {
@@ -111,8 +111,8 @@
           </div>
           <button on:click={() => dockerLife(c.id, c.running ? "Stop" : "Start")}>{c.running ? "Stop" : "Start"}</button>
           <button on:click={() => dockerLife(c.id, "Restart")}>Restart</button>
-          <button on:click={() => tryRun(commands.klusterDockerShell(c.id, current?.hostAlias ?? null))}>Shell</button>
-          <button on:click={() => tryRun(commands.klusterDockerLogs(c.id, current?.hostAlias ?? null))}>Logs</button>
+          <button on:click={() => openBackendSession(commands.klusterDockerShell(c.id, current?.hostAlias ?? null), `sh · ${c.name}`)}>Shell</button>
+          <button on:click={() => openBackendSession(commands.klusterDockerLogs(c.id, current?.hostAlias ?? null), `logs · ${c.name}`)}>Logs</button>
         </div>
       {:else}
         <p class="muted">No containers.</p>
@@ -125,7 +125,7 @@
             <span class="mono muted small">{p.namespace} · {p.phase} · {p.containers.join(", ")}</span>
           </div>
           {#if current?.cluster}
-            <button on:click={() => current?.cluster && tryRun(commands.klusterPodShell(current.cluster, p.namespace, p.name))}>Shell</button>
+            <button on:click={() => current?.cluster && openBackendSession(commands.klusterPodShell(current.cluster, p.namespace, p.name), `sh · ${p.name}`)}>Shell</button>
           {/if}
         </div>
       {:else}
@@ -141,7 +141,7 @@
           </div>
           <button on:click={() => incusLife(inst.name, inst.running ? "Stop" : "Start")}>{inst.running ? "Stop" : "Start"}</button>
           <button on:click={() => incusLife(inst.name, "Restart")}>Restart</button>
-          <button on:click={() => tryRun(commands.klusterIncusShell(inst.name, current?.remote ?? null))}>Shell</button>
+          <button on:click={() => openBackendSession(commands.klusterIncusShell(inst.name, current?.remote ?? null), `sh · ${inst.name}`)}>Shell</button>
         </div>
       {:else}
         <p class="muted">No instances.</p>

@@ -62,44 +62,70 @@
     {#if withTunnels.length === 0}
       <p class="muted">No host has saved tunnels. Add them when editing a host.</p>
     {:else}
-      {#each withTunnels as h (h.name)}
-        <div class="card col">
-          <strong>{h.name}</strong>
-          {#each h.tunnels ?? [] as t, i}
-            <div class="row">
-              <span class="mono">{t.label || "(unnamed)"} — {fwd(t)}</span>
-              <div class="spacer"></div>
-              <button on:click={() => start(h, i)}>Start</button>
-            </div>
-          {/each}
-        </div>
-      {/each}
+      <div class="list">
+        {#each withTunnels as h (h.name)}
+          <div class="card list-card">
+            <div class="chead">{h.name}</div>
+            {#each h.tunnels ?? [] as t, i}
+              <div class="trow">
+                <span class="mono grow">{t.label || "(unnamed)"} — {fwd(t)}</span>
+                <button on:click={() => start(h, i)}>Start</button>
+              </div>
+            {/each}
+          </div>
+        {/each}
+      </div>
     {/if}
   </section>
 </div>
 
 <style>
   .wrap {
-    padding: 18px;
+    padding: 22px 24px;
     overflow-y: auto;
     display: flex;
     flex-direction: column;
-    gap: 24px;
+    gap: 30px;
   }
   h2 {
-    margin: 0 0 10px;
+    margin: 0 0 14px;
+    font-size: 15px;
   }
   .list {
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 12px;
   }
   .card {
     background: var(--bg-2);
     border: 1px solid var(--border);
     border-radius: var(--radius);
-    padding: 10px 14px;
-    gap: 10px;
+    padding: 13px 16px;
+    gap: 12px;
+  }
+  .list-card {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .chead {
+    font-weight: 600;
+    margin-bottom: 2px;
+  }
+  .trow {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 11px;
+    border-radius: 8px;
+    background: var(--bg-1);
+    border: 1px solid var(--border-soft);
+  }
+  .trow:hover {
+    border-color: var(--border);
+  }
+  .trow .mono {
+    font-size: 12.5px;
   }
   .grow {
     flex: 1;
