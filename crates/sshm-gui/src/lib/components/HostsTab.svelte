@@ -12,22 +12,22 @@
   let folderFilter: string | null = null;
   let editing: Host | null = null;
   let showForm = false;
+  let menu: { host: Host; x: number; y: number } | null = null;
 
+  // Single source of truth: the core matcher (case-insensitive, `tag:`/`host:`
+  // syntax). Re-run whenever the query OR the host list changes (live reload /
+  // CRUD); debounced only for the async server hop while typing.
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
-  function onSearch(): void {
+  $: search($hosts, query);
+  function search(all: Host[], q: string): void {
     clearTimeout(searchTimer);
+    if (!q.trim()) {
+      filtered = all;
+      return;
+    }
     searchTimer = setTimeout(async () => {
-      // Route through the core matcher for the rich `tag:`/`host:` syntax.
-      filtered = await commands.listHosts(query.trim() ? query : null);
-    }, 120);
-  }
-
-  // Keep in sync with the store when it changes (live reload / CRUD).
-  $: filtered = localFilter($hosts, query);
-  function localFilter(all: Host[], q: string): Host[] {
-    if (!q.trim()) return all;
-    const n = q.toLowerCase();
-    return all.filter((h) => h.name.toLowerCase().includes(n) || h.host.toLowerCase().includes(n));
+      filtered = await commands.listHosts(q);
+    }, 90);
   }
 
   $: shown = folderFilter ? filtered.filter((h) => h.folder === folderFilter) : filtered;
@@ -63,16 +63,59 @@
     await refresh();
   }
 
-  function connectSelectedOrTyped(): void {
-    if (selected) {
-      openSession(selected.name);
-      return;
-    }
+  // Enter / CONNECT: connect when the search narrows to a single host.
+  function connectFromSearch(): void {
     if (shown.length === 1) {
       openSession(shown[0].name);
-      return;
+    } else if (shown.length === 0) {
+      pushToast("err", "No matching host");
+    } else {
+      pushToast("err", "Narrow the search to one host, or click a host to connect");
     }
-    pushToast("err", "Pick a host first");
+  }
+
+  // ----- Right-click context menu -----
+  function openMenu(e: MouseEvent, h: Host): void {
+    e.preventDefault();
+    menu = {
+      host: h,
+      x: Math.min(e.clientX, window.innerWidth - 220),
+      y: Math.min(e.clientY, window.innerHeight - 280),
+    };
+  }
+  function closeMenu(): void {
+    menu = null;
+  }
+  function mConnect(h: Host): void {
+    closeMenu();
+    openSession(h.name);
+  }
+  async function mExternal(h: Host): Promise<void> {
+    closeMenu();
+    await tryRun(commands.connectHost(h.name), `Opening ${h.name} in your terminal…`);
+  }
+  function mDetails(h: Host): void {
+    closeMenu();
+    selectedHostName.set(h.name);
+  }
+  function mEdit(h: Host): void {
+    closeMenu();
+    editing = h;
+    showForm = true;
+  }
+  async function mClone(h: Host): Promise<void> {
+    closeMenu();
+    const nn = prompt(`Duplicate "${h.name}" as:`, `${h.name}-copy`);
+    if (!nn) return;
+    await tryRun(commands.cloneHost(h.name, nn), `Duplicated to ${nn}`);
+    await refresh();
+  }
+  async function mDelete(h: Host): Promise<void> {
+    closeMenu();
+    if (!confirm(`Delete host "${h.name}"?`)) return;
+    await tryRun(commands.deleteHost(h.name), `Deleted ${h.name}`);
+    if ($selectedHostName === h.name) selectedHostName.set(null);
+    await refresh();
   }
 
   async function newFolder(): Promise<void> {
@@ -89,13 +132,12 @@
       <div class="field">
         <Icon name="search" size={16} />
         <input
-          placeholder="Find a host or ssh user@hostname…"
+          placeholder="Find a host (case-insensitive · tag:prod host:10.* user:bar)…"
           bind:value={query}
-          on:input={onSearch}
-          on:keydown={(e) => e.key === "Enter" && connectSelectedOrTyped()}
+          on:keydown={(e) => e.key === "Enter" && connectFromSearch()}
         />
       </div>
-      <button class="primary connect" on:click={connectSelectedOrTyped}>
+      <button class="primary connect" on:click={connectFromSearch}>
         <Icon name="connect" size={15} /> CONNECT
       </button>
     </div>
@@ -134,8 +176,9 @@
           <button
             class="card host"
             class:sel={$selectedHostName === h.name}
-            on:click={() => selectedHostName.set(h.name)}
-            on:dblclick={() => openSession(h.name)}
+            title="Click to connect · right-click for options"
+            on:click={() => openSession(h.name)}
+            on:contextmenu={(e) => openMenu(e, h)}
           >
             <div class="hic" style="background:{hostIcon(h).bg}">{hostIcon(h).label}</div>
             <div class="col grow">
@@ -158,6 +201,25 @@
     <HostDetail host={selected} on:edit={onEdit} on:changed={refresh} />
   {/if}
 </div>
+
+{#if menu}
+  {@const m = menu}
+  <div class="ctxmenu" style="left:{m.x}px; top:{m.y}px" role="menu">
+    <button on:click={() => mConnect(m.host)}>Connect</button>
+    <button on:click={() => mExternal(m.host)}>Open in external terminal</button>
+    <div class="sep"></div>
+    <button on:click={() => mDetails(m.host)}>Details</button>
+    <button on:click={() => mEdit(m.host)}>Edit settings…</button>
+    <button on:click={() => mClone(m.host)}>Duplicate</button>
+    <div class="sep"></div>
+    <button class="del" on:click={() => mDelete(m.host)}>Delete</button>
+  </div>
+{/if}
+
+<svelte:window
+  on:click={closeMenu}
+  on:keydown={(e) => e.key === "Escape" && closeMenu()}
+/>
 
 {#if showForm}
   <HostForm host={editing} folders={$folders} on:saved={onSaved} on:cancel={() => (showForm = false)} />
@@ -305,5 +367,39 @@
   .empty {
     padding: 40px;
     text-align: center;
+  }
+  .ctxmenu {
+    position: fixed;
+    z-index: 60;
+    min-width: 210px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 6px;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5);
+  }
+  .ctxmenu button {
+    background: none;
+    border: none;
+    text-align: left;
+    padding: 8px 10px;
+    border-radius: 7px;
+    font-size: 13px;
+  }
+  .ctxmenu button:hover {
+    background: var(--bg-3);
+  }
+  .ctxmenu button.del {
+    color: var(--danger);
+  }
+  .ctxmenu button.del:hover {
+    background: var(--danger-soft);
+  }
+  .ctxmenu .sep {
+    height: 1px;
+    background: var(--border);
+    margin: 5px 6px;
   }
 </style>

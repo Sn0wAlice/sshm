@@ -92,7 +92,9 @@ pub fn apply_filter<'a>(pattern: &str, items: &'a [&'a Host]) -> Vec<&'a Host> {
         return apply_filter_prefixed(pattern, items);
     }
 
-    let matcher = SkimMatcherV2::default().smart_case();
+    // Always case-insensitive: `smart_case` would make an uppercase query
+    // (e.g. "PROD") case-sensitive, which surprises users searching casually.
+    let matcher = SkimMatcherV2::default().ignore_case();
     let mut scored: Vec<(&Host, i64)> = items.iter().copied()
         .filter_map(|h| fuzzy_score(&matcher, h, pattern).map(|s| (h, s)))
         .collect();
@@ -103,7 +105,9 @@ pub fn apply_filter<'a>(pattern: &str, items: &'a [&'a Host]) -> Vec<&'a Host> {
 
 /// Prefix-based filter (name:, host:, user:, tag:) using fuzzy matching per field.
 fn apply_filter_prefixed<'a>(filter: &str, items: &'a [&'a Host]) -> Vec<&'a Host> {
-    let matcher = SkimMatcherV2::default().smart_case();
+    // Always case-insensitive: `smart_case` would make an uppercase query
+    // (e.g. "PROD") case-sensitive, which surprises users searching casually.
+    let matcher = SkimMatcherV2::default().ignore_case();
     let mut name_pats: Vec<String> = Vec::new();
     let mut host_pats: Vec<String> = Vec::new();
     let mut user_pats: Vec<String> = Vec::new();
@@ -246,5 +250,14 @@ mod tests {
         let r = apply_filter("tag:prod", &refs);
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].name, "web");
+    }
+
+    #[test]
+    fn apply_filter_is_case_insensitive() {
+        let hosts = [h("web-prod-eu", "1.1.1.1", "u", &["prod"])];
+        let refs: Vec<&Host> = hosts.iter().collect();
+        // An uppercase query must still match a lowercase host name.
+        assert_eq!(apply_filter("PROD", &refs).len(), 1);
+        assert_eq!(apply_filter("Web-Prod", &refs).len(), 1);
     }
 }
