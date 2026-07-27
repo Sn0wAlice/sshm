@@ -1,10 +1,70 @@
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
-use std::io::Read;
+use std::io::{Read, Write};
+use std::path::Path;
+use std::sync::atomic::{AtomicU64, Ordering};
 use anyhow::{Context, Result};
 use serde::Serialize;
 use crate::models::{Host, Database};
 use super::path::{config_path, ensure_config_file};
+
+/// Monotonic counter that makes temp-file names unique within a process;
+/// combined with the pid it stays unique across concurrent writers too.
+static ATOMIC_WRITE_SEQ: AtomicU64 = AtomicU64::new(0);
+
+/// Atomically replace `path`'s contents with `bytes`.
+///
+/// Writes to a uniquely-named temp file in the *same directory*, fsyncs it,
+/// then renames it over `path` (rename is atomic on a single filesystem) and
+/// best-effort fsyncs the directory so the rename itself is durable. A crash
+/// or a concurrent writer can therefore only ever leave a stray `*.tmp-*` file
+/// behind — never a truncated or partially written `path`. Those temp files are
+/// dotfiles that every loader ignores (loaders open a fixed filename).
+///
+/// This is the single choke point for persisting `host.json`, `kluster.json`
+/// and `settings.toml`, so both frontends can write the shared DB concurrently
+/// without ever corrupting a file (last-writer-wins on the rename).
+pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
+    let dir = match path.parent() {
+        Some(p) if !p.as_os_str().is_empty() => p,
+        _ => Path::new("."),
+    };
+    fs::create_dir_all(dir).with_context(|| format!("creating dir {}", dir.display()))?;
+
+    let base = path.file_name().and_then(|s| s.to_str()).unwrap_or("sshm");
+    let seq = ATOMIC_WRITE_SEQ.fetch_add(1, Ordering::Relaxed);
+    let tmp = dir.join(format!(".{base}.tmp-{}-{}", std::process::id(), seq));
+
+    // Write + fsync the temp file, closing the handle (scope end) before rename.
+    {
+        let mut f = File::create(&tmp)
+            .with_context(|| format!("creating temp file {}", tmp.display()))?;
+        f.write_all(bytes)
+            .with_context(|| format!("writing temp file {}", tmp.display()))?;
+        f.sync_all()
+            .with_context(|| format!("fsync temp file {}", tmp.display()))?;
+    }
+
+    match fs::rename(&tmp, path) {
+        Ok(()) => {
+            // Best-effort durability of the rename itself (Unix: fsync the dir).
+            #[cfg(unix)]
+            if let Ok(d) = File::open(dir) {
+                let _ = d.sync_all();
+            }
+            Ok(())
+        }
+        Err(e) => {
+            // rename can fail across filesystems; fall back to a direct write so
+            // saving never hard-fails, then clean up the temp.
+            let res = fs::write(path, bytes).with_context(|| {
+                format!("rename failed ({e}); fallback-write {}", path.display())
+            });
+            let _ = fs::remove_file(&tmp);
+            res
+        }
+    }
+}
 
 /// Pure parse: take JSON text and return a [`Database`] handling all
 /// supported schema variants (current, legacy map-only, loose migration).
@@ -23,7 +83,7 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
     if let Ok(map) = serde_json::from_str::<HashMap<String, Host>>(content) {
         let mut folders: Vec<String> = map.values().filter_map(|h| h.folder.clone()).collect();
         folders.sort(); folders.dedup();
-        return Some(Database { hosts: map, folders });
+        return Some(Database { hosts: map, folders, ..Default::default() });
     }
 
     let mut migrated: HashMap<String, Host> = HashMap::new();
@@ -76,7 +136,7 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
     }
     let mut folders: Vec<String> = migrated.values().filter_map(|h| h.folder.clone()).collect();
     folders.sort(); folders.dedup();
-    Some(Database { hosts: migrated, folders })
+    Some(Database { hosts: migrated, folders, ..Default::default() })
 }
 
 /// Pure serialize: produce the canonical pretty JSON representation of `db`
@@ -99,7 +159,7 @@ pub fn load_db() -> Database {
     if let Err(e) = ensure_config_file(&path) {
         eprintln!("Cannot init config file {}: {e}", path.display());
         save_empty_database();
-        return Database { hosts: Default::default(), folders: vec![] };
+        return Database::default();
     }
 
     let mut content = String::new();
@@ -108,24 +168,27 @@ pub fn load_db() -> Database {
             if let Err(e) = file.read_to_string(&mut content) {
                 eprintln!("Error reading {}: {e}", path.display());
                 save_empty_database();
-                return Database { hosts: Default::default(), folders: vec![] };
+                return Database::default();
             }
         }
         Err(e) => {
             eprintln!("Cannot open {}: {e}", path.display());
             save_empty_database();
-            return Database { hosts: Default::default(), folders: vec![] };
+            return Database::default();
         }
     }
 
     match parse_db_text(&content) {
-        Some(db) => {
+        Some(mut db) => {
             // If the content didn't already match the canonical schema, save
             // back so the next load is fast and stable.
             if serde_json::from_str::<Database>(&content).is_err() {
                 eprintln!("Migrated config to new schema. Saving...");
                 save_db(&db);
             }
+            // Baseline the on-disk signature (after any migration re-save) so
+            // `reload_if_changed` has something to compare against.
+            db.set_source(&path);
             db
         }
         None => {
@@ -136,7 +199,7 @@ pub fn load_db() -> Database {
             } else {
                 eprintln!("Config was invalid JSON. Backed up to {}.", bak.display());
             }
-            Database { hosts: Default::default(), folders: vec![] }
+            Database::default()
         }
     }
 }
@@ -144,21 +207,24 @@ pub fn load_db() -> Database {
 /// Save the full Database (stable order for diffs).
 ///
 /// Returns the typed error so callers can surface it (e.g. via a toast).
-/// Atomicity: writes to `<path>.tmp` then renames over `path`.
+/// Durability/atomicity is handled by [`atomic_write`].
 pub fn try_save_db(db: &Database) -> Result<()> {
     let path = config_path();
     let json = serialize_db(db).context("serializing database")?;
+    atomic_write(&path, json.as_bytes())
+        .with_context(|| format!("saving database {}", path.display()))
+}
 
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, &json)
-        .with_context(|| format!("writing temp config {}", tmp.display()))?;
-    let _ = fs::remove_file(&path); // best effort on Windows
-    if let Err(e) = fs::rename(&tmp, &path) {
-        // Fallback: direct write — rename can fail across mount points etc.
-        fs::write(&path, &json)
-            .with_context(|| format!("renaming + fallback-writing {}: {e}", path.display()))?;
-    }
-    Ok(())
+/// Read + parse the host DB at `path` quietly: no "Loading DB…" log, no
+/// migration re-save, no backup side effects. Returns an empty [`Database`] if
+/// the file is missing, unreadable, or invalid, and records `path` as the
+/// result's source signature. Used for hot-reloads where the loud, side-effect
+/// laden [`load_db`] is inappropriate.
+pub fn read_db_at(path: &Path) -> Database {
+    let text = fs::read_to_string(path).unwrap_or_default();
+    let mut db = parse_db_text(&text).unwrap_or_default();
+    db.set_source(path);
+    db
 }
 
 /// Fire-and-forget wrapper that logs on failure. Most call sites can't act
@@ -182,14 +248,14 @@ pub fn load_hosts() -> HashMap<String, Host> {
 pub fn save_hosts(hosts: &HashMap<String, Host>) {
     let mut folders: Vec<String> = hosts.values().filter_map(|h| h.folder.clone()).collect();
     folders.sort(); folders.dedup();
-    let db = Database { hosts: hosts.clone(), folders };
+    let db = Database { hosts: hosts.clone(), folders, ..Default::default() };
     save_db(&db);
 }
 
 // Create files
 pub fn save_empty_database() {
     let path = config_path();
-    let db = Database { hosts: Default::default(), folders: vec![] };
+    let db = Database::default();
     save_db(&db);
     println!("Created empty database at {}", path.display());
 }
@@ -272,6 +338,7 @@ mod tests {
         let db = Database {
             hosts: Default::default(),
             folders: vec!["B".into(), "A".into(), "B".into()],
+            ..Default::default()
         };
         let json = serialize_db(&db).unwrap();
         // Folders appear in sorted order, deduped
@@ -280,5 +347,127 @@ mod tests {
         assert!(pos_a < pos_b);
         // Only one occurrence of "B"
         assert_eq!(json.matches("\"B\"").count(), 1);
+    }
+
+    // ---- Phase 2: atomic writes + concurrent-safe reload ----
+
+    fn db_with(names: &[&str]) -> Database {
+        let mut db = Database::default();
+        for n in names {
+            db.hosts.insert(n.to_string(), host(n));
+        }
+        db
+    }
+
+    fn count_temp_siblings(dir: &Path) -> usize {
+        fs::read_dir(dir)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().contains(".tmp-"))
+            .count()
+    }
+
+    #[test]
+    fn atomic_write_replaces_content_and_leaves_no_temp() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.json");
+
+        atomic_write(&path, b"first").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "first");
+        atomic_write(&path, b"second").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "second");
+
+        // A successful write cleans up after itself — no stray temp files.
+        assert_eq!(count_temp_siblings(dir.path()), 0);
+    }
+
+    #[test]
+    fn leftover_temp_from_interrupted_write_is_ignored_on_load() {
+        // Simulate a crash mid-write: a good host.json plus an orphaned temp
+        // file containing garbage, sitting in the same directory.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.json");
+        atomic_write(&path, serialize_db(&db_with(&["a"]).clone()).unwrap().as_bytes()).unwrap();
+        fs::write(dir.path().join(".host.json.tmp-999-999"), "{ not valid json ").unwrap();
+
+        // Loading the fixed filename ignores the orphaned temp entirely.
+        let loaded = read_db_at(&path);
+        assert_eq!(loaded.hosts.len(), 1);
+        assert!(loaded.hosts.contains_key("a"));
+    }
+
+    #[test]
+    fn reload_if_changed_detects_external_modification() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.json");
+        atomic_write(&path, serialize_db(&db_with(&["a"])).unwrap().as_bytes()).unwrap();
+
+        // Load + baseline: an immediate re-check sees no change.
+        let mut db = read_db_at(&path);
+        assert!(!db.reload_if_changed_from(&path).unwrap());
+
+        // An external writer replaces the file with different content.
+        atomic_write(&path, serialize_db(&db_with(&["a", "b"])).unwrap().as_bytes()).unwrap();
+        assert!(db.reload_if_changed_from(&path).unwrap());
+        assert_eq!(db.hosts.len(), 2);
+        assert!(db.hosts.contains_key("b"));
+
+        // And a follow-up check is quiet again.
+        assert!(!db.reload_if_changed_from(&path).unwrap());
+    }
+
+    #[test]
+    fn concurrent_writers_never_corrupt_the_file() {
+        use std::sync::Arc;
+        use std::thread;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = Arc::new(dir.path().join("host.json"));
+
+        // Eight distinct, individually-valid payloads.
+        let payloads: Vec<String> = (0..8)
+            .map(|i| {
+                let name = format!("h{i}");
+                let mut db = Database::default();
+                db.hosts.insert(name.clone(), host(&name));
+                serialize_db(&db).unwrap()
+            })
+            .collect();
+
+        let mut handles = Vec::new();
+        for p in payloads.clone() {
+            let path = Arc::clone(&path);
+            handles.push(thread::spawn(move || {
+                for _ in 0..50 {
+                    atomic_write(&path, p.as_bytes()).unwrap();
+                }
+            }));
+        }
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        // Whatever won the last rename, the file must be *exactly* one of the
+        // payloads — never a torn or interleaved write — and still parse.
+        let final_text = fs::read_to_string(&*path).unwrap();
+        assert!(payloads.contains(&final_text), "file was not a whole payload");
+        assert_eq!(parse_db_text(&final_text).unwrap().hosts.len(), 1);
+        // Every write cleaned up its own temp.
+        assert_eq!(count_temp_siblings(dir.path()), 0);
+    }
+
+    #[test]
+    fn reload_if_changed_swallows_identical_content_rewrite() {
+        // A self-write (or any no-op rewrite) bumps mtime but not content, so
+        // it must NOT be reported as a change — no spurious "hosts reloaded".
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.json");
+        let bytes = serialize_db(&db_with(&["a", "b", "c"])).unwrap();
+        atomic_write(&path, bytes.as_bytes()).unwrap();
+
+        let mut db = read_db_at(&path);
+        atomic_write(&path, bytes.as_bytes()).unwrap(); // rewrite, identical content
+        assert!(!db.reload_if_changed_from(&path).unwrap());
+        assert_eq!(db.hosts.len(), 3);
     }
 }

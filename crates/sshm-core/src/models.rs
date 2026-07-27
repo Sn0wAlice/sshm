@@ -113,6 +113,14 @@ pub struct Host {
     pub remote_command: Option<String>,
 }
 
+/// Lightweight signature (mtime + length) of the file backing a [`Database`],
+/// used to cheaply detect that it changed underneath us. In-memory only.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SourceSig {
+    pub mtime: std::time::SystemTime,
+    pub len: u64,
+}
+
 /// Base de données de l'application (hosts + dossiers)
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct Database {
@@ -121,6 +129,74 @@ pub struct Database {
     /// Liste des dossiers existants (pas de sous-dossiers)
     #[serde(default)]
     pub folders: Vec<String>,
+    /// Signature of the file this Database was last loaded from. In-memory only
+    /// (`#[serde(skip)]`, so the on-disk JSON is unchanged); lets
+    /// [`Database::reload_if_changed`] short-circuit when nothing changed.
+    #[serde(skip)]
+    pub(crate) source_sig: Option<SourceSig>,
+}
+
+impl Database {
+    /// Stat `path` and return its current signature, or `None` if it can't be
+    /// stat-ed (missing / permission denied).
+    pub(crate) fn sig_of(path: &std::path::Path) -> Option<SourceSig> {
+        let meta = std::fs::metadata(path).ok()?;
+        Some(SourceSig { mtime: meta.modified().ok()?, len: meta.len() })
+    }
+
+    /// Record `path`'s current signature as this Database's baseline. Called
+    /// right after a load so later [`reload_if_changed`](Self::reload_if_changed)
+    /// calls have something to compare against.
+    pub fn set_source(&mut self, path: &std::path::Path) {
+        self.source_sig = Self::sig_of(path);
+    }
+
+    /// Reload the host DB from disk **iff** the file changed since the last
+    /// load, replacing `hosts`/`folders` in place.
+    ///
+    /// Returns `Ok(true)` only when the on-disk *content* actually differs from
+    /// what's held in memory — so a frontend writing its own changes (or any
+    /// no-op touch) does not report a spurious reload. `Ok(false)` means
+    /// nothing user-visible changed. Cheap on the common path: an unchanged
+    /// mtime+length short-circuits with a single `stat`, no read or parse.
+    ///
+    /// Detection is mtime+length based (last-writer-wins); a rare same-mtime,
+    /// same-length, different-content write can slip past the fast path, which
+    /// the filesystem watcher covers.
+    pub fn reload_if_changed(&mut self) -> anyhow::Result<bool> {
+        let path = crate::config::path::config_path();
+        self.reload_if_changed_from(&path)
+    }
+
+    /// Path-injectable core of [`reload_if_changed`](Self::reload_if_changed),
+    /// so the reload behaviour can be exercised against a temp file in tests
+    /// rather than the user's real `host.json`.
+    pub fn reload_if_changed_from(&mut self, path: &std::path::Path) -> anyhow::Result<bool> {
+        let current = Self::sig_of(path);
+        if current == self.source_sig {
+            return Ok(false);
+        }
+        // The signature moved — rebase it, then decide whether anything the user
+        // would see actually changed.
+        self.source_sig = current;
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+
+        // Compare the file against our own canonical serialization. A frontend's
+        // own save writes exactly this, so this swallows self-writes (and any
+        // byte-identical external write) without a spurious "hosts reloaded".
+        // It also sidesteps in-memory folder ordering: `serialize_db` sorts and
+        // dedups folders, matching what lands on disk.
+        if let Ok(canonical) = crate::config::io::serialize_db(self) {
+            if text.trim() == canonical.trim() {
+                return Ok(false);
+            }
+        }
+
+        let fresh = crate::config::io::parse_db_text(&text).unwrap_or_default();
+        self.hosts = fresh.hosts;
+        self.folders = fresh.folders;
+        Ok(true)
+    }
 }
 
 fn default_port() -> u16 { 22 }

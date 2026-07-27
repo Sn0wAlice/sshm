@@ -23,6 +23,10 @@ shellexpand.workspace = true
 toml.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
+notify.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 # NOTE: no ratatui / crossterm / inquire here — core must stay free of any
 # terminal-UI dependency (see workspace-level constraint). Terminal handover is

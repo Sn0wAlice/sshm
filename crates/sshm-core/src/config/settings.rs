@@ -106,21 +106,9 @@ pub fn load_settings() -> AppConfig {
 
 pub fn try_save_settings(config: &AppConfig) -> Result<()> {
     let path = settings_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating settings dir {}", parent.display()))?;
-    }
     let toml_str = toml::to_string_pretty(config).context("serializing settings")?;
-
-    let tmp = path.with_extension("toml.tmp");
-    fs::write(&tmp, &toml_str)
-        .with_context(|| format!("writing temp settings {}", tmp.display()))?;
-    let _ = fs::remove_file(&path);
-    if let Err(e) = fs::rename(&tmp, &path) {
-        fs::write(&path, &toml_str)
-            .with_context(|| format!("rename failed ({e}); fallback-write {}", path.display()))?;
-    }
-    Ok(())
+    super::io::atomic_write(&path, toml_str.as_bytes())
+        .with_context(|| format!("saving settings {}", path.display()))
 }
 
 pub fn save_settings(config: &AppConfig) {

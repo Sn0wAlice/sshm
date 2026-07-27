@@ -23,6 +23,8 @@ toml = "0.9.10"
 chrono = { version = "0.4", default-features = false, features = ["clock", "serde"] }
 anyhow = "1.0"
 libc = "0.2"
+notify = "8"
+tempfile = "3"
 
 # Frontend-only (TUI/CLI) — deliberately kept out of sshm-core's dependency tree.
 inquire = { version = "0.7.5", default-features = true }

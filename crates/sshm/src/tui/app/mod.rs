@@ -1,6 +1,7 @@
 use crate::filter::apply_filter;
 use crate::history::{record_connection, sort_items, SortMode};
 use crate::models::{Database, Host};
+use crate::watch::{ConfigWatcher, DbChanged};
 use crate::t;
 use crate::util::clear_console;
 use crossterm::{
@@ -144,6 +145,16 @@ use kluster_actions::{
 };
 
 pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
+    // Concurrent-safe live reload: another sshm instance (or the desktop GUI, or
+    // a text editor) may rewrite `host.json` under us. Sync once on entry — this
+    // catches any change that happened while we were away in an ssh session —
+    // then watch the config dir so we can hot-reload the host list in place.
+    let _ = db.reload_if_changed();
+    let watcher = ConfigWatcher::start().ok();
+    // Set once a watched change is pending but a reload is being deferred (an
+    // overlay modal is open); cleared when we actually reload.
+    let mut pending_reload = false;
+
     // Source items
     let mut sort_mode: SortMode = SortMode::Name;
     let mut view_mode: ViewMode = ViewMode::Folders;
@@ -290,6 +301,43 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
         // Expire toast
         if toast.as_ref().is_some_and(|t| t.is_expired()) {
             toast = None;
+        }
+
+        // --- Live reload: pick up external changes to host.json ---
+        // Drain the (debounced) watcher every tick so its channel never grows,
+        // capturing any host change into `pending_reload`.
+        if let Some(w) = &watcher {
+            for change in w.poll() {
+                if change == DbChanged::Hosts {
+                    pending_reload = true;
+                }
+            }
+        }
+        // Defer the actual reload while an overlay modal is open (delete confirm,
+        // help popup, tunnels dashboard, kluster detail); the flag holds until it
+        // closes. Editor forms run their own blocking loop, so they can never be
+        // open at this point. Reloading rebuilds the `db`-borrowing `items`
+        // in place, exactly like the CRUD paths below.
+        let overlay_open = !matches!(delete_mode, DeleteMode::None)
+            || help_popup
+            || tunnels_popup
+            || kluster_detail.is_some();
+        if pending_reload && !overlay_open {
+            pending_reload = false;
+            let changed = db.reload_if_changed().unwrap_or(false);
+            items = db.hosts.values().collect();
+            sort_items(&mut items, sort_mode);
+            filtered = apply_filter(&filter, &items);
+            if filtered.is_empty() {
+                selected = 0;
+                list_state.select(None);
+            } else {
+                selected = selected.min(filtered.len() - 1);
+                list_state.select(Some(selected));
+            }
+            if changed {
+                toast = Some(Toast::success(t!("toast.hosts_reloaded")));
+            }
         }
 
         // Lazily start the Kluster discovery worker the first time the user

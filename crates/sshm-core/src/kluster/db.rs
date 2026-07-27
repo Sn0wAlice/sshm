@@ -51,24 +51,13 @@ pub fn load_or_bootstrap() -> (KlusterDb, usize) {
     (db, imported)
 }
 
-/// Persist the DB atomically. Uses the same temp-then-rename pattern as
-/// the host DB.
+/// Persist the DB through the shared [`atomic_write`](crate::config::io::atomic_write)
+/// choke point (same-dir temp + fsync + rename), like the host DB.
 pub fn save(db: &KlusterDb) -> Result<()> {
     let path = kluster_path();
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("creating kluster dir {}", parent.display()))?;
-    }
     let json = serde_json::to_string_pretty(db).context("serializing kluster db")?;
-    let tmp = path.with_extension("json.tmp");
-    fs::write(&tmp, &json)
-        .with_context(|| format!("writing temp kluster file {}", tmp.display()))?;
-    let _ = fs::remove_file(&path);
-    if let Err(e) = fs::rename(&tmp, &path) {
-        fs::write(&path, &json)
-            .with_context(|| format!("rename failed ({e}); fallback-write {}", path.display()))?;
-    }
-    Ok(())
+    crate::config::io::atomic_write(&path, json.as_bytes())
+        .with_context(|| format!("saving kluster db {}", path.display()))
 }
 
 /// Candidate kubeconfig paths in priority order. Always returns at least

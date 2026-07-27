@@ -8,7 +8,7 @@
 
 // --- Engine, re-exported so `crate::<module>` keeps working across the TUI ---
 pub use sshm_core::{
-    config, filter, history, i18n, import, kluster, models, os, tty,
+    config, filter, history, i18n, import, kluster, models, os, tty, watch,
 };
 pub use sshm_core::{cfg_io, cfg_path};
 // Macro re-export: keeps `use crate::t;` working throughout the TUI.

@@ -92,3 +92,78 @@ All of `tui/`, `commands/`, `main.rs`, `util.rs` (uses crossterm for
 - `cargo tree -p sshm-core` → no ratatui / crossterm / inquire. ✅
 - On-disk formats (`host.json`, `kluster.json`, `settings.toml`) untouched;
   `sshm list` reads the existing DB and renders identically. ✅
+
+## Phase 2 — concurrent-safe DB layer
+
+Both frontends may now run against the same `~/.config/sshm/` files at once, so
+writes must never corrupt and each side should notice the other's changes.
+
+### 1. One atomic-write choke point
+
+`config::io::atomic_write(path, bytes)` — write to a uniquely-named dotfile temp
+(`.<name>.tmp-<pid>-<seq>`) in the **same directory**, `fsync` it, `rename` over
+the target (atomic on one filesystem), then best-effort `fsync` the directory.
+A crash or a racing writer can only ever leave a stray `*.tmp-*` behind — never
+a truncated or half-written target. All three writers now route through it:
+`try_save_db` (host.json), `kluster::db::save` (kluster.json),
+`try_save_settings` (settings.toml). The previous per-writer
+`write→remove→rename` (fixed temp name, no fsync, a window with no file) is gone.
+
+### 2. Change detection — `core::watch`
+
+`ConfigWatcher` wraps the `notify` crate over the config dir and forwards one
+`DbChanged` (`Hosts` / `Kluster` / `Settings`) per touched file on a plain
+`std::sync::mpsc` channel — no async runtime, usable from either frontend.
+Temp/backup files are filtered out by name. A dedicated debounce thread coalesces
+bursts (editors and our own temp+rename each fire several raw events): it blocks
+for the first event, then drains until the dir is quiet for 150 ms, emitting one
+event per distinct file. `notify` pulls `fsevent-sys` (macOS) / `inotify`
+(Linux) only — **no crossterm** enters core's tree.
+
+### 3. `Database::reload_if_changed()`
+
+mtime+length signature (`#[serde(skip)]`, in-memory only — on-disk JSON
+unchanged) short-circuits the common case with a single `stat`. When the
+signature moves, the file is compared against our own canonical
+`serialize_db(self)`: a byte-identical write (our own save, or a matching
+external one) reports `Ok(false)` — no spurious reload — while a real change
+swaps `hosts`/`folders` in place and reports `Ok(true)`. Comparing the canonical
+form also neutralises in-memory folder ordering (writes sort+dedup folders).
+`reload_if_changed_from(path)` is the path-injectable seam the tests drive.
+
+### 4. TUI wiring
+
+`run_tui` starts a `ConfigWatcher`, syncs once on entry (catches changes made
+while away in an ssh session), and at the top of each loop drains the watcher
+into a `pending_reload` flag. When a host change is pending **and no overlay
+modal is open** (delete-confirm / help / tunnels dashboard / kluster detail) it
+reloads in place — rebuilding the `db`-borrowing `items`/`filtered` exactly like
+the CRUD paths — and shows the existing toast (`toast.hosts_reloaded`, added to
+en/fr). Editor forms (`run_host_form` / `run_folder_form`) run their own blocking
+loop, so "don't reload while a form with unsaved changes is open" is satisfied
+for free: the watcher simply isn't polled until the form returns, and its events
+stay buffered until then.
+
+Last-writer-wins; no merge engine (per spec).
+
+### Tests (Phase 2, all in core)
+
+- `atomic_write_replaces_content_and_leaves_no_temp`
+- `leftover_temp_from_interrupted_write_is_ignored_on_load`
+- `concurrent_writers_never_corrupt_the_file` (8 threads × 50 writes → file is
+  always exactly one whole payload)
+- `reload_if_changed_detects_external_modification`
+- `reload_if_changed_swallows_identical_content_rewrite`
+- `watch`: classify (only the 3 db files; temp/bak ignored), debounce collapses
+  a burst to one event, keeps distinct files separate, closes cleanly
+- `end_to_end_detects_a_real_write` (`#[ignore]`d — real notify+FS+timing; passes
+  locally, kept out of the default run to avoid CI flakiness)
+
+### Acceptance (Phase 2)
+
+- `cargo test --workspace` → 91 passed (83 core, 8 TUI), 0 failed. ✅
+- `cargo clippy --workspace --all-targets -- -D warnings` → clean. ✅
+- `cargo tree -p sshm-core` → still no ratatui/crossterm/inquire (notify →
+  fsevent-sys/inotify only). ✅
+- On-disk formats unchanged (skip field isn't serialized; writers emit the same
+  canonical bytes). ✅

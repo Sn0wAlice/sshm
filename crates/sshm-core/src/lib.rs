@@ -21,6 +21,7 @@ pub mod filter;
 pub mod history;
 pub mod i18n;
 pub mod kluster;
+pub mod watch;
 
 // Convenience re-exports
 pub use config::{io as cfg_io, path as cfg_path};
