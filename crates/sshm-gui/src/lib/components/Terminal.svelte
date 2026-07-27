@@ -99,7 +99,7 @@
     background: #0b0f18;
     /* Extra bottom room so the last row never sits flush against the window
        edge (the fit addon rounds rows down to this padded height). */
-    padding: 8px 10px 14px;
+    padding: 8px 12px 20px;
   }
   :global(.xterm) {
     height: 100%;
