@@ -24,3 +24,16 @@ impl From<sshm_core::watch::DbChanged> for DbChangedEvent {
         }
     }
 }
+
+/// A chunk of output bytes from an embedded terminal session `id`.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct TermOutputEvent {
+    pub id: String,
+    pub data: Vec<u8>,
+}
+
+/// The embedded terminal session `id`'s child process exited.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct TermExitEvent {
+    pub id: String,
+}

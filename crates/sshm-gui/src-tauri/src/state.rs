@@ -4,6 +4,7 @@ use std::sync::Mutex;
 
 use sshm_core::models::Database;
 
+use crate::terminal::Sessions;
 use crate::tunnels_mgr::GuiTunnels;
 
 /// The canonical on-disk DB is `host.json`; this holds the in-memory copy the
@@ -13,6 +14,7 @@ use crate::tunnels_mgr::GuiTunnels;
 pub struct AppState {
     pub db: Mutex<Database>,
     pub tunnels: Mutex<GuiTunnels>,
+    pub sessions: Mutex<Sessions>,
 }
 
 impl AppState {
@@ -20,6 +22,7 @@ impl AppState {
         Self {
             db: Mutex::new(sshm_core::config::io::load_db()),
             tunnels: Mutex::new(GuiTunnels::new()),
+            sessions: Mutex::new(Sessions::new()),
         }
     }
 }

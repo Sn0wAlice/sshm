@@ -265,6 +265,42 @@ async stopTunnel(pid: number) : Promise<Result<null, string>> {
  */
 async reloadDb() : Promise<Host[]> {
     return await TAURI_INVOKE("reload_db");
+},
+/**
+ * Open an embedded ssh session to `host_name` at `cols`×`rows`. Returns the
+ * session id; output then arrives as `TermOutputEvent`s carrying that id.
+ */
+async termOpen(hostName: string, cols: number, rows: number) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("term_open", { hostName, cols, rows }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async termWrite(id: string, data: number[]) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("term_write", { id, data }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async termResize(id: string, cols: number, rows: number) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("term_resize", { id, cols, rows }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async termClose(id: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("term_close", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 }
 }
 
@@ -272,9 +308,13 @@ async reloadDb() : Promise<Host[]> {
 
 
 export const events = __makeEvents__<{
-dbChangedEvent: DbChangedEvent
+dbChangedEvent: DbChangedEvent,
+termExitEvent: TermExitEvent,
+termOutputEvent: TermOutputEvent
 }>({
-dbChangedEvent: "db-changed-event"
+dbChangedEvent: "db-changed-event",
+termExitEvent: "term-exit-event",
+termOutputEvent: "term-output-event"
 })
 
 /** user-defined constants **/
@@ -482,6 +522,14 @@ export type PodInfo = { namespace: string; name: string; containers: string[];
  * e.g. `Running`, `Pending`, `CrashLoopBackOff`.
  */
 phase: string }
+/**
+ * The embedded terminal session `id`'s child process exited.
+ */
+export type TermExitEvent = { id: string }
+/**
+ * A chunk of output bytes from an embedded terminal session `id`.
+ */
+export type TermOutputEvent = { id: string; data: number[] }
 /**
  * Définition d'un tunnel SSH sauvegardable.
  */

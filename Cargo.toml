@@ -32,6 +32,8 @@ tempfile = "3"
 
 # Typed IPC for the desktop GUI (specta v2 ecosystem — pinned together).
 specta = { version = "=2.0.0-rc.22", default-features = false, features = ["derive"] }
+# Embedded-terminal PTY backend (GUI only, behind sshm-core's `pty` feature).
+portable-pty = "0.8"
 
 # Frontend-only (TUI/CLI) — deliberately kept out of sshm-core's dependency tree.
 inquire = { version = "0.7.5", default-features = true }

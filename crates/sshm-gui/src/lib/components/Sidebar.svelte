@@ -1,73 +1,87 @@
 <script lang="ts">
-  import { activeTab, type Tab } from "../stores";
+  import { activeSection, activeView, type Section } from "../stores";
+  import Icon from "./Icon.svelte";
 
-  const tabs: { id: Tab; label: string; icon: string }[] = [
-    { id: "hosts", label: "Hosts", icon: "🖥" },
-    { id: "tunnels", label: "Tunnels", icon: "🔀" },
-    { id: "kluster", label: "Kluster", icon: "📦" },
-    { id: "identities", label: "Identities", icon: "🔑" },
-    { id: "settings", label: "Settings", icon: "⚙" },
+  const items: { id: Section; label: string; icon: any }[] = [
+    { id: "hosts", label: "Hosts", icon: "hosts" },
+    { id: "portforward", label: "Port forwarding", icon: "portforward" },
+    { id: "kluster", label: "Kluster", icon: "kluster" },
+    { id: "keychain", label: "Keychain", icon: "keychain" },
+    { id: "settings", label: "Settings", icon: "settings" },
   ];
+
+  function go(s: Section): void {
+    activeSection.set(s);
+    activeView.set("manager");
+  }
 </script>
 
 <nav>
-  <div class="brand">sshm</div>
-  {#each tabs as t}
+  <div class="logo"><span class="mark">◈</span> sshm</div>
+  {#each items as it}
     <button
       class="nav"
-      class:active={$activeTab === t.id}
-      on:click={() => activeTab.set(t.id)}
+      class:active={$activeView === "manager" && $activeSection === it.id}
+      on:click={() => go(it.id)}
     >
-      <span class="icon">{t.icon}</span>
-      {t.label}
+      <Icon name={it.icon} size={18} />
+      <span>{it.label}</span>
     </button>
   {/each}
   <div class="spacer"></div>
-  <div class="foot muted">shared DB · ~/.config/sshm</div>
+  <div class="foot">shared vault<br /><span class="mono">~/.config/sshm</span></div>
 </nav>
 
 <style>
   nav {
-    background: var(--bg-2);
+    width: 178px;
+    background: var(--bg-0);
     border-right: 1px solid var(--border);
     display: flex;
     flex-direction: column;
-    padding: 12px 8px;
-    gap: 4px;
+    padding: 14px 10px;
+    gap: 3px;
   }
-  .brand {
-    font-weight: 700;
-    font-size: 18px;
-    padding: 6px 10px 14px;
-    letter-spacing: 0.5px;
+  .logo {
+    font-weight: 800;
+    font-size: 17px;
+    padding: 4px 10px 16px;
+    letter-spacing: 0.4px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .mark {
+    color: var(--accent);
   }
   button.nav {
+    display: flex;
+    align-items: center;
+    gap: 11px;
     background: transparent;
     border: none;
+    color: var(--fg-dim);
     text-align: left;
-    border-radius: var(--radius);
-    padding: 8px 10px;
-    display: flex;
-    gap: 10px;
-    align-items: center;
+    padding: 9px 10px;
+    border-radius: 9px;
+    font-size: 13.5px;
   }
   button.nav:hover {
-    background: var(--bg-3);
+    background: var(--bg-2);
+    color: var(--fg);
   }
   button.nav.active {
-    background: var(--bg-3);
+    background: var(--accent-soft);
     color: var(--accent);
     font-weight: 600;
-  }
-  .icon {
-    width: 18px;
-    text-align: center;
   }
   .spacer {
     flex: 1;
   }
   .foot {
     font-size: 11px;
-    padding: 8px 10px;
+    color: var(--fg-faint);
+    padding: 10px;
+    line-height: 1.5;
   }
 </style>

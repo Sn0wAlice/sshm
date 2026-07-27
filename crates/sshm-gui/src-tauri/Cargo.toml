@@ -23,7 +23,7 @@ crate-type = ["lib", "cdylib", "staticlib"]
 tauri-build = { version = "2", features = [] }
 
 [dependencies]
-sshm-core = { workspace = true, features = ["specta"] }
+sshm-core = { workspace = true, features = ["specta", "pty"] }
 
 tauri = { version = "2", features = [] }
 serde.workspace = true

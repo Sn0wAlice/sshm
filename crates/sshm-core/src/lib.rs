@@ -24,5 +24,8 @@ pub mod kluster;
 pub mod tunnels;
 pub mod watch;
 
+#[cfg(feature = "pty")]
+pub mod pty;
+
 // Convenience re-exports
 pub use config::{io as cfg_io, path as cfg_path};

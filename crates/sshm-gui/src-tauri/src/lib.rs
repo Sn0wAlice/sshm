@@ -10,12 +10,13 @@ mod commands;
 mod dto;
 mod events;
 mod state;
+mod terminal;
 mod tunnels_mgr;
 
 use tauri::Manager;
 use tauri_specta::{collect_commands, collect_events, Builder};
 
-use events::DbChangedEvent;
+use events::{DbChangedEvent, TermExitEvent, TermOutputEvent};
 use state::AppState;
 
 /// TypeScript exporter config. `u64` settings fields (timeouts in seconds/ms)
@@ -67,8 +68,12 @@ pub fn make_builder() -> Builder<tauri::Wry> {
             commands::start_tunnel,
             commands::stop_tunnel,
             commands::reload_db,
+            terminal::term_open,
+            terminal::term_write,
+            terminal::term_resize,
+            terminal::term_close,
         ])
-        .events(collect_events![DbChangedEvent])
+        .events(collect_events![DbChangedEvent, TermOutputEvent, TermExitEvent])
 }
 
 /// Run the desktop app.
@@ -98,6 +103,9 @@ pub fn run() {
                 if let Some(state) = window.app_handle().try_state::<AppState>() {
                     if let Ok(mut t) = state.tunnels.lock() {
                         t.shutdown();
+                    }
+                    if let Ok(mut s) = state.sessions.lock() {
+                        s.shutdown();
                     }
                 }
             }

@@ -30,9 +30,15 @@ notify.workspace = true
 # (no specta unless a frontend asks for it).
 specta = { workspace = true, optional = true }
 
+# Optional: a portable-pty–backed `PtySession` for frontends that embed a
+# terminal (the desktop GUI). Off by default, so the TUI build never compiles it.
+portable-pty = { workspace = true, optional = true }
+
 [features]
 # Enable `specta::Type` derives on public model/config/kluster types.
 specta = ["dep:specta"]
+# Enable the `pty` module (embedded-terminal support).
+pty = ["dep:portable-pty"]
 
 [dev-dependencies]
 tempfile.workspace = true

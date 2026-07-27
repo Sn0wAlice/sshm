@@ -1,51 +1,46 @@
 <script lang="ts">
   import type { Host } from "../bindings";
   import { commands, tryRun } from "../ipc";
-  import { hosts, folders, selectedHostName } from "../stores";
+  import { hosts, folders, selectedHostName, openSession, pushToast } from "../stores";
+  import { hostIcon } from "../hostIcon";
   import HostForm from "./HostForm.svelte";
+  import HostDetail from "./HostDetail.svelte";
+  import Icon from "./Icon.svelte";
 
   let query = "";
   let filtered: Host[] = [];
+  let folderFilter: string | null = null;
   let editing: Host | null = null;
   let showForm = false;
 
-  // Re-filter through the core matcher (server-side) whenever the query changes.
   let searchTimer: ReturnType<typeof setTimeout> | undefined;
   function onSearch(): void {
     clearTimeout(searchTimer);
     searchTimer = setTimeout(async () => {
+      // Route through the core matcher for the rich `tag:`/`host:` syntax.
       filtered = await commands.listHosts(query.trim() ? query : null);
     }, 120);
   }
 
-  // Keep `filtered` in sync when the store changes (live reload, CRUD).
-  $: filtered = applyLocal($hosts, query);
-  function applyLocal(all: Host[], q: string): Host[] {
+  // Keep in sync with the store when it changes (live reload / CRUD).
+  $: filtered = localFilter($hosts, query);
+  function localFilter(all: Host[], q: string): Host[] {
     if (!q.trim()) return all;
-    const needle = q.toLowerCase();
-    return all.filter(
-      (h) =>
-        h.name.toLowerCase().includes(needle) ||
-        h.host.toLowerCase().includes(needle),
-    );
+    const n = q.toLowerCase();
+    return all.filter((h) => h.name.toLowerCase().includes(n) || h.host.toLowerCase().includes(n));
   }
+
+  $: shown = folderFilter ? filtered.filter((h) => h.folder === folderFilter) : filtered;
 
   interface Group {
     name: string;
-    hosts: Host[];
+    count: number;
   }
-  $: grouped = groupByFolder(filtered);
-  function groupByFolder(list: Host[]): Group[] {
-    const map = new Map<string, Host[]>();
-    for (const h of list) {
-      const key = h.folder && h.folder.length ? h.folder : "";
-      const arr = map.get(key) ?? [];
-      arr.push(h);
-      map.set(key, arr);
-    }
-    return [...map.entries()]
-      .sort(([a], [b]) => (a === "" ? -1 : b === "" ? 1 : a.localeCompare(b)))
-      .map(([name, hs]) => ({ name, hosts: hs }));
+  $: groups = buildGroups($hosts);
+  function buildGroups(all: Host[]): Group[] {
+    const counts = new Map<string, number>();
+    for (const h of all) if (h.folder) counts.set(h.folder, (counts.get(h.folder) ?? 0) + 1);
+    return [...counts.entries()].sort((a, b) => a[0].localeCompare(b[0])).map(([name, count]) => ({ name, count }));
   }
 
   $: selected = $hosts.find((h) => h.name === $selectedHostName) ?? null;
@@ -59,8 +54,8 @@
     editing = null;
     showForm = true;
   }
-  function editHost(h: Host): void {
-    editing = h;
+  function onEdit(e: CustomEvent<Host>): void {
+    editing = e.detail;
     showForm = true;
   }
   async function onSaved(): Promise<void> {
@@ -68,20 +63,16 @@
     await refresh();
   }
 
-  async function connect(h: Host): Promise<void> {
-    await tryRun(commands.connectHost(h.name), `Opening ${h.name}…`);
-  }
-  async function del(h: Host): Promise<void> {
-    if (!confirm(`Delete host "${h.name}"?`)) return;
-    await tryRun(commands.deleteHost(h.name), `Deleted ${h.name}`);
-    if ($selectedHostName === h.name) selectedHostName.set(null);
-    await refresh();
-  }
-  async function clone(h: Host): Promise<void> {
-    const nn = prompt(`Clone "${h.name}" as:`, `${h.name}-copy`);
-    if (!nn) return;
-    await tryRun(commands.cloneHost(h.name, nn), `Cloned to ${nn}`);
-    await refresh();
+  function connectSelectedOrTyped(): void {
+    if (selected) {
+      openSession(selected.name);
+      return;
+    }
+    if (shown.length === 1) {
+      openSession(shown[0].name);
+      return;
+    }
+    pushToast("err", "Pick a host first");
   }
 
   async function newFolder(): Promise<void> {
@@ -92,183 +83,227 @@
   }
 </script>
 
-<div class="hosts">
-  <div class="list col">
-    <div class="row toolbar">
-      <input
-        placeholder="Search hosts (tag:foo host:1.* user:bar)…"
-        bind:value={query}
-        on:input={onSearch}
-      />
-      <button class="primary" on:click={newHost}>+ Host</button>
-      <button on:click={newFolder} title="New folder">📁+</button>
+<div class="wrap">
+  <div class="main">
+    <div class="searchbar">
+      <div class="field">
+        <Icon name="search" size={16} />
+        <input
+          placeholder="Find a host or ssh user@hostname…"
+          bind:value={query}
+          on:input={onSearch}
+          on:keydown={(e) => e.key === "Enter" && connectSelectedOrTyped()}
+        />
+      </div>
+      <button class="primary connect" on:click={connectSelectedOrTyped}>
+        <Icon name="connect" size={15} /> CONNECT
+      </button>
     </div>
 
-    <div class="scroll groups">
-      {#each grouped as g}
-        {#if g.name}<div class="folder">{g.name}</div>{/if}
-        {#each g.hosts as h (h.name)}
+    <div class="toolbar">
+      <button class="primary" on:click={newHost}><Icon name="plus" size={14} /> NEW HOST</button>
+      <button on:click={newFolder}><Icon name="folder" size={14} /> New folder</button>
+      {#if folderFilter}
+        <button class="chip" on:click={() => (folderFilter = null)}>
+          {folderFilter} <Icon name="close" size={12} />
+        </button>
+      {/if}
+      <div class="spacer"></div>
+      <span class="muted small">{shown.length} host{shown.length === 1 ? "" : "s"}</span>
+    </div>
+
+    <div class="scroll cards">
+      {#if groups.length && !folderFilter && !query.trim()}
+        <div class="section">Groups</div>
+        <div class="grid">
+          {#each groups as g (g.name)}
+            <button class="card group" on:click={() => (folderFilter = g.name)}>
+              <div class="gic"><Icon name="folder" size={20} /></div>
+              <div class="col">
+                <div class="ttl">{g.name}</div>
+                <div class="sub muted">{g.count} host{g.count === 1 ? "" : "s"}</div>
+              </div>
+            </button>
+          {/each}
+        </div>
+      {/if}
+
+      <div class="section">Hosts</div>
+      <div class="grid">
+        {#each shown as h (h.name)}
           <button
-            class="item"
+            class="card host"
             class:sel={$selectedHostName === h.name}
             on:click={() => selectedHostName.set(h.name)}
-            on:dblclick={() => connect(h)}
+            on:dblclick={() => openSession(h.name)}
           >
-            <span class="dot" class:fav={h.favorite}></span>
-            <span class="nm">{h.name}</span>
-            <span class="addr muted mono">{h.username}@{h.host}</span>
+            <div class="hic" style="background:{hostIcon(h).bg}">{hostIcon(h).label}</div>
+            <div class="col grow">
+              <div class="ttl">{h.name}</div>
+              <div class="sub muted mono">{h.username}@{h.host}</div>
+            </div>
+            {#if h.tags && h.tags.length}
+              <div class="minitags">{#each h.tags.slice(0, 3) as t}<span class="tag">{t}</span>{/each}</div>
+            {/if}
           </button>
         {/each}
-      {/each}
-      {#if filtered.length === 0}
-        <div class="empty muted">No hosts. Click “+ Host” to add one.</div>
+      </div>
+      {#if shown.length === 0}
+        <div class="empty muted">No hosts here. Click “NEW HOST” to add one.</div>
       {/if}
     </div>
   </div>
 
-  <div class="detail col">
-    {#if selected}
-      <div class="row">
-        <h2>{selected.name}</h2>
-        {#if selected.favorite}<span class="tag">★ favorite</span>{/if}
-        <div class="spacer"></div>
-        <button class="primary" on:click={() => selected && connect(selected)}>Connect ▸</button>
-      </div>
-      <div class="kv mono">
-        <div><span class="muted">host</span> {selected.username}@{selected.host}:{selected.port}</div>
-        {#if selected.identity_file}<div><span class="muted">identity</span> {selected.identity_file}</div>{/if}
-        {#if selected.proxy_jump}<div><span class="muted">proxyjump</span> {selected.proxy_jump}</div>{/if}
-        {#if selected.folder}<div><span class="muted">folder</span> {selected.folder}</div>{/if}
-        <div><span class="muted">connections</span> {selected.use_count}</div>
-        {#if selected.forward_agent}<div><span class="tag">-A forward agent</span></div>{/if}
-        {#if selected.mosh}<div><span class="tag">mosh</span></div>{/if}
-      </div>
-      {#if selected.tags && selected.tags.length}
-        <div class="row">{#each selected.tags as t}<span class="tag">{t}</span>{/each}</div>
-      {/if}
-      {#if selected.remote_command}
-        <div class="mono muted">run: {selected.remote_command}</div>
-      {/if}
-      {#if selected.notes}
-        <div class="notes">{selected.notes}</div>
-      {/if}
-      {#if (selected.tunnels ?? []).length}
-        <div class="muted">Saved tunnels: {(selected.tunnels ?? []).length} (manage in Tunnels tab)</div>
-      {/if}
-
-      <div class="row actions">
-        <button on:click={() => selected && editHost(selected)}>Edit</button>
-        <button on:click={() => selected && clone(selected)}>Clone</button>
-        <button class="danger" on:click={() => selected && del(selected)}>Delete</button>
-      </div>
-    {:else}
-      <div class="placeholder muted">Select a host to see details.</div>
-    {/if}
-  </div>
+  {#if selected}
+    <HostDetail host={selected} on:edit={onEdit} on:changed={refresh} />
+  {/if}
 </div>
 
 {#if showForm}
-  <HostForm
-    host={editing}
-    folders={$folders}
-    on:saved={onSaved}
-    on:cancel={() => (showForm = false)}
-  />
+  <HostForm host={editing} folders={$folders} on:saved={onSaved} on:cancel={() => (showForm = false)} />
 {/if}
 
 <style>
-  .hosts {
-    display: grid;
-    grid-template-columns: 340px 1fr;
-    height: 100%;
+  .wrap {
+    display: flex;
+    flex: 1;
     min-height: 0;
   }
-  .list {
-    border-right: 1px solid var(--border);
-    min-height: 0;
+  .main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    padding: 18px 22px;
+    gap: 14px;
+  }
+  .searchbar {
+    display: flex;
+    gap: 10px;
+  }
+  .field {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 0 12px;
+    color: var(--fg-dim);
+  }
+  .field input {
+    border: none;
+    background: none;
+    padding: 11px 0;
+  }
+  .field:focus-within {
+    border-color: var(--accent);
+  }
+  .connect {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 18px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
   }
   .toolbar {
-    padding: 10px;
-    border-bottom: 1px solid var(--border);
-  }
-  .toolbar button {
-    white-space: nowrap;
-  }
-  .groups {
-    flex: 1;
-    padding: 6px;
-  }
-  .folder {
-    font-size: 11px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    color: var(--fg-dim);
-    padding: 10px 8px 4px;
-  }
-  .item {
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    border-radius: var(--radius);
-    padding: 7px 8px;
     display: flex;
     align-items: center;
     gap: 8px;
   }
-  .item:hover {
-    background: var(--bg-2);
+  .toolbar button {
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
-  .item.sel {
+  .chip {
+    background: var(--accent-soft);
+    color: var(--accent);
+    border-color: transparent;
+  }
+  .cards {
+    flex: 1;
+    padding-right: 4px;
+  }
+  .section {
+    font-size: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: var(--fg-dim);
+    margin: 14px 2px 8px;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+    gap: 10px;
+  }
+  .card {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    text-align: left;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 12px 14px;
+  }
+  .card:hover {
+    border-color: var(--accent);
     background: var(--bg-3);
   }
-  .dot {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-    background: var(--border);
+  .card.sel {
+    border-color: var(--accent);
+    background: var(--accent-soft);
+  }
+  .gic {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    background: linear-gradient(135deg, #1c4fd6, #2b6cff);
+    display: grid;
+    place-items: center;
+    color: #fff;
     flex: none;
   }
-  .dot.fav {
-    background: var(--accent-2);
+  .hic {
+    width: 40px;
+    height: 40px;
+    border-radius: 10px;
+    display: grid;
+    place-items: center;
+    color: #fff;
+    font-weight: 700;
+    font-size: 17px;
+    flex: none;
   }
-  .nm {
+  .grow {
+    flex: 1;
+    min-width: 0;
+  }
+  .ttl {
     font-weight: 600;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
-  .addr {
-    margin-left: auto;
+  .sub {
+    font-size: 12px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .minitags {
+    display: flex;
+    gap: 4px;
+    flex: none;
+  }
+  .small {
     font-size: 12px;
   }
   .empty {
-    padding: 24px;
+    padding: 40px;
     text-align: center;
-  }
-  .detail {
-    padding: 18px;
-    overflow-y: auto;
-    gap: 12px;
-  }
-  h2 {
-    margin: 0;
-  }
-  .kv {
-    display: flex;
-    flex-direction: column;
-    gap: 4px;
-    font-size: 13px;
-  }
-  .notes {
-    background: var(--bg-2);
-    border: 1px solid var(--border);
-    border-radius: var(--radius);
-    padding: 10px;
-    white-space: pre-wrap;
-  }
-  .actions {
-    margin-top: auto;
-    padding-top: 12px;
-  }
-  .placeholder {
-    margin: auto;
   }
 </style>

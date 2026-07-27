@@ -261,7 +261,50 @@ reads or writes private-key contents — only paths, like the TUI.
 - Shared DB: GUI reads/writes the same `host.json`/`kluster.json`/`settings.toml`
   and live-reloads on external change. ✅
 
-### Phase 4 (embedded terminal) — not started
+## Phase 4 — embedded terminal + Termius-style redesign
 
-Left as the optional follow-up per the plan (portable-pty + xterm.js), with the
-external-terminal button as the always-available fallback.
+### Embedded terminal
+
+- **Core**: new off-by-default `pty` feature adds `sshm_core::pty::PtySession`
+  (a thin `portable-pty` wrapper: `spawn(argv, cols, rows)`, `output_reader`,
+  `write_input`, `resize`, `kill`). Default core builds and `cargo tree -p
+  sshm-core` stay pty-free — `portable-pty` only compiles when a frontend asks
+  for it (same pattern as `specta`). The TUI never uses it (it *is* the
+  terminal).
+- **GUI backend** (`terminal.rs`): a `Sessions` map in `AppState`; commands
+  `term_open` (spawns `ssh` in a PTY, rejects mosh → external only),
+  `term_write`, `term_resize`, `term_close`. A per-session thread pumps PTY
+  output into `TermOutputEvent { id, data }`; `TermExitEvent` fires on child
+  exit. Sessions are killed on window close.
+- **Frontend**: `Terminal.svelte` (xterm.js + fit addon) opens a backend
+  session on mount, wires `onData → term_write`, filters output events by id,
+  resizes via `ResizeObserver`, and tears the session down on destroy. Sessions
+  are tabs in the top strip; the manager is always tab 0. Terminals stay mounted
+  while hidden so a session survives tab switches. The external-terminal button
+  remains as an always-available fallback (and the only option for mosh hosts).
+
+### Termius-style UI overhaul
+
+- New deep-navy palette and design tokens in `app.css` (layered `--bg-0..3`,
+  accent, soft-accent, etc.).
+- Layout: window-drag top tab strip (`TopTabs`) + icon left rail (`Sidebar`,
+  inline-SVG `Icon.svelte`) + content pane that swaps between the manager
+  sections and live terminals.
+- Hosts view: search bar + CONNECT, NEW HOST / folder actions, a **Groups**
+  card grid and a **Hosts** card grid with per-host colored icons + monograms
+  (`hostIcon.ts`, keyword-tinted) and tag chips; a slide-in `HostDetail` drawer
+  with Connect (embedded) / External / Edit / Clone / Delete. Double-click a
+  host = open an embedded session.
+- All other tabs (Port forwarding, Kluster, Keychain, Settings) inherit the new
+  tokens.
+
+### Acceptance (Phase 4)
+
+- `cargo check`/`clippy -D warnings` on `sshm-desktop` (with `pty`) → clean;
+  core clippy with `--features specta,pty` → clean. ✅
+- `npm run check` → 0/0; `npm run build` → bundles xterm into `dist/`. ✅
+- Default `cargo build --release`/`cargo test` unchanged (93 pass); default
+  core tree still free of ratatui/crossterm/inquire/specta/portable-pty. ✅
+
+*(Not visually verified — the app compiles, type-checks and bundles, but I can't
+launch a window headlessly; first real run is the user's.)*
