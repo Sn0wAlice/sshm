@@ -87,6 +87,14 @@ async connectHost(name: string) : Promise<Result<null, string>> {
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Probe every host's reachability (concurrent TCP connect to `host:port`).
+ * Hosts behind a ProxyJump are skipped (reported as `None`) since their
+ * address usually isn't directly reachable.
+ */
+async pingHosts() : Promise<HostPing[]> {
+    return await TAURI_INVOKE("ping_hosts");
+},
 async getSettings() : Promise<AppConfig> {
     return await TAURI_INVOKE("get_settings");
 },
@@ -499,6 +507,12 @@ notes?: string | null;
  * `None` = shell de login normal. Ignoré en mode mosh.
  */
 remote_command?: string | null }
+/**
+ * Reachability of a host: `latency_ms = Some(ms)` when a direct TCP connect to
+ * `host:port` succeeded, `None` when it couldn't be reached directly (down, or
+ * only reachable through a ProxyJump).
+ */
+export type HostPing = { name: string; latency_ms: number | null }
 /**
  * One SSH key under `~/.ssh`, with paths flattened to strings for the webview.
  */

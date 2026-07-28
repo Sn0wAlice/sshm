@@ -1,8 +1,10 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { fly } from "svelte/transition";
   import type { Host } from "../bindings";
   import { commands, tryRun, openHostSession } from "../ipc";
-  import { selectedHostName } from "../stores";
+  import { selectedHostName, pushToast } from "../stores";
+  import { confirmDialog, promptDialog } from "../dialogs";
   import { hostIcon } from "../hostIcon";
   import Icon from "./Icon.svelte";
 
@@ -19,20 +21,39 @@
     await tryRun(commands.connectHost(host.name), `Opening ${host.name} in your terminal…`);
   }
   async function clone(): Promise<void> {
-    const nn = prompt(`Clone "${host.name}" as:`, `${host.name}-copy`);
+    const nn = await promptDialog({
+      title: `Clone "${host.name}"`,
+      placeholder: "New host name",
+      initial: `${host.name}-copy`,
+      confirmLabel: "Clone",
+    });
     if (!nn) return;
     await tryRun(commands.cloneHost(host.name, nn), `Cloned to ${nn}`);
     dispatch("changed");
   }
   async function del(): Promise<void> {
-    if (!confirm(`Delete host "${host.name}"?`)) return;
-    await tryRun(commands.deleteHost(host.name), `Deleted ${host.name}`);
+    const removed = host;
+    const ok = await confirmDialog({
+      title: `Delete "${removed.name}"?`,
+      message: "This removes the host from your vault.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    await tryRun(commands.deleteHost(removed.name));
     selectedHostName.set(null);
     dispatch("changed");
+    pushToast("info", `Deleted ${removed.name}`, {
+      label: "Undo",
+      run: async () => {
+        await tryRun(commands.saveHost(removed, null));
+        dispatch("changed");
+      },
+    });
   }
 </script>
 
-<aside class="drawer">
+<aside class="drawer" transition:fly={{ x: 24, duration: 160 }}>
   <div class="head">
     <div class="ic" style="background:{ic.bg}">{ic.label}</div>
     <div class="col grow">

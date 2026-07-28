@@ -35,6 +35,15 @@ impl From<KeyEntry> for IdentityDto {
     }
 }
 
+/// Reachability of a host: `latency_ms = Some(ms)` when a direct TCP connect to
+/// `host:port` succeeded, `None` when it couldn't be reached directly (down, or
+/// only reachable through a ProxyJump).
+#[derive(Debug, Clone, Serialize, Deserialize, Type)]
+pub struct HostPing {
+    pub name: String,
+    pub latency_ms: Option<u32>,
+}
+
 /// A saved cluster/remote plus which runtime it targets, for the Kluster tab.
 #[derive(Debug, Clone, Serialize, Deserialize, Type)]
 pub struct KlusterOverview {

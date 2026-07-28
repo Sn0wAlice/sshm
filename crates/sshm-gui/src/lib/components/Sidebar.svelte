@@ -55,6 +55,7 @@
     color: var(--accent);
   }
   button.nav {
+    position: relative;
     display: flex;
     align-items: center;
     gap: 11px;
@@ -71,9 +72,20 @@
     color: var(--fg);
   }
   button.nav.active {
-    background: var(--accent-soft);
-    color: var(--accent);
+    background: var(--bg-3);
+    color: var(--fg);
     font-weight: 600;
+  }
+  button.nav.active::before {
+    content: "";
+    position: absolute;
+    left: -10px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 3px;
+    height: 18px;
+    border-radius: 0 3px 3px 0;
+    background: var(--fg);
   }
   .spacer {
     flex: 1;

@@ -3,6 +3,7 @@
   import type { IdentityDto } from "../bindings";
   import { commands, tryRun } from "../ipc";
   import { hosts } from "../stores";
+  import { promptDialog } from "../dialogs";
 
   let keys: IdentityDto[] = [];
   let genOpen = false;
@@ -23,7 +24,12 @@
   }
 
   async function push(k: IdentityDto): Promise<void> {
-    const host = prompt("Push this public key to which host? (host name)");
+    const host = await promptDialog({
+      title: "Push public key to a host",
+      message: "Adds this key to the host's authorized_keys.",
+      placeholder: "Host name",
+      confirmLabel: "Push",
+    });
     if (!host) return;
     await tryRun(commands.pushPubkey(host, k.public), `Key pushed to ${host}`);
   }

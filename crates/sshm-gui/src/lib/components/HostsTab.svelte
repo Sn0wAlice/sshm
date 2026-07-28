@@ -1,7 +1,11 @@
 <script lang="ts">
+  import { onMount } from "svelte";
+  import { fly } from "svelte/transition";
+  import { flip } from "svelte/animate";
   import type { Host } from "../bindings";
   import { commands, tryRun, openHostSession } from "../ipc";
-  import { hosts, folders, selectedHostName, pushToast } from "../stores";
+  import { hosts, folders, selectedHostName, pushToast, newHostRequest } from "../stores";
+  import { confirmDialog, promptDialog } from "../dialogs";
   import { hostIcon } from "../hostIcon";
   import HostForm from "./HostForm.svelte";
   import HostDetail from "./HostDetail.svelte";
@@ -82,6 +86,23 @@
 
   $: selected = $hosts.find((h) => h.name === $selectedHostName) ?? null;
 
+  // --- Reachability (presence dots + latency) ---
+  let pings: Record<string, number | null> = {};
+  async function pollPings(): Promise<void> {
+    const r = await commands.pingHosts();
+    const next: Record<string, number | null> = {};
+    for (const p of r) next[p.name] = p.latency_ms;
+    pings = next;
+  }
+  onMount(() => {
+    pollPings();
+    const t = setInterval(pollPings, 15000);
+    return () => clearInterval(t);
+  });
+  function presence(name: string): "up" | "unknown" {
+    return typeof pings[name] === "number" ? "up" : "unknown";
+  }
+
   async function refresh(): Promise<void> {
     hosts.set(await commands.listHosts(null));
     folders.set(await commands.listFolders());
@@ -90,6 +111,12 @@
   function newHost(): void {
     editing = null;
     showForm = true;
+  }
+  // The command palette can request the New-host form.
+  let lastNewHostReq = 0;
+  $: if ($newHostRequest !== lastNewHostReq) {
+    lastNewHostReq = $newHostRequest;
+    newHost();
   }
   function onEdit(e: CustomEvent<Host>): void {
     editing = e.detail;
@@ -142,21 +169,40 @@
   }
   async function mClone(h: Host): Promise<void> {
     closeMenu();
-    const nn = prompt(`Duplicate "${h.name}" as:`, `${h.name}-copy`);
+    const nn = await promptDialog({
+      title: `Duplicate "${h.name}"`,
+      placeholder: "New host name",
+      initial: `${h.name}-copy`,
+      confirmLabel: "Duplicate",
+    });
     if (!nn) return;
     await tryRun(commands.cloneHost(h.name, nn), `Duplicated to ${nn}`);
     await refresh();
   }
   async function mDelete(h: Host): Promise<void> {
     closeMenu();
-    if (!confirm(`Delete host "${h.name}"?`)) return;
-    await tryRun(commands.deleteHost(h.name), `Deleted ${h.name}`);
+    const ok = await confirmDialog({
+      title: `Delete "${h.name}"?`,
+      message: "This removes the host from your vault.",
+      confirmLabel: "Delete",
+      danger: true,
+    });
+    if (!ok) return;
+    await tryRun(commands.deleteHost(h.name));
     if ($selectedHostName === h.name) selectedHostName.set(null);
     await refresh();
+    // Undo re-saves the exact host that was removed.
+    pushToast("info", `Deleted ${h.name}`, {
+      label: "Undo",
+      run: async () => {
+        await tryRun(commands.saveHost(h, null));
+        await refresh();
+      },
+    });
   }
 
   async function newFolder(): Promise<void> {
-    const n = prompt("New folder name:");
+    const n = await promptDialog({ title: "New folder", placeholder: "Folder name", confirmLabel: "Create" });
     if (!n) return;
     await tryRun(commands.createFolder(n), `Folder "${n}" created`);
     await refresh();
@@ -225,13 +271,20 @@
               class="card host"
               class:sel={$selectedHostName === h.name}
               title="Click to connect · right-click for options"
+              animate:flip={{ duration: 160 }}
+              in:fly={{ y: 6, duration: 140 }}
               on:click={() => openHostSession(h.name)}
               on:contextmenu={(e) => openMenu(e, h)}
             >
-              <div class="hic" style="background:{hostIcon(h).bg}">{hostIcon(h).label}</div>
+              <div class="hic-wrap">
+                <div class="hic" style="background:{hostIcon(h).bg}">{hostIcon(h).label}</div>
+                <span class="pres {presence(h.name)}" title={presence(h.name) === "up" ? "reachable" : "unknown"}></span>
+              </div>
               <div class="col grow">
                 <div class="ttl">{h.name}</div>
-                <div class="sub muted mono">{h.username}@{h.host}</div>
+                <div class="sub muted mono">
+                  {h.username}@{h.host}{#if typeof pings[h.name] === "number"} · {pings[h.name]}ms{/if}
+                </div>
               </div>
               {#if h.tags && h.tags.length}
                 <div class="minitags">{#each h.tags.slice(0, 3) as t}<span class="tag">{t}</span>{/each}</div>
@@ -240,8 +293,15 @@
           {/each}
         </div>
       {:else if !subfolders.length}
-        <div class="empty muted">
-          {searching ? "No matching host." : "Nothing here yet. Add a host or folder."}
+        <div class="empty">
+          {#if searching}
+            <div class="muted">No matching host.</div>
+          {:else}
+            <div class="e-ico"><Icon name="hosts" size={26} /></div>
+            <div class="e-title">Nothing here yet</div>
+            <div class="muted">Add a host to get started.</div>
+            <button class="primary" on:click={newHost}><Icon name="plus" size={14} /> New host</button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -402,6 +462,10 @@
     color: var(--fg-dim);
     flex: none;
   }
+  .hic-wrap {
+    position: relative;
+    flex: none;
+  }
   .hic {
     width: 40px;
     height: 40px;
@@ -411,7 +475,22 @@
     color: #fff;
     font-weight: 700;
     font-size: 17px;
-    flex: none;
+  }
+  .pres {
+    position: absolute;
+    right: -3px;
+    bottom: -3px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    border: 2.5px solid var(--bg-2);
+    background: var(--fg-faint);
+  }
+  .card:hover .pres {
+    border-color: var(--bg-3);
+  }
+  .pres.up {
+    background: var(--ok);
   }
   .grow {
     flex: 1;
@@ -438,8 +517,32 @@
     font-size: 12px;
   }
   .empty {
-    padding: 40px;
-    text-align: center;
+    padding: 48px 40px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 8px;
+  }
+  .e-ico {
+    width: 52px;
+    height: 52px;
+    border-radius: 14px;
+    background: var(--bg-2);
+    border: 1px solid var(--border);
+    display: grid;
+    place-items: center;
+    color: var(--fg-dim);
+    margin-bottom: 6px;
+  }
+  .e-title {
+    font-weight: 600;
+    font-size: 15px;
+  }
+  .empty .primary {
+    margin-top: 8px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .ctxmenu {
     position: fixed;

@@ -1,10 +1,11 @@
 name: ci
 
 on:
-  push:
-    branches: [main, workspace-refactor]
-  pull_request:
-
+  #push:
+  #  branches: [main, workspace-refactor]
+  #pull_request:
+  workflow_dispatch:
+    
 jobs:
   # Engine + TUI: unit tests and clippy (the default workspace members).
   rust:

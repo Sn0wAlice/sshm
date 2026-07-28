@@ -3972,7 +3972,7 @@ checksum = "08044686521f352c6d1f522ba349c3dd52813819fa8353b60bd3d2107f6dca0a"
 
 [[package]]
 name = "sshm"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3994,7 +3994,7 @@ dependencies = [
 
 [[package]]
 name = "sshm-core"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -4014,7 +4014,7 @@ dependencies = [
 
 [[package]]
 name = "sshm-desktop"
-version = "2.0.0"
+version = "2.0.1"
 dependencies = [
  "anyhow",
  "chrono",

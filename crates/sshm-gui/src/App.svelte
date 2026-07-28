@@ -1,10 +1,23 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { commands, events } from "./lib/ipc";
-  import { hosts, folders, activeSection, activeView, sessions, pushToast } from "./lib/stores";
+  import { commands, events, openLocalSession } from "./lib/ipc";
+  import {
+    hosts,
+    folders,
+    activeSection,
+    activeView,
+    sessions,
+    paletteOpen,
+    closeSession,
+    closedSessions,
+    pushToast,
+    type Section,
+  } from "./lib/stores";
   import Sidebar from "./lib/components/Sidebar.svelte";
   import TopTabs from "./lib/components/TopTabs.svelte";
   import Toasts from "./lib/components/Toasts.svelte";
+  import DialogHost from "./lib/components/DialogHost.svelte";
+  import CommandPalette from "./lib/components/CommandPalette.svelte";
   import HostsTab from "./lib/components/HostsTab.svelte";
   import TunnelsTab from "./lib/components/TunnelsTab.svelte";
   import KlusterTab from "./lib/components/KlusterTab.svelte";
@@ -19,19 +32,51 @@
 
   onMount(() => {
     refreshHosts();
-    const unlisten = events.dbChangedEvent.listen((e) => {
+    const unDb = events.dbChangedEvent.listen((e) => {
       if (e.payload.hosts) {
         refreshHosts();
         pushToast("ok", "Hosts reloaded (changed on disk)");
       }
     });
+    // Mark a session's tab dot when its PTY child exits.
+    const unExit = events.termExitEvent.listen((e) => {
+      closedSessions.update((s) => new Set(s).add(e.payload.id));
+    });
     return () => {
-      unlisten.then((fn) => fn());
+      unDb.then((fn) => fn());
+      unExit.then((fn) => fn());
     };
   });
 
+  const SECTIONS: Section[] = ["hosts", "portforward", "kluster", "keychain", "settings"];
+
+  // Global keyboard shortcuts (capture phase so they win over the terminal).
+  function onGlobalKey(e: KeyboardEvent): void {
+    const mod = e.metaKey || e.ctrlKey;
+    if (!mod) return;
+    const k = e.key.toLowerCase();
+    if (k === "k") {
+      e.preventDefault();
+      paletteOpen.update((v) => !v);
+    } else if (k === "t") {
+      e.preventDefault();
+      openLocalSession();
+    } else if (k === "w") {
+      if ($activeView !== "manager") {
+        e.preventDefault();
+        closeSession($activeView);
+      }
+    } else if (k >= "1" && k <= "5") {
+      e.preventDefault();
+      activeSection.set(SECTIONS[Number(k) - 1]);
+      activeView.set("manager");
+    }
+  }
+
   $: sessionList = $sessions;
 </script>
+
+<svelte:window on:keydown|capture={onGlobalKey} />
 
 <div class="app">
   <TopTabs />
@@ -61,6 +106,8 @@
     </main>
   </div>
   <Toasts />
+  <CommandPalette />
+  <DialogHost />
 </div>
 
 <style>

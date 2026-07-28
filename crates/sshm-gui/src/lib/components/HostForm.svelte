@@ -1,5 +1,6 @@
 <script lang="ts">
   import { createEventDispatcher } from "svelte";
+  import { fade, scale } from "svelte/transition";
   import type { Host, Tunnel, TunnelKind } from "../bindings";
   import { commands, tryRun } from "../ipc";
 
@@ -69,8 +70,8 @@
   }
 </script>
 
-<div class="backdrop" on:click|self={() => dispatch("cancel")} role="presentation">
-  <div class="modal col">
+<div class="backdrop" transition:fade={{ duration: 120 }} on:click|self={() => dispatch("cancel")} role="presentation">
+  <div class="modal col" transition:scale={{ duration: 150, start: 0.97 }}>
     <h3>{original ? `Edit ${original}` : "New host"}</h3>
 
     <div class="grid">

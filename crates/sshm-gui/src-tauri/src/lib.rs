@@ -46,6 +46,7 @@ pub fn make_builder() -> Builder<tauri::Wry> {
             commands::rename_folder,
             commands::delete_folder,
             commands::connect_host,
+            commands::ping_hosts,
             commands::get_settings,
             commands::save_settings,
             commands::list_identities,

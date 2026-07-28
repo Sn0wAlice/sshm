@@ -1,10 +1,15 @@
 <script lang="ts">
-  import { sessions, activeView, closeSession } from "../stores";
+  import { sessions, activeView, closeSession, closedSessions } from "../stores";
   import { openLocalSession } from "../ipc";
   import Icon from "./Icon.svelte";
+
+  // On macOS the window uses an overlay title bar, so the traffic-light buttons
+  // float over the top-left — inset the tabs so they don't collide.
+  const isMac =
+    typeof navigator !== "undefined" && /Mac/i.test(navigator.platform || navigator.userAgent);
 </script>
 
-<div class="tabs" data-tauri-drag-region>
+<div class="tabs" class:mac={isMac} data-tauri-drag-region>
   <button
     class="tab home"
     class:active={$activeView === "manager"}
@@ -18,7 +23,7 @@
   {#each $sessions as s (s.id)}
     <div class="tab session" class:active={$activeView === s.id}>
       <button class="label" on:click={() => activeView.set(s.id)}>
-        <Icon name="terminal" size={13} />
+        <span class="dot" class:closed={$closedSessions.has(s.backendId)}></span>
         <span>{s.title}</span>
       </button>
       <button class="x" title="Close session" on:click={() => closeSession(s.id)}>
@@ -43,6 +48,9 @@
     padding: 6px 8px 0;
     background: var(--bg-0);
     border-bottom: 1px solid var(--border);
+  }
+  .tabs.mac {
+    padding-left: 78px;
   }
   .tab {
     display: flex;
@@ -80,6 +88,18 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: var(--ok);
+    flex: none;
+    box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  }
+  .dot.closed {
+    background: var(--fg-faint);
+    box-shadow: none;
   }
   .tab .x {
     background: none;

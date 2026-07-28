@@ -3,6 +3,8 @@
 //! single source of truth shared with the TUI.
 
 use std::collections::BTreeSet;
+use std::net::{TcpStream, ToSocketAddrs};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, State};
 
@@ -19,7 +21,7 @@ use sshm_core::ssh::client::build_ssh_argv;
 use sshm_core::ssh::{agent, keys};
 use sshm_core::tunnels::{read_all_records, TunnelRecord};
 
-use crate::dto::{IdentityDto, KlusterOverview};
+use crate::dto::{HostPing, IdentityDto, KlusterOverview};
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -240,6 +242,53 @@ pub fn connect_host(state: State<AppState>, name: String) -> Result<(), String> 
         (argv, load_settings().external_terminal)
     };
     sshm_core::os::open_in_terminal(&argv, &term)
+}
+
+/// Probe every host's reachability (concurrent TCP connect to `host:port`).
+/// Hosts behind a ProxyJump are skipped (reported as `None`) since their
+/// address usually isn't directly reachable.
+#[tauri::command]
+#[specta::specta]
+pub fn ping_hosts(state: State<AppState>) -> Vec<HostPing> {
+    let targets: Vec<(String, String, u16, bool)> = {
+        let db = state.db.lock().unwrap();
+        db.hosts
+            .values()
+            .map(|h| {
+                let via_proxy = h.proxy_jump.as_deref().is_some_and(|s| !s.trim().is_empty());
+                (h.name.clone(), h.host.clone(), h.port, via_proxy)
+            })
+            .collect()
+    };
+
+    let (tx, rx) = std::sync::mpsc::channel();
+    let n = targets.len();
+    for (name, host, port, via_proxy) in targets {
+        let tx = tx.clone();
+        std::thread::spawn(move || {
+            let latency_ms = if via_proxy {
+                None
+            } else {
+                tcp_ping(&host, port, Duration::from_millis(1200))
+            };
+            let _ = tx.send(HostPing { name, latency_ms });
+        });
+    }
+    drop(tx);
+
+    let mut out = Vec::with_capacity(n);
+    while let Ok(p) = rx.recv() {
+        out.push(p);
+    }
+    out
+}
+
+fn tcp_ping(host: &str, port: u16, timeout: Duration) -> Option<u32> {
+    let addr = format!("{host}:{port}");
+    let sa = addr.to_socket_addrs().ok()?.next()?;
+    let start = Instant::now();
+    TcpStream::connect_timeout(&sa, timeout).ok()?;
+    Some(start.elapsed().as_millis() as u32)
 }
 
 // ---------------------------------------------------------------------------
