@@ -14,7 +14,8 @@ use sshm_core::config::export::export_ssh_config;
 use sshm_core::config::settings::{load_settings, try_save_settings, AppConfig};
 use sshm_core::filter::apply_filter;
 use sshm_core::kluster::{
-    self, Cluster, ContainerDetail, ContainerInfo, IncusInstance, LifecycleAction, PodInfo,
+    self, Cluster, ContainerDetail, ContainerInfo, DockerRemote, IncusInstance, LifecycleAction,
+    PodInfo,
 };
 use sshm_core::models::{Database, Host, Tunnel};
 use sshm_core::ssh::client::build_ssh_argv;
@@ -485,6 +486,108 @@ pub async fn kluster_overview() -> KlusterOverview {
         incus_local_available: incus.join().unwrap_or(false),
         kube_available: kube.join().unwrap_or(false),
     }
+}
+
+/// Add a Kubernetes/K3s cluster to `kluster.json`. Rejects a duplicate name.
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_add_cluster(cluster: Cluster) -> Result<(), String> {
+    if cluster.name.trim().is_empty() {
+        return Err("cluster name cannot be empty".into());
+    }
+    let (mut db, _) = kluster::db::load_or_bootstrap();
+    if db.clusters.iter().any(|c| c.name == cluster.name) {
+        return Err(format!("a cluster named '{}' already exists", cluster.name));
+    }
+    db.clusters.push(cluster);
+    kluster::db::save(&db).map_err(|e| format!("{e:#}"))
+}
+
+/// Update the cluster named `original_name` in place. Allows renaming, but
+/// rejects a rename that collides with another existing cluster.
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_update_cluster(
+    original_name: String,
+    cluster: Cluster,
+) -> Result<(), String> {
+    if cluster.name.trim().is_empty() {
+        return Err("cluster name cannot be empty".into());
+    }
+    let (mut db, _) = kluster::db::load_or_bootstrap();
+    if cluster.name != original_name && db.clusters.iter().any(|c| c.name == cluster.name) {
+        return Err(format!("a cluster named '{}' already exists", cluster.name));
+    }
+    let slot = db
+        .clusters
+        .iter_mut()
+        .find(|c| c.name == original_name)
+        .ok_or_else(|| format!("cluster '{original_name}' not found"))?;
+    *slot = cluster;
+    kluster::db::save(&db).map_err(|e| format!("{e:#}"))
+}
+
+/// Remove the cluster named `name` from `kluster.json`.
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_delete_cluster(name: String) -> Result<(), String> {
+    let (mut db, _) = kluster::db::load_or_bootstrap();
+    let before = db.clusters.len();
+    db.clusters.retain(|c| c.name != name);
+    if db.clusters.len() == before {
+        return Err(format!("cluster '{name}' not found"));
+    }
+    kluster::db::save(&db).map_err(|e| format!("{e:#}"))
+}
+
+/// Register a saved SSH host as a remote Docker daemon (`DOCKER_HOST=ssh://…`).
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_add_docker_remote(
+    state: State<'_, AppState>,
+    host_alias: String,
+) -> Result<(), String> {
+    {
+        let db = state.db.lock().unwrap();
+        if !db.hosts.contains_key(&host_alias) {
+            return Err(format!("host '{host_alias}' not found — add it in the Hosts tab first"));
+        }
+    }
+    let (mut kdb, _) = kluster::db::load_or_bootstrap();
+    if kdb.docker_remotes.iter().any(|r| r.host_alias == host_alias) {
+        return Err(format!("'{host_alias}' is already a Docker remote"));
+    }
+    kdb.docker_remotes.push(DockerRemote { host_alias });
+    kluster::db::save(&kdb).map_err(|e| format!("{e:#}"))
+}
+
+/// Stop tracking a Docker remote (the remote daemon itself is untouched).
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_delete_docker_remote(host_alias: String) -> Result<(), String> {
+    let (mut db, _) = kluster::db::load_or_bootstrap();
+    let before = db.docker_remotes.len();
+    db.docker_remotes.retain(|r| r.host_alias != host_alias);
+    if db.docker_remotes.len() == before {
+        return Err(format!("Docker remote '{host_alias}' not found"));
+    }
+    kluster::db::save(&db).map_err(|e| format!("{e:#}"))
+}
+
+/// Context names discovered across `~/.kube/config` + `$KUBECONFIG`, for the
+/// add-cluster form's suggestions. Best-effort — empty when none are readable.
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_kube_contexts() -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for path in kluster::db::kubeconfig_paths() {
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            out.extend(kluster::db::parse_kube_contexts(&text));
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 #[tauri::command]

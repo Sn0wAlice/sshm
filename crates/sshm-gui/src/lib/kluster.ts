@@ -163,6 +163,9 @@ export type DetailRequest =
 
 export const klDetail = writable<DetailRequest | null>(null);
 
+/** Whether the "add a Kluster source" dialog is open. */
+export const klAddOpen = writable(false);
+
 /** Compact detail for an Incus instance, built from the list snapshot. */
 export function incusDetail(inst: IncusInstance, remote: string | null): ContainerDetail {
   const rows: [string, string][] = [

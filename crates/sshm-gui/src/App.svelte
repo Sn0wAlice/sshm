@@ -20,6 +20,7 @@
   import DialogHost from "./lib/components/DialogHost.svelte";
   import HostKeyDialog from "./lib/components/HostKeyDialog.svelte";
   import KlusterDetailDialog from "./lib/components/KlusterDetailDialog.svelte";
+  import AddKlusterDialog from "./lib/components/AddKlusterDialog.svelte";
   import CommandPalette from "./lib/components/CommandPalette.svelte";
   import { ensureKlusterLoaded } from "./lib/kluster";
   import HostsTab from "./lib/components/HostsTab.svelte";
@@ -125,6 +126,7 @@
   <DialogHost />
   <HostKeyDialog />
   <KlusterDetailDialog />
+  <AddKlusterDialog />
 </div>
 
 <style>

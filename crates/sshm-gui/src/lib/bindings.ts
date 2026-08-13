@@ -204,6 +204,69 @@ async pushPubkey(hostName: string, pubPath: string | null) : Promise<Result<null
 async klusterOverview() : Promise<KlusterOverview> {
     return await TAURI_INVOKE("kluster_overview");
 },
+/**
+ * Add a Kubernetes/K3s cluster to `kluster.json`. Rejects a duplicate name.
+ */
+async klusterAddCluster(cluster: Cluster) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_add_cluster", { cluster }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Update the cluster named `original_name` in place. Allows renaming, but
+ * rejects a rename that collides with another existing cluster.
+ */
+async klusterUpdateCluster(originalName: string, cluster: Cluster) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_update_cluster", { originalName, cluster }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Remove the cluster named `name` from `kluster.json`.
+ */
+async klusterDeleteCluster(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_delete_cluster", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Register a saved SSH host as a remote Docker daemon (`DOCKER_HOST=ssh://…`).
+ */
+async klusterAddDockerRemote(hostAlias: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_add_docker_remote", { hostAlias }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Stop tracking a Docker remote (the remote daemon itself is untouched).
+ */
+async klusterDeleteDockerRemote(hostAlias: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_delete_docker_remote", { hostAlias }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Context names discovered across `~/.kube/config` + `$KUBECONFIG`, for the
+ * add-cluster form's suggestions. Best-effort — empty when none are readable.
+ */
+async klusterKubeContexts() : Promise<string[]> {
+    return await TAURI_INVOKE("kluster_kube_contexts");
+},
 async klusterDockerContainers(hostAlias: string | null) : Promise<Result<ContainerInfo[], string>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("kluster_docker_containers", { hostAlias }) };

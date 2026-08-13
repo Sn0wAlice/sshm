@@ -2,6 +2,7 @@
   import { onMount } from "svelte";
   import type { ContainerInfo, IncusInstance, PodInfo, LifecycleAction } from "../bindings";
   import { commands, tryRun, openBackendSession } from "../ipc";
+  import { confirmDialog } from "../dialogs";
   import {
     klSources,
     klCurrentId,
@@ -10,6 +11,7 @@
     klRefreshing,
     klDiscovering,
     klDetail,
+    klAddOpen,
     selectSource,
     refreshCurrent,
     loadOverview,
@@ -67,11 +69,45 @@
   function podInspect(p: PodInfo): void {
     if (current?.cluster) klDetail.set({ title: p.name, detail: podDetail(p, current.cluster) });
   }
+
+  // User-added sources can be removed; auto-detected ones (local docker/apple/
+  // incus, incus remotes) cannot.
+  $: removable =
+    (current?.kind === "pods" && !!current.cluster) ||
+    (current?.kind === "docker" && !!current.hostAlias);
+
+  async function removeCurrent(): Promise<void> {
+    if (!current) return;
+    if (current.kind === "pods" && current.cluster) {
+      const ok = await confirmDialog({
+        title: `Remove cluster "${current.cluster.name}"?`,
+        message: "Stops tracking it here. Your kubeconfig is untouched.",
+        confirmLabel: "Remove",
+        danger: true,
+      });
+      if (!ok) return;
+      await tryRun(commands.klusterDeleteCluster(current.cluster.name), "Cluster removed");
+    } else if (current.kind === "docker" && current.hostAlias) {
+      const ok = await confirmDialog({
+        title: `Remove Docker host "${current.hostAlias}"?`,
+        message: "Stops tracking the remote daemon. The SSH host stays saved.",
+        confirmLabel: "Remove",
+        danger: true,
+      });
+      if (!ok) return;
+      await tryRun(commands.klusterDeleteDockerRemote(current.hostAlias), "Docker remote removed");
+    }
+    klCurrentId.set(null);
+    await loadOverview();
+  }
 </script>
 
 <div class="kl">
   <aside class="sources scroll">
-    <button on:click={loadOverview} class="refresh" disabled={$klRefreshing || $klDiscovering}>↻ Refresh</button>
+    <div class="topbar">
+      <button on:click={loadOverview} class="refresh" disabled={$klRefreshing || $klDiscovering}>↻ Refresh</button>
+      <button on:click={() => klAddOpen.set(true)} class="add" title="Add a cluster or Docker host">+ Add</button>
+    </div>
     {#each $klSources as s (s.id)}
       <button class="src" class:sel={$klCurrentId === s.id} on:click={() => selectSource(s.id)}>{s.label}</button>
     {/each}
@@ -85,9 +121,17 @@
   </aside>
 
   <div class="items scroll">
-    {#if $klRefreshing && !firstLoad}
-      <div class="refreshing">Refreshing…</div>
+    {#if removable || ($klRefreshing && !firstLoad)}
+      <div class="items-bar">
+        {#if removable}
+          <button class="rm" on:click={removeCurrent} title="Remove this source">Remove</button>
+        {/if}
+        {#if $klRefreshing && !firstLoad}
+          <span class="refreshing">Refreshing…</span>
+        {/if}
+      </div>
     {/if}
+
 
     {#if firstLoad}
       <p class="muted">Loading…</p>
@@ -161,8 +205,16 @@
     flex-direction: column;
     gap: 4px;
   }
-  .refresh {
+  .topbar {
+    display: flex;
+    gap: 6px;
     margin-bottom: 6px;
+  }
+  .topbar .refresh {
+    flex: 1;
+  }
+  .topbar .add {
+    flex: none;
   }
   .src {
     text-align: left;
@@ -184,11 +236,22 @@
     flex-direction: column;
     gap: 8px;
   }
+  .items-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    min-height: 20px;
+  }
+  .items-bar .rm {
+    font-size: 12px;
+    padding: 3px 10px;
+    color: var(--danger);
+    border-color: var(--danger);
+  }
   .refreshing {
     font-size: 11px;
     color: var(--fg-dim);
-    align-self: flex-end;
-    margin-bottom: -2px;
+    margin-left: auto;
   }
   .detecting {
     display: flex;
