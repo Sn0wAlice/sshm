@@ -1,22 +1,22 @@
 class Sshm < Formula
   desc "Fast SSH + Docker + Incus + Kubernetes manager for the terminal"
   homepage "https://github.com/Sn0wAlice/sshm"
-  version "2.0.1"
+  version "2.1.0"
 
   on_macos do
     if Hardware::CPU.arm?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-darwin-arm64.tar.gz"
-      sha256 "e9a24d65d63697147cf9559b19b199a030ee563281ab422dabefe422327c5ebb"
+      sha256 "f5ebe6a3c08c1fb10dafb5046db7437c1bdc57e330a4f3920efa18eea956af70"
     end
   end
 
   on_linux do
     if Hardware::CPU.intel?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-linux-amd64.tar.gz"
-      sha256 "5f53f42c3e93bb893c9f3f2864b2ed23022ae12bb8494705ce797352b55347f8"
+      sha256 "6757d9acebd565b919c3971557316206df6bc04df3476f9fb2b546343244ceba"
     elsif Hardware::CPU.arm?
       url "https://github.com/Sn0wAlice/sshm/releases/download/v#{version}/sshm-linux-arm64.tar.gz"
-      sha256 "af15068d19cd72ad74889b4002bd51ebfc4dbc24097385fd5d51cfd2a2a99684"
+      sha256 "e0c79becf482b0bb0a5a37d870124404e8071b2cf4a751dafa570837ac00e8d8"
     end
   end
 
