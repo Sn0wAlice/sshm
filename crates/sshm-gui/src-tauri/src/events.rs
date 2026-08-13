@@ -25,6 +25,13 @@ impl From<sshm_core::watch::DbChanged> for DbChangedEvent {
     }
 }
 
+/// Emitted once the real `PATH` has been recovered from the login shell (done
+/// off the main thread so the window opens instantly). Tools like `docker` /
+/// `kubectl` / `incus` / `ssh` are only resolvable after this fires, so the
+/// frontend defers Kluster discovery until then.
+#[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
+pub struct PathReadyEvent;
+
 /// A chunk of output bytes from an embedded terminal session `id`.
 #[derive(Debug, Clone, Serialize, Deserialize, Type, Event)]
 pub struct TermOutputEvent {

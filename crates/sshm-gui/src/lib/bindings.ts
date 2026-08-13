@@ -92,8 +92,13 @@ async connectHost(name: string) : Promise<Result<null, string>> {
  * Hosts behind a ProxyJump are skipped (reported as `None`) since their
  * address usually isn't directly reachable.
  */
-async pingHosts() : Promise<HostPing[]> {
-    return await TAURI_INVOKE("ping_hosts");
+async pingHosts() : Promise<Result<HostPing[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("ping_hosts") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
 },
 /**
  * Inspect a host's SSH key: the fingerprint pinned in `~/.ssh/known_hosts`
@@ -263,6 +268,67 @@ async klusterDockerLogs(id: string, hostAlias: string | null) : Promise<Result<s
 }
 },
 /**
+ * The rich `inspect`-backed detail view for a Docker container (local or,
+ * with `host_alias`, a remote daemon over SSH).
+ */
+async klusterDockerInspect(id: string, hostAlias: string | null) : Promise<Result<ContainerDetail, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_docker_inspect", { id, hostAlias }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async klusterAppleContainers() : Promise<Result<ContainerInfo[], string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_apple_containers") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async klusterAppleLifecycle(id: string, action: LifecycleAction) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_apple_lifecycle", { id, action }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The rich `inspect`-backed detail view for an Apple container.
+ */
+async klusterAppleInspect(id: string) : Promise<Result<ContainerDetail, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_apple_inspect", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Open a shell into an Apple container as an embedded terminal session.
+ */
+async klusterAppleShell(id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_apple_shell", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Tail an Apple container's logs as an embedded terminal session.
+ */
+async klusterAppleLogs(id: string) : Promise<Result<string, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("kluster_apple_logs", { id }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
  * Open a shell into a k8s pod as an embedded terminal session.
  */
 async klusterPodShell(cluster: Cluster, namespace: string, pod: string) : Promise<Result<string, string>> {
@@ -381,10 +447,12 @@ async termClose(id: string) : Promise<Result<null, string>> {
 
 export const events = __makeEvents__<{
 dbChangedEvent: DbChangedEvent,
+pathReadyEvent: PathReadyEvent,
 termExitEvent: TermExitEvent,
 termOutputEvent: TermOutputEvent
 }>({
 dbChangedEvent: "db-changed-event",
+pathReadyEvent: "path-ready-event",
 termExitEvent: "term-exit-event",
 termOutputEvent: "term-output-event"
 })
@@ -457,6 +525,19 @@ export type Cluster = { name: string; kind?: ClusterKind; kubeconfig?: string | 
  */
 export type ClusterKind = "K8s" | "K3s"
 /**
+ * Parsed, runtime-agnostic detail for one container/instance, built from an
+ * `inspect` call. Rendered by the Kluster detail popup.
+ */
+export type ContainerDetail = { 
+/**
+ * Header line (usually the container name).
+ */
+title: string; sections: DetailSection[]; 
+/**
+ * Last few log lines, when the runtime could produce them cheaply.
+ */
+log_tail: string[] }
+/**
  * Snapshot of one Docker container at the moment of `docker ps`.
  */
 export type ContainerInfo = { id: string; name: string; image: string; status: string; running: boolean }
@@ -466,6 +547,11 @@ export type ContainerInfo = { id: string; name: string; image: string; status: s
  * view the flags indicate. Backed by `sshm_core::watch`.
  */
 export type DbChangedEvent = { hosts: boolean; kluster: boolean; settings: boolean }
+/**
+ * One titled group of label→value rows in the rich detail view (e.g.
+ * "Networking" holding `IPv4 → 192.168.64.3`). Purely presentational.
+ */
+export type DetailSection = { title: string; rows: ([string, string])[] }
 /**
  * A reference to a remote Docker daemon reached over SSH. The actual
  * connection details are looked up from the saved Host map (`host.json`)
@@ -625,11 +711,22 @@ image: string; running: boolean }
 /**
  * A saved cluster/remote plus which runtime it targets, for the Kluster tab.
  */
-export type KlusterOverview = { clusters: Cluster[]; incus_remotes: string[]; docker_remotes: DockerRemote[]; docker_local_available: boolean; incus_local_available: boolean; kube_available: boolean }
+export type KlusterOverview = { clusters: Cluster[]; incus_remotes: string[]; docker_remotes: DockerRemote[]; docker_local_available: boolean; 
+/**
+ * Apple's native `container` runtime (macOS 26+, Apple silicon).
+ */
+apple_local_available: boolean; incus_local_available: boolean; kube_available: boolean }
 /**
  * A start / stop / restart operation on a Docker container or Incus instance.
  */
 export type LifecycleAction = "Start" | "Stop" | "Restart"
+/**
+ * Emitted once the real `PATH` has been recovered from the login shell (done
+ * off the main thread so the window opens instantly). Tools like `docker` /
+ * `kubectl` / `incus` / `ssh` are only resolvable after this fires, so the
+ * frontend defers Kluster discovery until then.
+ */
+export type PathReadyEvent = null
 /**
  * Snapshot of one k8s pod at the moment of `kubectl get pods`.
  */

@@ -1,107 +1,99 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import type {
-    KlusterOverview,
-    ContainerInfo,
-    IncusInstance,
-    PodInfo,
-    Cluster,
-    LifecycleAction,
-  } from "../bindings";
+  import type { ContainerInfo, IncusInstance, PodInfo, LifecycleAction } from "../bindings";
   import { commands, tryRun, openBackendSession } from "../ipc";
+  import {
+    klSources,
+    klCurrentId,
+    klCache,
+    klError,
+    klRefreshing,
+    klDiscovering,
+    klDetail,
+    selectSource,
+    refreshCurrent,
+    loadOverview,
+    ensureKlusterLoaded,
+    incusDetail,
+    podDetail,
+  } from "../kluster";
 
-  type Kind = "docker" | "pods" | "incus";
-  interface Source {
-    id: string;
-    label: string;
-    kind: Kind;
-    hostAlias: string | null;
-    remote: string | null;
-    cluster: Cluster | null;
+  // Show whatever is cached immediately, then refresh in the background.
+  onMount(ensureKlusterLoaded);
+
+  $: current = $klSources.find((s) => s.id === $klCurrentId) ?? null;
+  $: entry = ($klCurrentId && $klCache[$klCurrentId]) || {};
+  $: containers = (entry.containers ?? []) as ContainerInfo[];
+  $: pods = (entry.pods ?? []) as PodInfo[];
+  $: instances = (entry.instances ?? []) as IncusInstance[];
+  // "Loading" only when we have nothing to show yet: discovering runtimes, or
+  // fetching a source we have no cache for.
+  $: firstLoad =
+    ($klDiscovering && !current) || ($klRefreshing && !$klCache[$klCurrentId ?? ""]);
+
+  async function containerLife(c: ContainerInfo, action: LifecycleAction): Promise<void> {
+    if (current?.kind === "docker")
+      await tryRun(commands.klusterDockerLifecycle(c.id, action, current.hostAlias));
+    else if (current?.kind === "apple")
+      await tryRun(commands.klusterAppleLifecycle(c.id, action));
+    refreshCurrent();
+  }
+  function containerShell(c: ContainerInfo): void {
+    if (current?.kind === "docker")
+      openBackendSession(commands.klusterDockerShell(c.id, current.hostAlias), `sh · ${c.name}`);
+    else if (current?.kind === "apple")
+      openBackendSession(commands.klusterAppleShell(c.id), `sh · ${c.name}`);
+  }
+  function containerLogs(c: ContainerInfo): void {
+    if (current?.kind === "docker")
+      openBackendSession(commands.klusterDockerLogs(c.id, current.hostAlias), `logs · ${c.name}`);
+    else if (current?.kind === "apple")
+      openBackendSession(commands.klusterAppleLogs(c.id), `logs · ${c.name}`);
+  }
+  function containerInspect(c: ContainerInfo): void {
+    if (current?.kind === "docker")
+      klDetail.set({ title: c.name, fetch: () => commands.klusterDockerInspect(c.id, current!.hostAlias) });
+    else if (current?.kind === "apple")
+      klDetail.set({ title: c.name, fetch: () => commands.klusterAppleInspect(c.id) });
   }
 
-  let overview: KlusterOverview | null = null;
-  let sources: Source[] = [];
-  let current: Source | null = null;
-
-  let containers: ContainerInfo[] = [];
-  let pods: PodInfo[] = [];
-  let instances: IncusInstance[] = [];
-  let loading = false;
-  let error = "";
-
-  onMount(load);
-
-  async function load(): Promise<void> {
-    overview = await commands.klusterOverview();
-    const s: Source[] = [];
-    if (overview.docker_local_available)
-      s.push({ id: "docker-local", label: "Docker (local)", kind: "docker", hostAlias: null, remote: null, cluster: null });
-    for (const r of overview.docker_remotes)
-      s.push({ id: `docker-${r.host_alias}`, label: `Docker @ ${r.host_alias}`, kind: "docker", hostAlias: r.host_alias, remote: null, cluster: null });
-    for (const c of overview.clusters)
-      s.push({ id: `k8s-${c.name}`, label: `k8s · ${c.name}`, kind: "pods", hostAlias: null, remote: null, cluster: c });
-    if (overview.incus_local_available)
-      s.push({ id: "incus-local", label: "Incus (local)", kind: "incus", hostAlias: null, remote: null, cluster: null });
-    for (const r of overview.incus_remotes)
-      s.push({ id: `incus-${r}`, label: `Incus @ ${r}`, kind: "incus", hostAlias: null, remote: r, cluster: null });
-    sources = s;
-    if (!current && sources.length) select(sources[0]);
+  async function incusLife(inst: IncusInstance, action: LifecycleAction): Promise<void> {
+    await tryRun(commands.klusterIncusLifecycle(inst.name, action, current?.remote ?? null));
+    refreshCurrent();
   }
-
-  async function select(src: Source): Promise<void> {
-    current = src;
-    error = "";
-    loading = true;
-    containers = [];
-    pods = [];
-    instances = [];
-    try {
-      if (src.kind === "docker") {
-        const r = await commands.klusterDockerContainers(src.hostAlias);
-        if (r.status === "ok") containers = r.data;
-        else error = r.error;
-      } else if (src.kind === "pods" && src.cluster) {
-        const r = await commands.klusterPods(src.cluster);
-        if (r.status === "ok") pods = r.data;
-        else error = r.error;
-      } else if (src.kind === "incus") {
-        const r = await commands.klusterIncus(src.remote);
-        if (r.status === "ok") instances = r.data;
-        else error = r.error;
-      }
-    } finally {
-      loading = false;
-    }
+  function incusInspect(inst: IncusInstance): void {
+    klDetail.set({ title: inst.name, detail: incusDetail(inst, current?.remote ?? null) });
   }
-
-  async function dockerLife(id: string, action: LifecycleAction): Promise<void> {
-    await tryRun(commands.klusterDockerLifecycle(id, action, current?.hostAlias ?? null));
-    if (current) await select(current);
-  }
-  async function incusLife(name: string, action: LifecycleAction): Promise<void> {
-    await tryRun(commands.klusterIncusLifecycle(name, action, current?.remote ?? null));
-    if (current) await select(current);
+  function podInspect(p: PodInfo): void {
+    if (current?.cluster) klDetail.set({ title: p.name, detail: podDetail(p, current.cluster) });
   }
 </script>
 
 <div class="kl">
   <aside class="sources scroll">
-    <button on:click={load} class="refresh">↻ Refresh</button>
-    {#each sources as s (s.id)}
-      <button class="src" class:sel={current?.id === s.id} on:click={() => select(s)}>{s.label}</button>
+    <button on:click={loadOverview} class="refresh" disabled={$klRefreshing || $klDiscovering}>↻ Refresh</button>
+    {#each $klSources as s (s.id)}
+      <button class="src" class:sel={$klCurrentId === s.id} on:click={() => selectSource(s.id)}>{s.label}</button>
     {/each}
-    {#if sources.length === 0}
-      <p class="muted small">No Docker daemon, cluster, or Incus found.</p>
+    {#if $klSources.length === 0}
+      {#if $klDiscovering}
+        <div class="detecting"><div class="spinner"></div><span class="muted small">Detecting runtimes…</span></div>
+      {:else}
+        <p class="muted small">No Docker daemon, Apple container, cluster, or Incus found.</p>
+      {/if}
     {/if}
   </aside>
 
   <div class="items scroll">
-    {#if loading}
+    {#if $klRefreshing && !firstLoad}
+      <div class="refreshing">Refreshing…</div>
+    {/if}
+
+    {#if firstLoad}
       <p class="muted">Loading…</p>
-    {:else if error}
-      <p class="err">{error}</p>
-    {:else if current?.kind === "docker"}
+    {:else if $klError}
+      <p class="err">{$klError}</p>
+    {:else if current?.kind === "docker" || current?.kind === "apple"}
       {#each containers as c (c.id)}
         <div class="card row">
           <span class="state" class:up={c.running}></span>
@@ -109,10 +101,11 @@
             <strong>{c.name}</strong>
             <span class="mono muted small">{c.image} · {c.status}</span>
           </div>
-          <button on:click={() => dockerLife(c.id, c.running ? "Stop" : "Start")}>{c.running ? "Stop" : "Start"}</button>
-          <button on:click={() => dockerLife(c.id, "Restart")}>Restart</button>
-          <button on:click={() => openBackendSession(commands.klusterDockerShell(c.id, current?.hostAlias ?? null), `sh · ${c.name}`)}>Shell</button>
-          <button on:click={() => openBackendSession(commands.klusterDockerLogs(c.id, current?.hostAlias ?? null), `logs · ${c.name}`)}>Logs</button>
+          <button on:click={() => containerInspect(c)}>Inspect</button>
+          <button on:click={() => containerLife(c, c.running ? "Stop" : "Start")}>{c.running ? "Stop" : "Start"}</button>
+          <button on:click={() => containerLife(c, "Restart")}>Restart</button>
+          <button on:click={() => containerShell(c)}>Shell</button>
+          <button on:click={() => containerLogs(c)}>Logs</button>
         </div>
       {:else}
         <p class="muted">No containers.</p>
@@ -124,6 +117,7 @@
             <strong>{p.name}</strong>
             <span class="mono muted small">{p.namespace} · {p.phase} · {p.containers.join(", ")}</span>
           </div>
+          <button on:click={() => podInspect(p)}>Inspect</button>
           {#if current?.cluster}
             <button on:click={() => current?.cluster && openBackendSession(commands.klusterPodShell(current.cluster, p.namespace, p.name), `sh · ${p.name}`)}>Shell</button>
           {/if}
@@ -139,8 +133,9 @@
             <strong>{inst.name}</strong>
             <span class="mono muted small">{inst.kind} · {inst.status} · {inst.image}</span>
           </div>
-          <button on:click={() => incusLife(inst.name, inst.running ? "Stop" : "Start")}>{inst.running ? "Stop" : "Start"}</button>
-          <button on:click={() => incusLife(inst.name, "Restart")}>Restart</button>
+          <button on:click={() => incusInspect(inst)}>Inspect</button>
+          <button on:click={() => incusLife(inst, inst.running ? "Stop" : "Start")}>{inst.running ? "Stop" : "Start"}</button>
+          <button on:click={() => incusLife(inst, "Restart")}>Restart</button>
           <button on:click={() => openBackendSession(commands.klusterIncusShell(inst.name, current?.remote ?? null), `sh · ${inst.name}`)}>Shell</button>
         </div>
       {:else}
@@ -188,6 +183,32 @@
     display: flex;
     flex-direction: column;
     gap: 8px;
+  }
+  .refreshing {
+    font-size: 11px;
+    color: var(--fg-dim);
+    align-self: flex-end;
+    margin-bottom: -2px;
+  }
+  .detecting {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 4px;
+  }
+  .spinner {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    border: 2px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite;
+    flex: none;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .card {
     background: var(--bg-2);

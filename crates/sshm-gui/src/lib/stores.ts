@@ -20,6 +20,8 @@ export const closedSessions = writable<Set<string>>(new Set());
 export const hosts = writable<Host[]>([]);
 export const folders = writable<string[]>([]);
 export const selectedHostName = writable<string | null>(null);
+/** True until the first host list has come back — drives the initial spinner. */
+export const hostsLoading = writable(true);
 
 /** Name of the host whose SSH key inspector is open, or null when closed. */
 export const hostKeyTarget = writable<string | null>(null);

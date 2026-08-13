@@ -14,7 +14,7 @@ use sshm_core::config::export::export_ssh_config;
 use sshm_core::config::settings::{load_settings, try_save_settings, AppConfig};
 use sshm_core::filter::apply_filter;
 use sshm_core::kluster::{
-    self, Cluster, ContainerInfo, IncusInstance, LifecycleAction, PodInfo,
+    self, Cluster, ContainerDetail, ContainerInfo, IncusInstance, LifecycleAction, PodInfo,
 };
 use sshm_core::models::{Database, Host, Tunnel};
 use sshm_core::ssh::client::build_ssh_argv;
@@ -231,7 +231,7 @@ pub fn delete_folder(
 /// `external_terminal` from settings. Never embeds ssh in the webview.
 #[tauri::command]
 #[specta::specta]
-pub fn connect_host(state: State<AppState>, name: String) -> Result<(), String> {
+pub async fn connect_host(state: State<'_, AppState>, name: String) -> Result<(), String> {
     let (argv, term) = {
         let db = state.db.lock().unwrap();
         let host = db
@@ -249,7 +249,7 @@ pub fn connect_host(state: State<AppState>, name: String) -> Result<(), String> 
 /// address usually isn't directly reachable.
 #[tauri::command]
 #[specta::specta]
-pub fn ping_hosts(state: State<AppState>) -> Vec<HostPing> {
+pub async fn ping_hosts(state: State<'_, AppState>) -> Result<Vec<HostPing>, String> {
     let targets: Vec<(String, String, u16, bool)> = {
         let db = state.db.lock().unwrap();
         db.hosts
@@ -280,7 +280,7 @@ pub fn ping_hosts(state: State<AppState>) -> Vec<HostPing> {
     while let Ok(p) = rx.recv() {
         out.push(p);
     }
-    out
+    Ok(out)
 }
 
 fn tcp_ping(host: &str, port: u16, timeout: Duration) -> Option<u32> {
@@ -310,7 +310,7 @@ fn host_endpoint(state: &AppState, name: &str) -> Result<(String, u16), String> 
 /// inspector. The live scan is a network round-trip (~5s worst case).
 #[tauri::command]
 #[specta::specta]
-pub fn host_key_info(state: State<AppState>, name: String) -> Result<HostKeyInfo, String> {
+pub async fn host_key_info(state: State<'_, AppState>, name: String) -> Result<HostKeyInfo, String> {
     let (host, port) = host_endpoint(&state, &name)?;
     let pinned = known_hosts::pinned_fingerprints(&host, port);
     let live = known_hosts::scan_fingerprints(&host, port);
@@ -340,7 +340,7 @@ pub fn host_key_info(state: State<AppState>, name: String) -> Result<HostKeyInfo
 /// The caller is expected to have shown the fingerprint and gotten consent.
 #[tauri::command]
 #[specta::specta]
-pub fn pin_host_key(state: State<AppState>, name: String) -> Result<(), String> {
+pub async fn pin_host_key(state: State<'_, AppState>, name: String) -> Result<(), String> {
     let (host, port) = host_endpoint(&state, &name)?;
     known_hosts::pin_host(&host, port).map_err(|e| e.to_string())
 }
@@ -349,7 +349,7 @@ pub fn pin_host_key(state: State<AppState>, name: String) -> Result<(), String> 
 /// form for non-default ports).
 #[tauri::command]
 #[specta::specta]
-pub fn forget_host_key(state: State<AppState>, name: String) -> Result<(), String> {
+pub async fn forget_host_key(state: State<'_, AppState>, name: String) -> Result<(), String> {
     let (host, port) = host_endpoint(&state, &name)?;
     known_hosts::remove_known_host_port(&host, port).map_err(|e| e.to_string())
 }
@@ -359,7 +359,7 @@ pub fn forget_host_key(state: State<AppState>, name: String) -> Result<(), Strin
 /// unreachable, so the user can retry rather than end up trusting nothing.
 #[tauri::command]
 #[specta::specta]
-pub fn replace_host_key(state: State<AppState>, name: String) -> Result<(), String> {
+pub async fn replace_host_key(state: State<'_, AppState>, name: String) -> Result<(), String> {
     let (host, port) = host_endpoint(&state, &name)?;
     known_hosts::remove_known_host_port(&host, port).map_err(|e| e.to_string())?;
     known_hosts::pin_host(&host, port).map_err(|e| e.to_string())
@@ -389,13 +389,13 @@ pub fn save_settings(config: AppConfig) -> Result<(), String> {
 
 #[tauri::command]
 #[specta::specta]
-pub fn list_identities() -> Vec<IdentityDto> {
+pub async fn list_identities() -> Vec<IdentityDto> {
     keys::scan_ssh_dir().into_iter().map(IdentityDto::from).collect()
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn generate_identity(
+pub async fn generate_identity(
     key_type: String,
     name: String,
     comment: String,
@@ -411,13 +411,13 @@ pub fn generate_identity(
 
 #[tauri::command]
 #[specta::specta]
-pub fn agent_add_identity(private_path: String) -> Result<(), String> {
+pub async fn agent_add_identity(private_path: String) -> Result<(), String> {
     agent::agent_add(std::path::Path::new(&private_path)).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn agent_remove_identity(private_path: String) -> Result<(), String> {
+pub async fn agent_remove_identity(private_path: String) -> Result<(), String> {
     agent::agent_remove(std::path::Path::new(&private_path)).map_err(|e| e.to_string())
 }
 
@@ -425,16 +425,20 @@ pub fn agent_remove_identity(private_path: String) -> Result<(), String> {
 /// key; otherwise the host's identity `.pub` (or a default) is used.
 #[tauri::command]
 #[specta::specta]
-pub fn push_pubkey(
-    state: State<AppState>,
+pub async fn push_pubkey(
+    state: State<'_, AppState>,
     host_name: String,
     pub_path: Option<String>,
 ) -> Result<(), String> {
-    let db = state.db.lock().unwrap();
-    let host = db
-        .hosts
-        .get(&host_name)
-        .ok_or_else(|| format!("host '{host_name}' not found"))?;
+    // Clone the host and release the DB lock before the (slow, networked) install
+    // so it doesn't block other DB commands for the duration.
+    let host = {
+        let db = state.db.lock().unwrap();
+        db.hosts
+            .get(&host_name)
+            .cloned()
+            .ok_or_else(|| format!("host '{host_name}' not found"))?
+    };
 
     let pubkey = if let Some(p) = pub_path.filter(|s| !s.trim().is_empty()) {
         std::path::PathBuf::from(shellexpand_tilde(&p))
@@ -446,7 +450,7 @@ pub fn push_pubkey(
         keys::default_pubkey_path().ok_or("no default public key (~/.ssh/id_*.pub) found")?
     };
 
-    keys::install_pubkey_on_host(host, &pubkey).map_err(|e| e.to_string())
+    keys::install_pubkey_on_host(&host, &pubkey).map_err(|e| e.to_string())
 }
 
 fn shellexpand_tilde(p: &str) -> String {
@@ -464,22 +468,29 @@ fn shellexpand_tilde(p: &str) -> String {
 
 #[tauri::command]
 #[specta::specta]
-pub fn kluster_overview() -> KlusterOverview {
+pub async fn kluster_overview() -> KlusterOverview {
+    // Each availability probe shells out to a CLI; run them concurrently so a
+    // cold overview is bounded by the slowest probe, not their sum (~10s → ~2s).
+    let docker = std::thread::spawn(kluster::docker::daemon_running);
+    let apple = std::thread::spawn(kluster::apple::available);
+    let incus = std::thread::spawn(kluster::incus::local_available);
+    let kube = std::thread::spawn(kluster::kube::cli_available);
     let (db, _) = kluster::db::load_or_bootstrap();
     KlusterOverview {
         clusters: db.clusters,
         incus_remotes: db.incus_remotes,
         docker_remotes: db.docker_remotes,
-        docker_local_available: kluster::docker::daemon_running(),
-        incus_local_available: kluster::incus::local_available(),
-        kube_available: kluster::kube::cli_available(),
+        docker_local_available: docker.join().unwrap_or(false),
+        apple_local_available: apple.join().unwrap_or(false),
+        incus_local_available: incus.join().unwrap_or(false),
+        kube_available: kube.join().unwrap_or(false),
     }
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn kluster_docker_containers(
-    state: State<AppState>,
+pub async fn kluster_docker_containers(
+    state: State<'_, AppState>,
     host_alias: Option<String>,
 ) -> Result<Vec<ContainerInfo>, String> {
     let uri = {
@@ -491,20 +502,20 @@ pub fn kluster_docker_containers(
 
 #[tauri::command]
 #[specta::specta]
-pub fn kluster_pods(cluster: Cluster) -> Result<Vec<PodInfo>, String> {
+pub async fn kluster_pods(cluster: Cluster) -> Result<Vec<PodInfo>, String> {
     kluster::kube::list_pods(&cluster).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn kluster_incus(remote: Option<String>) -> Result<Vec<IncusInstance>, String> {
+pub async fn kluster_incus(remote: Option<String>) -> Result<Vec<IncusInstance>, String> {
     kluster::incus::list_instances(remote.as_deref()).map_err(|e| format!("{e:#}"))
 }
 
 #[tauri::command]
 #[specta::specta]
-pub fn kluster_docker_lifecycle(
-    state: State<AppState>,
+pub async fn kluster_docker_lifecycle(
+    state: State<'_, AppState>,
     id: String,
     action: LifecycleAction,
     host_alias: Option<String>,
@@ -518,7 +529,7 @@ pub fn kluster_docker_lifecycle(
 
 #[tauri::command]
 #[specta::specta]
-pub fn kluster_incus_lifecycle(
+pub async fn kluster_incus_lifecycle(
     name: String,
     action: LifecycleAction,
     remote: Option<String>,
@@ -580,6 +591,77 @@ pub fn kluster_docker_logs(
             id,
         ],
     };
+    crate::terminal::spawn_session(&app, &state, argv)
+}
+
+/// The rich `inspect`-backed detail view for a Docker container (local or,
+/// with `host_alias`, a remote daemon over SSH).
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_docker_inspect(
+    state: State<'_, AppState>,
+    id: String,
+    host_alias: Option<String>,
+) -> Result<ContainerDetail, String> {
+    let uri = {
+        let db = state.db.lock().unwrap();
+        resolve_docker_host(&db, host_alias.as_deref())
+    };
+    kluster::docker::inspect_detail(&id, uri.as_deref()).map_err(|e| format!("{e:#}"))
+}
+
+// ---------------------------------------------------------------------------
+// Kluster — Apple `container` (macOS)
+// ---------------------------------------------------------------------------
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_apple_containers() -> Result<Vec<ContainerInfo>, String> {
+    kluster::apple::list_containers().map_err(|e| format!("{e:#}"))
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_apple_lifecycle(id: String, action: LifecycleAction) -> Result<(), String> {
+    kluster::apple::lifecycle(&id, action).map_err(|e| format!("{e:#}"))
+}
+
+/// The rich `inspect`-backed detail view for an Apple container.
+#[tauri::command]
+#[specta::specta]
+pub async fn kluster_apple_inspect(id: String) -> Result<ContainerDetail, String> {
+    kluster::apple::inspect_detail(&id).map_err(|e| format!("{e:#}"))
+}
+
+/// Open a shell into an Apple container as an embedded terminal session.
+#[tauri::command]
+#[specta::specta]
+pub fn kluster_apple_shell(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+) -> Result<String, String> {
+    let argv = vec!["container".into(), "exec".into(), "-i".into(), "-t".into(), id, "/bin/sh".into()];
+    crate::terminal::spawn_session(&app, &state, argv)
+}
+
+/// Tail an Apple container's logs as an embedded terminal session.
+#[tauri::command]
+#[specta::specta]
+pub fn kluster_apple_logs(
+    app: AppHandle,
+    state: State<AppState>,
+    id: String,
+) -> Result<String, String> {
+    let tail = load_settings().kluster_log_tail_lines;
+    let argv = vec![
+        "container".into(),
+        "logs".into(),
+        "--follow".into(),
+        "-n".into(),
+        tail.to_string(),
+        id,
+    ];
     crate::terminal::spawn_session(&app, &state, argv)
 }
 

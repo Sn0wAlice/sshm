@@ -93,6 +93,8 @@ pub struct KlusterOverview {
     pub incus_remotes: Vec<String>,
     pub docker_remotes: Vec<sshm_core::kluster::DockerRemote>,
     pub docker_local_available: bool,
+    /// Apple's native `container` runtime (macOS 26+, Apple silicon).
+    pub apple_local_available: bool,
     pub incus_local_available: bool,
     pub kube_available: bool,
 }

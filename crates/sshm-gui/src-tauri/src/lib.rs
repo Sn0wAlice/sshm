@@ -16,7 +16,7 @@ mod tunnels_mgr;
 use tauri::Manager;
 use tauri_specta::{collect_commands, collect_events, Builder};
 
-use events::{DbChangedEvent, TermExitEvent, TermOutputEvent};
+use events::{DbChangedEvent, PathReadyEvent, TermExitEvent, TermOutputEvent};
 use state::AppState;
 
 /// TypeScript exporter config. `u64` settings fields (timeouts in seconds/ms)
@@ -66,6 +66,12 @@ pub fn make_builder() -> Builder<tauri::Wry> {
             commands::kluster_incus_lifecycle,
             commands::kluster_docker_shell,
             commands::kluster_docker_logs,
+            commands::kluster_docker_inspect,
+            commands::kluster_apple_containers,
+            commands::kluster_apple_lifecycle,
+            commands::kluster_apple_inspect,
+            commands::kluster_apple_shell,
+            commands::kluster_apple_logs,
             commands::kluster_pod_shell,
             commands::kluster_incus_shell,
             commands::list_tunnels,
@@ -79,7 +85,7 @@ pub fn make_builder() -> Builder<tauri::Wry> {
             terminal::term_resize,
             terminal::term_close,
         ])
-        .events(collect_events![DbChangedEvent, TermOutputEvent, TermExitEvent])
+        .events(collect_events![DbChangedEvent, PathReadyEvent, TermOutputEvent, TermExitEvent])
 }
 
 /// GUI apps launched from Finder/Dock inherit only a minimal `PATH`, so tools
@@ -114,9 +120,6 @@ fn fix_path_from_login_shell() {}
 
 /// Run the desktop app.
 pub fn run() {
-    // Must run before anything spawns a subprocess (kluster discovery, PTYs, …).
-    fix_path_from_login_shell();
-
     let builder = make_builder();
 
     // In dev, regenerate the TS bindings on every launch so the frontend and
@@ -134,6 +137,17 @@ pub fn run() {
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);
+            // Recovering the login-shell PATH spawns `$SHELL -l -c`, which sources
+            // the user's full profile and can take seconds. Do it off the main
+            // thread so the window (and the hosts list, which needs no external
+            // tools) shows instantly; signal the webview when tools are usable so
+            // it can kick off Kluster discovery then.
+            let handle = app.handle().clone();
+            std::thread::spawn(move || {
+                fix_path_from_login_shell();
+                use tauri_specta::Event;
+                let _ = PathReadyEvent.emit(&handle);
+            });
             spawn_watcher(app.handle().clone());
             Ok(())
         })

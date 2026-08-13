@@ -4,7 +4,7 @@
   import { flip } from "svelte/animate";
   import type { Host } from "../bindings";
   import { commands, tryRun, openHostSession } from "../ipc";
-  import { hosts, folders, selectedHostName, pushToast, newHostRequest } from "../stores";
+  import { hosts, folders, hostsLoading, selectedHostName, pushToast, newHostRequest } from "../stores";
   import { confirmDialog, promptDialog } from "../dialogs";
   import { hostIcon } from "../hostIcon";
   import HostForm from "./HostForm.svelte";
@@ -90,8 +90,9 @@
   let pings: Record<string, number | null> = {};
   async function pollPings(): Promise<void> {
     const r = await commands.pingHosts();
+    if (r.status !== "ok") return;
     const next: Record<string, number | null> = {};
-    for (const p of r) next[p.name] = p.latency_ms;
+    for (const p of r.data) next[p.name] = p.latency_ms;
     pings = next;
   }
   onMount(() => {
@@ -291,6 +292,11 @@
               {/if}
             </button>
           {/each}
+        </div>
+      {:else if $hostsLoading && !$hosts.length}
+        <div class="empty">
+          <div class="spinner"></div>
+          <div class="muted">Loading hosts…</div>
         </div>
       {:else if !subfolders.length}
         <div class="empty">
@@ -522,6 +528,20 @@
     flex-direction: column;
     align-items: center;
     gap: 8px;
+  }
+  .spinner {
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    border: 3px solid var(--border);
+    border-top-color: var(--accent);
+    animation: spin 0.7s linear infinite;
+    margin-bottom: 6px;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
   }
   .e-ico {
     width: 52px;
