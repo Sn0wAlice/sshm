@@ -21,7 +21,6 @@ pub struct ThemeTabState {
     /// `custom_bg` hex is ignored at render time — but still kept so the user
     /// can untick the box and get their colour back.
     pub transparent_bg: bool,
-    pub dirty: bool,
 }
 
 impl ThemeTabState {
@@ -36,7 +35,6 @@ impl ThemeTabState {
             custom_error: v.error,
             custom_success: v.success,
             transparent_bg: v.transparent_bg,
-            dirty: false,
         }
     }
 
@@ -76,9 +74,14 @@ impl ThemeTabState {
         self.selected_field < PRESETS.len()
     }
 
+    /// Whether the cursor sits on one of the six custom hex fields, i.e. the tab
+    /// is in text-entry mode and keystrokes should be captured as input rather
+    /// than routed to global shortcuts. Purely positional — gating this on a
+    /// separate "dirty" flag used to deadlock editing (the flag could only be
+    /// set by typing, and typing was blocked until it was set).
     pub fn is_editing_custom_field(&self) -> bool {
         let start = Self::custom_start();
-        self.dirty && self.selected_field >= start && self.selected_field < start + 6
+        self.selected_field >= start && self.selected_field < start + 6
     }
 
     fn active_custom_mut(&mut self) -> Option<&mut String> {
@@ -97,14 +100,12 @@ impl ThemeTabState {
     pub fn push_char(&mut self, c: char) {
         if let Some(field) = self.active_custom_mut() {
             field.push(c);
-            self.dirty = true;
         }
     }
 
     pub fn pop_char(&mut self) {
         if let Some(field) = self.active_custom_mut() {
             field.pop();
-            self.dirty = true;
         }
     }
 }
@@ -132,7 +133,6 @@ pub fn handle_theme_event(key: KeyCode, state: &mut ThemeTabState) -> ThemeActio
                 ThemeAction::SaveCustom
             } else if state.selected_field == ThemeTabState::transparent_index() {
                 state.transparent_bg = !state.transparent_bg;
-                state.dirty = true;
                 ThemeAction::None
             } else {
                 state.next_field();
@@ -141,7 +141,6 @@ pub fn handle_theme_event(key: KeyCode, state: &mut ThemeTabState) -> ThemeActio
         }
         KeyCode::Char(' ') if state.selected_field == ThemeTabState::transparent_index() => {
             state.transparent_bg = !state.transparent_bg;
-            state.dirty = true;
             ThemeAction::None
         }
         KeyCode::Char(c) => {

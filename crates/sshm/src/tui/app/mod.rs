@@ -1788,7 +1788,6 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                             theme_state.custom_error = preset.error.to_string();
                                             theme_state.custom_success = preset.success.to_string();
                                             theme_state.transparent_bg = false;
-                                            theme_state.dirty = false;
                                             toast = Some(Toast::success(format!("Theme: {}", preset.name)));
                                         }
                                         ThemeAction::SaveCustom => {
@@ -1803,7 +1802,6 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     &theme_state.custom_error, &theme_state.custom_success,
                                                     theme_state.transparent_bg,
                                                 );
-                                                theme_state.dirty = false;
                                                 toast = Some(Toast::success("Custom theme saved!"));
                                             } else {
                                                 toast = Some(Toast::error("Invalid hex color(s)"));
