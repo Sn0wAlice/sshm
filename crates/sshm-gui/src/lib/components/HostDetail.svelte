@@ -3,7 +3,7 @@
   import { fly } from "svelte/transition";
   import type { Host } from "../bindings";
   import { commands, tryRun, openHostSession } from "../ipc";
-  import { selectedHostName, pushToast } from "../stores";
+  import { selectedHostName, pushToast, openHostKeyDialog } from "../stores";
   import { confirmDialog, promptDialog } from "../dialogs";
   import { hostIcon } from "../hostIcon";
   import Icon from "./Icon.svelte";
@@ -70,6 +70,13 @@
       <Icon name="terminal" size={15} /> Connect
     </button>
     <button on:click={external} title="Open in your external terminal">External ↗</button>
+    <button
+      class="icon"
+      on:click={() => openHostKeyDialog(host.name)}
+      title="Inspect / trust this host's SSH key"
+    >
+      <Icon name="shield" size={15} />
+    </button>
   </div>
 
   <div class="kv">
@@ -144,6 +151,12 @@
     align-items: center;
     justify-content: center;
     gap: 8px;
+  }
+  .actions .icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0 10px;
   }
   .kv {
     display: flex;

@@ -17,6 +17,7 @@
   import TopTabs from "./lib/components/TopTabs.svelte";
   import Toasts from "./lib/components/Toasts.svelte";
   import DialogHost from "./lib/components/DialogHost.svelte";
+  import HostKeyDialog from "./lib/components/HostKeyDialog.svelte";
   import CommandPalette from "./lib/components/CommandPalette.svelte";
   import HostsTab from "./lib/components/HostsTab.svelte";
   import TunnelsTab from "./lib/components/TunnelsTab.svelte";
@@ -108,6 +109,7 @@
   <Toasts />
   <CommandPalette />
   <DialogHost />
+  <HostKeyDialog />
 </div>
 
 <style>

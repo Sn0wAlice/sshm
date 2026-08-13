@@ -15,6 +15,7 @@
     Folder,
     Star,
     Menu,
+    ShieldCheck,
     type Icon as IconType,
   } from "lucide-svelte";
 
@@ -31,6 +32,7 @@
     | "search"
     | "folder"
     | "star"
+    | "shield"
     | "menu";
   export let size = 18;
 
@@ -47,6 +49,7 @@
     search: Search,
     folder: Folder,
     star: Star,
+    shield: ShieldCheck,
     menu: Menu,
   };
 </script>

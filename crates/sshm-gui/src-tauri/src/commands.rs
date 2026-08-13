@@ -18,10 +18,10 @@ use sshm_core::kluster::{
 };
 use sshm_core::models::{Database, Host, Tunnel};
 use sshm_core::ssh::client::build_ssh_argv;
-use sshm_core::ssh::{agent, keys};
+use sshm_core::ssh::{agent, keys, known_hosts};
 use sshm_core::tunnels::{read_all_records, TunnelRecord};
 
-use crate::dto::{HostPing, IdentityDto, KlusterOverview};
+use crate::dto::{HostKeyInfo, HostKeyStatus, HostPing, IdentityDto, KlusterOverview};
 use crate::state::AppState;
 
 // ---------------------------------------------------------------------------
@@ -289,6 +289,80 @@ fn tcp_ping(host: &str, port: u16, timeout: Duration) -> Option<u32> {
     let start = Instant::now();
     TcpStream::connect_timeout(&sa, timeout).ok()?;
     Some(start.elapsed().as_millis() as u32)
+}
+
+// ---------------------------------------------------------------------------
+// Host keys (known_hosts / trust-on-first-use)
+// ---------------------------------------------------------------------------
+
+/// Resolve a saved host's `(hostname, port)` for a `known_hosts` lookup.
+fn host_endpoint(state: &AppState, name: &str) -> Result<(String, u16), String> {
+    let db = state.db.lock().unwrap();
+    db.hosts
+        .get(name)
+        .map(|h| (h.host.clone(), h.port))
+        .ok_or_else(|| format!("host '{name}' not found"))
+}
+
+/// Inspect a host's SSH key: the fingerprint pinned in `~/.ssh/known_hosts`
+/// alongside the one the server presents right now (`ssh-keyscan`), plus a
+/// verdict (unpinned / match / changed / unreachable). Mirrors the TUI's `F`
+/// inspector. The live scan is a network round-trip (~5s worst case).
+#[tauri::command]
+#[specta::specta]
+pub fn host_key_info(state: State<AppState>, name: String) -> Result<HostKeyInfo, String> {
+    let (host, port) = host_endpoint(&state, &name)?;
+    let pinned = known_hosts::pinned_fingerprints(&host, port);
+    let live = known_hosts::scan_fingerprints(&host, port);
+
+    // Compared on fingerprint alone, ignoring which algorithm matched — same
+    // rule the TUI verdict uses.
+    let matches = !pinned.is_empty()
+        && live.iter().any(|l| pinned.iter().any(|p| p.fingerprint == l.fingerprint));
+    let status = match (pinned.is_empty(), live.is_empty()) {
+        (true, false) => HostKeyStatus::Unpinned,
+        (false, true) => HostKeyStatus::Unreachable,
+        _ if matches => HostKeyStatus::Match,
+        (false, false) => HostKeyStatus::Changed,
+        (true, true) => HostKeyStatus::Unknown,
+    };
+
+    Ok(HostKeyInfo {
+        host,
+        port,
+        pinned: pinned.into_iter().map(Into::into).collect(),
+        live: live.into_iter().map(Into::into).collect(),
+        status,
+    })
+}
+
+/// Trust-on-first-use: fetch the host's live key and pin it in `known_hosts`.
+/// The caller is expected to have shown the fingerprint and gotten consent.
+#[tauri::command]
+#[specta::specta]
+pub fn pin_host_key(state: State<AppState>, name: String) -> Result<(), String> {
+    let (host, port) = host_endpoint(&state, &name)?;
+    known_hosts::pin_host(&host, port).map_err(|e| e.to_string())
+}
+
+/// Forget a host's pinned key (`ssh-keygen -R`, including the `[host]:port`
+/// form for non-default ports).
+#[tauri::command]
+#[specta::specta]
+pub fn forget_host_key(state: State<AppState>, name: String) -> Result<(), String> {
+    let (host, port) = host_endpoint(&state, &name)?;
+    known_hosts::remove_known_host_port(&host, port).map_err(|e| e.to_string())
+}
+
+/// Recover from a changed host key: forget the stale entry, then pin the key the
+/// server presents now. Fails (leaving nothing pinned) if the host is
+/// unreachable, so the user can retry rather than end up trusting nothing.
+#[tauri::command]
+#[specta::specta]
+pub fn replace_host_key(state: State<AppState>, name: String) -> Result<(), String> {
+    let (host, port) = host_endpoint(&state, &name)?;
+    known_hosts::remove_known_host_port(&host, port).map_err(|e| e.to_string())?;
+    known_hosts::pin_host(&host, port).map_err(|e| e.to_string())
 }
 
 // ---------------------------------------------------------------------------

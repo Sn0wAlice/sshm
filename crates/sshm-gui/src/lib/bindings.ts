@@ -95,6 +95,57 @@ async connectHost(name: string) : Promise<Result<null, string>> {
 async pingHosts() : Promise<HostPing[]> {
     return await TAURI_INVOKE("ping_hosts");
 },
+/**
+ * Inspect a host's SSH key: the fingerprint pinned in `~/.ssh/known_hosts`
+ * alongside the one the server presents right now (`ssh-keyscan`), plus a
+ * verdict (unpinned / match / changed / unreachable). Mirrors the TUI's `F`
+ * inspector. The live scan is a network round-trip (~5s worst case).
+ */
+async hostKeyInfo(name: string) : Promise<Result<HostKeyInfo, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("host_key_info", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Trust-on-first-use: fetch the host's live key and pin it in `known_hosts`.
+ * The caller is expected to have shown the fingerprint and gotten consent.
+ */
+async pinHostKey(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("pin_host_key", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Forget a host's pinned key (`ssh-keygen -R`, including the `[host]:port`
+ * form for non-default ports).
+ */
+async forgetHostKey(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("forget_host_key", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Recover from a changed host key: forget the stale entry, then pin the key the
+ * server presents now. Fails (leaving nothing pinned) if the host is
+ * unreachable, so the user can retry rather than end up trusting nothing.
+ */
+async replaceHostKey(name: string) : Promise<Result<null, string>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("replace_host_key", { name }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getSettings() : Promise<AppConfig> {
     return await TAURI_INVOKE("get_settings");
 },
@@ -507,6 +558,44 @@ notes?: string | null;
  * `None` = shell de login normal. Ignoré en mode mosh.
  */
 remote_command?: string | null }
+/**
+ * One host key (algorithm + SHA256 fingerprint), flattened for the webview.
+ */
+export type HostKeyDto = { key_type: string; fingerprint: string }
+/**
+ * The pinned vs. live host key(s) for a saved host, plus the verdict. Feeds the
+ * GUI host-key inspector so the user can pin, forget, or replace a stale key.
+ */
+export type HostKeyInfo = { 
+/**
+ * The resolved hostname the check ran against.
+ */
+host: string; port: number; pinned: HostKeyDto[]; live: HostKeyDto[]; status: HostKeyStatus }
+/**
+ * Verdict when comparing the key pinned in `known_hosts` against the one the
+ * server presents right now — mirrors the TUI's `F` inspector.
+ */
+export type HostKeyStatus = 
+/**
+ * Reachable, nothing pinned yet — a trust-on-first-use decision.
+ */
+"Unpinned" | 
+/**
+ * A key is pinned but the server couldn't be reached to compare.
+ */
+"Unreachable" | 
+/**
+ * The pinned key matches what the server presents. All good.
+ */
+"Match" | 
+/**
+ * A key is pinned but it does NOT match the server — a changed key.
+ */
+"Changed" | 
+/**
+ * No key on either side.
+ */
+"Unknown"
 /**
  * Reachability of a host: `latency_ms = Some(ms)` when a direct TCP connect to
  * `host:port` succeeded, `None` when it couldn't be reached directly (down, or

@@ -21,6 +21,13 @@ export const hosts = writable<Host[]>([]);
 export const folders = writable<string[]>([]);
 export const selectedHostName = writable<string | null>(null);
 
+/** Name of the host whose SSH key inspector is open, or null when closed. */
+export const hostKeyTarget = writable<string | null>(null);
+/** Open the host-key inspector for a saved host. */
+export function openHostKeyDialog(name: string): void {
+  hostKeyTarget.set(name);
+}
+
 /** ⌘K command palette visibility. */
 export const paletteOpen = writable(false);
 /** Bumped to ask the Hosts view to open the New-host form (from the palette). */
