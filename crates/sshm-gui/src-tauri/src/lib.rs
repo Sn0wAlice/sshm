@@ -22,6 +22,9 @@ use state::AppState;
 /// TypeScript exporter config. `u64` settings fields (timeouts in seconds/ms)
 /// map to JS `number` rather than `bigint` — the values are tiny and far below
 /// `Number.MAX_SAFE_INTEGER`, and `bigint` would be awkward in the UI.
+// Only called from the `debug_assertions` export in `run` and from the
+// bindings-export test, so a release build legitimately has no caller.
+#[cfg_attr(not(any(debug_assertions, test)), allow(dead_code))]
 fn ts_exporter() -> specta_typescript::Typescript {
     specta_typescript::Typescript::default()
         .bigint(specta_typescript::BigIntExportBehavior::Number)

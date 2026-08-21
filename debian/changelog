@@ -1,3 +1,11 @@
+sshm (2.1.1) stable; urgency=medium
+
+  * Fixed: dead-code warning in the desktop crate on release builds.
+  * Fixed: version drift across the tree — the workspace crates, the Tauri
+    desktop bundle and the frontend package now all report 2.1.1.
+
+ -- Sn0wAlice <snow.alice@pm.me>  Fri, 21 Aug 2026 00:00:00 +0000
+
 sshm (1.3.0) stable; urgency=medium
 
   * NEW: Kluster tab — manage Docker (local + remote SSH), Incus (local + remotes),

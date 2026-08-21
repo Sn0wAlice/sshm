@@ -5,6 +5,21 @@ All notable changes to **sshm** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.1.1] - 2026-08-21
+
+Maintenance release: a clean build and one version number everywhere.
+
+### Fixed
+
+- **Release-build warning in the desktop crate.** `ts_exporter` is only reached
+  from the `debug_assertions` binding export and from the export test, so
+  `cargo build --release -p sshm-desktop` reported it as dead code. Marked
+  accordingly — the release build is now warning-free.
+- **Version drift.** The Tauri config still said `2.0.1` and the GUI's
+  `package.json` still said `1.5.1`, so the desktop bundles shipped under the
+  wrong version. The workspace crates, the desktop bundle and the frontend
+  package all report `2.1.1` now.
+
 ## [1.5.0] - 2026-07-07
 
 The container release — Apple's native `container` runtime, a rich inspect
