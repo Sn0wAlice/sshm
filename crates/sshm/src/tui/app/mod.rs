@@ -47,6 +47,9 @@ use crate::tui::char::q;
 pub mod health_worker;
 use health_worker::{spawn_health_worker, sync_health_targets, HealthTargets, WorkerGuard};
 
+pub mod sync_worker;
+use sync_worker::{spawn_sync_worker, SharedSyncConfig, SyncMsg};
+
 
 pub enum Row<'a> {
     Folder { name: String, collapsed: bool },
@@ -154,6 +157,8 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     // Set once a watched change is pending but a reload is being deferred (an
     // overlay modal is open); cleared when we actually reload.
     let mut pending_reload = false;
+    // Same, for settings.toml (rewritten by a background config sync).
+    let mut pending_settings_reload = false;
 
     // Source items
     let mut sort_mode: SortMode = SortMode::Name;
@@ -292,6 +297,21 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
         Arc::clone(&kluster_interval_secs),
     );
 
+    // --- Background config sync (git) ---
+    // The schedule and the one-syncer-at-a-time rule live in `sshm_core::sync`
+    // and are shared through the config dir, so several open sshm instances
+    // still add up to a single sync per interval.
+    let sync_cfg: SharedSyncConfig = Arc::new(Mutex::new(app_config.sync.clone()));
+    let (sync_tx, sync_rx) = mpsc::channel::<SyncMsg>();
+    // "Sync on start" is just a forced first run.
+    let sync_poke = Arc::new(AtomicBool::new(app_config.sync.on_start));
+    spawn_sync_worker(
+        Arc::clone(&sync_cfg),
+        Arc::clone(&health_stop), // share the stop flag — same lifetime
+        Arc::clone(&sync_poke),
+        sync_tx,
+    );
+
     enable_raw_mode().ok();
     execute!(stdout(), EnterAlternateScreen).ok();
     let backend = CrosstermBackend::new(stdout());
@@ -308,8 +328,30 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
         // capturing any host change into `pending_reload`.
         if let Some(w) = &watcher {
             for change in w.poll() {
-                if change == DbChanged::Hosts {
-                    pending_reload = true;
+                match change {
+                    DbChanged::Hosts => pending_reload = true,
+                    // Config sync can rewrite settings.toml under us; without
+                    // this the next Save would push our stale copy back out.
+                    DbChanged::Settings => pending_settings_reload = true,
+                    DbChanged::Kluster => {}
+                }
+            }
+        }
+
+        // Adopt externally-changed settings, unless the user is in the middle
+        // of editing them — their unsaved edits win until they save or Esc.
+        if pending_settings_reload {
+            pending_settings_reload = false;
+            if !settings_state.dirty {
+                app_config = load_settings();
+                settings_state = SettingsFormState::from_config(&app_config);
+                crate::os::set_notifications_enabled(app_config.notifications_enabled);
+                crate::os::set_notification_icon(&app_config.notification_icon);
+                health_interval_secs.store(app_config.health_ttl_secs.max(1), Ordering::Relaxed);
+                health_probe_ms.store(app_config.health_probe_timeout_ms.max(100), Ordering::Relaxed);
+                kluster_interval_secs.store(app_config.kluster_refresh_secs.max(2), Ordering::Relaxed);
+                if let Ok(mut shared) = sync_cfg.lock() {
+                    *shared = app_config.sync.clone();
                 }
             }
         }
@@ -384,6 +426,18 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
         } else {
             // Discard any results produced before the user disabled the feature.
             while health_rx.try_recv().is_ok() {}
+        }
+
+        // Surface the background config sync. The rewritten files are picked
+        // up by the config watcher like any other external change, so there is
+        // nothing to reload here — only something to say.
+        while let Ok(msg) = sync_rx.try_recv() {
+            toast = Some(match msg {
+                SyncMsg::Changed(text) | SyncMsg::Quiet(text) => {
+                    Toast::success(t!("toast.sync_done", "summary" => text))
+                }
+                SyncMsg::Failed(err) => Toast::error(t!("toast.sync_failed", "error" => err)),
+            });
         }
 
         // Drain pending kluster discovery results.
@@ -1741,6 +1795,25 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     if let Ok(v) = settings_state.kluster_log_tail_lines.trim().parse::<u32>() {
                                                         app_config.kluster_log_tail_lines = v.max(1);
                                                     }
+                                                    // Config sync. An interval of 0 means "manual
+                                                    // only"; anything else is floored by the engine.
+                                                    app_config.sync.enabled = settings_state.sync_enabled;
+                                                    app_config.sync.repo_url = settings_state.sync_repo_url.trim().to_string();
+                                                    app_config.sync.ssh_key = settings_state.sync_ssh_key.trim().to_string();
+                                                    app_config.sync.branch = settings_state.sync_branch.trim().to_string();
+                                                    app_config.sync.on_start = settings_state.sync_on_start;
+                                                    app_config.sync.on_exit = settings_state.sync_on_exit;
+                                                    let minutes = settings_state.sync_interval_min.trim().parse::<u64>().unwrap_or(0);
+                                                    if minutes == 0 {
+                                                        app_config.sync.mode = crate::config::settings::SyncMode::Manual;
+                                                    } else {
+                                                        app_config.sync.mode = crate::config::settings::SyncMode::Interval;
+                                                        app_config.sync.interval_secs = minutes * 60;
+                                                    }
+                                                    if let Ok(mut shared) = sync_cfg.lock() {
+                                                        *shared = app_config.sync.clone();
+                                                    }
+
                                                     // Push live values to the background workers.
                                                     health_interval_secs.store(app_config.health_ttl_secs, Ordering::Relaxed);
                                                     health_probe_ms.store(app_config.health_probe_timeout_ms, Ordering::Relaxed);

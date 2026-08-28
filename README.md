@@ -62,6 +62,7 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 - **Open in a new terminal** — `o` launches the SSH session in a separate terminal window (auto-detected, or set `external_terminal`)
 - **Host-key trust** — vet fingerprints with `F`; on connect, a never-seen host offers trust-on-first-use with its fingerprint shown, and a *changed* host key is detected and offers to wipe the stale `known_hosts` entry and reconnect
 - **Auto-export** — optionally writes a clean `~/.ssh/config` on every save
+- **Config sync over git** — keep your hosts, clusters and theme in a private git repo, authenticated with an SSH key. Manual, scheduled or cron-driven; several running instances share one schedule and only one of them ever syncs
 - **CLI mode** — scriptable commands for automation
 
 ## Installation
@@ -192,6 +193,8 @@ sshm tag del <name> <tag1,tag2>          # remove tags
 sshm load_local_conf                     # import hosts from ~/.ssh/config
 sshm export [path]                       # export DB as ~/.ssh/config format
 sshm add-identity <name?> [--pub key]    # push pubkey to authorized_keys
+sshm sync                                # sync the config with your git repo
+sshm sync setup|status|pull|push|cron    # configure / inspect / one-way / crontab line
 sshm help                                # full CLI reference
 ```
 
@@ -284,6 +287,9 @@ The available actions depend on what's under the cursor.
 | `~/.config/sshm/settings.toml` | Defaults, health & kluster intervals |
 | `~/.config/sshm/theme.toml` | TUI color theme (optional) |
 | `~/.config/sshm/tunnels/<pid>.json` | Live background tunnels per running instance — used to clean up after a crash |
+| `~/.config/sshm/sync-repo/` | Working clone used by config sync — scratch space, safe to delete |
+| `~/.config/sshm/sync-state.json` | Last sync time/result, shared by every running instance |
+| `~/.config/sshm/sync.lock` | Held while a sync runs, so only one instance syncs at a time |
 
 ### Settings
 
@@ -297,8 +303,9 @@ The Settings tab (`Tab → Settings`) exposes:
 - **Kluster Refresh Interval** — seconds between Docker / kubectl / Incus refreshes
 - **Kluster Log Tail** — default `--tail N` for `l` (logs)
 - **Desktop notifications** — toggle native OS alerts (tunnel dropped, host up/down)
+- **Config sync** — repository URL, SSH key, branch, auto-sync interval, and the on-start / on-exit triggers (see [Config sync](#config-sync-git-over-ssh))
 
-The Settings tab groups these into labelled sections (Defaults, Export, Health checks, Kluster, Notifications).
+The Settings tab groups these into labelled sections (Defaults, Export, Health checks, Kluster, Notifications, Config sync).
 
 All values are live: hit Save and the background workers pick up the new TTL on the next tick.
 
@@ -317,6 +324,72 @@ notification_icon = "~/.config/sshm/icon.png"
 ```
 
 On **Linux** it's passed straight to `notify-send -i`. On **macOS** the default `osascript` notification *cannot* override its icon (it's always osascript's) — install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) and SSHM will use it automatically to honour the custom icon.
+
+### Config sync (git over SSH)
+
+Keep the same hosts on your laptop, your desktop and that one server you keep
+forgetting about. sshm pushes its config to **a git repository you own**, over
+SSH, with **your** key. Nothing is sent anywhere you didn't configure.
+
+```bash
+sshm sync setup     # repo URL, key, what travels, how often
+sshm sync           # sync now
+sshm sync status    # what's configured, when it last ran, who holds the lock
+```
+
+Create an empty private repo first (GitHub, GitLab, Gitea, a bare repo on your
+own box — anything reachable over SSH), then paste its **SSH** URL:
+`git@github.com:you/sshm-config.git`. HTTPS URLs are rejected: they can't
+authenticate with a key.
+
+**What travels.** `host.json` and `kluster.json` by default, plus `theme.toml`;
+`settings.toml` is opt-in. The `[sync]` block itself **never leaves the
+machine** — it holds your key path, and syncing it would point every other
+machine at the same one (or switch sync off everywhere at once).
+
+**How conflicts resolve.** Hosts and clusters are merged *entry by entry*
+against the last state you synced, so a host added on the laptop and another
+added on the desktop both survive, and a host deleted on one machine stays
+deleted instead of coming back. Only the same entry edited on both sides in the
+same window is a real conflict, resolved by your policy (default: this machine
+wins). `settings.toml` and `theme.toml` are whole-file, so the policy decides
+directly.
+
+**When it syncs** — any combination of:
+
+| Trigger | Set with |
+|---------|----------|
+| Manually | `sshm sync` |
+| Every N minutes | Settings tab, or `mode = "interval"` in `settings.toml` |
+| On start / on exit | Settings tab toggles |
+| From cron | `sshm sync cron` prints the line, `--if-due` respects the interval |
+
+**Several instances at once are fine.** Two TUIs, the desktop app and a cron
+entry all share one lock and one schedule through the config directory: exactly
+one of them syncs each round, the others skip that tick instead of piling up
+behind it. A crashed instance never wedges the lock — it's reclaimed once its
+process is gone.
+
+```toml
+# settings.toml — written by `sshm sync setup`, editable by hand
+[sync]
+enabled = true
+repo_url = "git@github.com:you/sshm-config.git"
+ssh_key = "~/.ssh/id_ed25519"
+branch = "main"
+mode = "interval"          # or "manual"
+interval_secs = 900        # floored at 60
+on_start = true
+on_exit = true
+items = ["hosts", "kluster", "theme"]   # add "settings" to sync those too
+conflict = "prefer_local"  # or "prefer_remote"
+strict_host_key_checking = false
+```
+
+Sync shells out to your own `git`, so your `~/.ssh/config`, agent and proxy
+settings all apply. A passphrase-protected key needs to be in your ssh-agent —
+sync never prompts (it would hang a background worker), it fails with a clear
+error instead.
 
 ### Theme example
 

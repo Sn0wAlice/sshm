@@ -21,6 +21,7 @@ pub mod filter;
 pub mod history;
 pub mod i18n;
 pub mod kluster;
+pub mod sync;
 pub mod tunnels;
 pub mod watch;
 

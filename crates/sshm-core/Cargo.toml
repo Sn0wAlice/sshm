@@ -24,6 +24,9 @@ toml.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
 notify.workspace = true
+# Only used by the sync lock: `kill(pid, 0)` to tell a crashed holder from a
+# live one, and `gethostname` to stamp who holds it.
+libc.workspace = true
 
 # Optional: derive `specta::Type` on the IPC-facing structs for the desktop
 # GUI. Off by default, so the TUI build and `cargo tree -p sshm-core` stay lean

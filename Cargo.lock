@@ -3972,7 +3972,7 @@ checksum = "08044686521f352c6d1f522ba349c3dd52813819fa8353b60bd3d2107f6dca0a"
 
 [[package]]
 name = "sshm"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "anyhow",
  "chrono",
@@ -3994,12 +3994,13 @@ dependencies = [
 
 [[package]]
 name = "sshm-core"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "anyhow",
  "chrono",
  "dirs",
  "fuzzy-matcher",
+ "libc",
  "notify",
  "portable-pty",
  "regex",
@@ -4014,7 +4015,7 @@ dependencies = [
 
 [[package]]
 name = "sshm-desktop"
-version = "2.1.1"
+version = "2.1.2"
 dependencies = [
  "anyhow",
  "chrono",

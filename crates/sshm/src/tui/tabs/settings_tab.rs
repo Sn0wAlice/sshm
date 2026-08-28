@@ -18,6 +18,14 @@ pub struct SettingsFormState {
     pub kluster_refresh_secs: String,
     pub kluster_log_tail_lines: String,
     pub notifications_enabled: bool,
+    pub sync_enabled: bool,
+    pub sync_repo_url: String,
+    pub sync_ssh_key: String,
+    pub sync_branch: String,
+    /// Minutes between automatic syncs; `0` means manual only.
+    pub sync_interval_min: String,
+    pub sync_on_start: bool,
+    pub sync_on_exit: bool,
     pub selected_field: usize,
     pub dirty: bool,
 }
@@ -34,6 +42,16 @@ const NOTIFY_FIELD: usize = 9;
 /// others so existing text-field indices keep their meaning; placed in the
 /// Health checks section via `SECTIONS`.
 const PAUSE_HEALTH_FIELD: usize = 10;
+/// Git config-sync fields. Everything else about sync (which files travel,
+/// the conflict policy) lives in `settings.toml` and `sshm sync setup`, which
+/// can offer real multi-select prompts.
+const SYNC_ENABLED_FIELD: usize = 11;
+const SYNC_REPO_FIELD: usize = 12;
+const SYNC_KEY_FIELD: usize = 13;
+const SYNC_BRANCH_FIELD: usize = 14;
+const SYNC_INTERVAL_FIELD: usize = 15;
+const SYNC_ON_START_FIELD: usize = 16;
+const SYNC_ON_EXIT_FIELD: usize = 17;
 
 /// Settings grouped into labelled sections — drives the form layout.
 struct Section {
@@ -47,6 +65,13 @@ const SECTIONS: &[Section] = &[
     Section { title: "Health checks",          fields: &[AUTO_HEALTH_FIELD, PAUSE_HEALTH_FIELD, HEALTH_TTL_FIELD, HEALTH_TIMEOUT_FIELD] },
     Section { title: "Kluster",                fields: &[KLUSTER_REFRESH_FIELD, KLUSTER_TAIL_FIELD] },
     Section { title: "Notifications",          fields: &[NOTIFY_FIELD] },
+    Section {
+        title: "Config sync (git over SSH)",
+        fields: &[
+            SYNC_ENABLED_FIELD, SYNC_REPO_FIELD, SYNC_KEY_FIELD, SYNC_BRANCH_FIELD,
+            SYNC_INTERVAL_FIELD, SYNC_ON_START_FIELD, SYNC_ON_EXIT_FIELD,
+        ],
+    },
 ];
 
 /// Human label for a field index.
@@ -63,6 +88,13 @@ fn field_label(i: usize) -> &'static str {
         KLUSTER_REFRESH_FIELD => "Kluster Refresh Interval (s)",
         KLUSTER_TAIL_FIELD => "Kluster Log Tail (lines)",
         NOTIFY_FIELD => "Desktop notifications",
+        SYNC_ENABLED_FIELD => "Sync config with a git repo",
+        SYNC_REPO_FIELD => "Repository SSH URL",
+        SYNC_KEY_FIELD => "SSH key",
+        SYNC_BRANCH_FIELD => "Branch",
+        SYNC_INTERVAL_FIELD => "Auto-sync every (min, 0 = manual)",
+        SYNC_ON_START_FIELD => "Sync on start",
+        SYNC_ON_EXIT_FIELD => "Sync on exit",
         _ => "",
     }
 }
@@ -81,12 +113,22 @@ impl SettingsFormState {
             kluster_refresh_secs: config.kluster_refresh_secs.to_string(),
             kluster_log_tail_lines: config.kluster_log_tail_lines.to_string(),
             notifications_enabled: config.notifications_enabled,
+            sync_enabled: config.sync.enabled,
+            sync_repo_url: config.sync.repo_url.clone(),
+            sync_ssh_key: config.sync.ssh_key.clone(),
+            sync_branch: config.sync.effective_branch(),
+            sync_interval_min: match config.sync.effective_interval() {
+                Some(secs) => (secs / 60).to_string(),
+                None => "0".to_string(),
+            },
+            sync_on_start: config.sync.on_start,
+            sync_on_exit: config.sync.on_exit,
             selected_field: 0,
             dirty: false,
         }
     }
 
-    pub fn fields_count() -> usize { 11 }
+    pub fn fields_count() -> usize { 18 }
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
@@ -110,6 +152,10 @@ impl SettingsFormState {
             HEALTH_TIMEOUT_FIELD => Some(&mut self.health_probe_timeout_ms),
             KLUSTER_REFRESH_FIELD => Some(&mut self.kluster_refresh_secs),
             KLUSTER_TAIL_FIELD => Some(&mut self.kluster_log_tail_lines),
+            SYNC_REPO_FIELD => Some(&mut self.sync_repo_url),
+            SYNC_KEY_FIELD => Some(&mut self.sync_ssh_key),
+            SYNC_BRANCH_FIELD => Some(&mut self.sync_branch),
+            SYNC_INTERVAL_FIELD => Some(&mut self.sync_interval_min),
             _ => None,
         }
     }
@@ -117,7 +163,11 @@ impl SettingsFormState {
     pub fn push_char(&mut self, c: char) {
         let numeric_only = matches!(
             self.selected_field,
-            0 | HEALTH_TTL_FIELD | HEALTH_TIMEOUT_FIELD | KLUSTER_REFRESH_FIELD | KLUSTER_TAIL_FIELD
+            0 | HEALTH_TTL_FIELD
+                | HEALTH_TIMEOUT_FIELD
+                | KLUSTER_REFRESH_FIELD
+                | KLUSTER_TAIL_FIELD
+                | SYNC_INTERVAL_FIELD
         );
         if numeric_only && !c.is_ascii_digit() {
             return;
@@ -155,6 +205,21 @@ impl SettingsFormState {
                 if self.notifications_enabled {
                     crate::os::notify_test();
                 }
+                true
+            }
+            SYNC_ENABLED_FIELD => {
+                self.sync_enabled = !self.sync_enabled;
+                self.dirty = true;
+                true
+            }
+            SYNC_ON_START_FIELD => {
+                self.sync_on_start = !self.sync_on_start;
+                self.dirty = true;
+                true
+            }
+            SYNC_ON_EXIT_FIELD => {
+                self.sync_on_exit = !self.sync_on_exit;
+                self.dirty = true;
                 true
             }
             _ => false,
@@ -204,6 +269,19 @@ pub fn handle_settings_event(key: KeyCode, state: &mut SettingsFormState) -> Set
     }
 }
 
+/// True for the on/off fields (rendered as a toggle rather than a text input).
+fn is_toggle(i: usize) -> bool {
+    matches!(
+        i,
+        AUTO_HEALTH_FIELD
+            | PAUSE_HEALTH_FIELD
+            | NOTIFY_FIELD
+            | SYNC_ENABLED_FIELD
+            | SYNC_ON_START_FIELD
+            | SYNC_ON_EXIT_FIELD
+    )
+}
+
 /// Current string value of a text field index.
 fn settings_text_value(state: &SettingsFormState, i: usize) -> String {
     match i {
@@ -215,6 +293,10 @@ fn settings_text_value(state: &SettingsFormState, i: usize) -> String {
         HEALTH_TIMEOUT_FIELD => state.health_probe_timeout_ms.clone(),
         KLUSTER_REFRESH_FIELD => state.kluster_refresh_secs.clone(),
         KLUSTER_TAIL_FIELD => state.kluster_log_tail_lines.clone(),
+        SYNC_REPO_FIELD => state.sync_repo_url.clone(),
+        SYNC_KEY_FIELD => state.sync_ssh_key.clone(),
+        SYNC_BRANCH_FIELD => state.sync_branch.clone(),
+        SYNC_INTERVAL_FIELD => state.sync_interval_min.clone(),
         _ => String::new(),
     }
 }
@@ -229,10 +311,13 @@ fn field_line(state: &SettingsFormState, i: usize, theme: &Theme) -> Line<'stati
     };
     let label_span = Span::styled(format!("   {:<32}", field_label(i)), label_style);
 
-    if i == AUTO_HEALTH_FIELD || i == PAUSE_HEALTH_FIELD || i == NOTIFY_FIELD {
+    if is_toggle(i) {
         let on = match i {
             AUTO_HEALTH_FIELD => state.auto_health_check,
             PAUSE_HEALTH_FIELD => state.pause_health_on_session,
+            SYNC_ENABLED_FIELD => state.sync_enabled,
+            SYNC_ON_START_FIELD => state.sync_on_start,
+            SYNC_ON_EXIT_FIELD => state.sync_on_exit,
             _ => state.notifications_enabled,
         };
         let val = if on { "[x] on" } else { "[ ] off" };

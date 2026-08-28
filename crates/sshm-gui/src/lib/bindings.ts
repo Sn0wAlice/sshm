@@ -575,7 +575,13 @@ notifications_enabled?: boolean;
  * default. On macOS this needs `terminal-notifier` installed — plain
  * `osascript` can't override the notification icon.
  */
-notification_icon?: string }
+notification_icon?: string; 
+/**
+ * Git-backed configuration sync. **Must stay the last field**: it
+ * serializes as a `[sync]` TOML table, and anything declared after it
+ * would end up nested inside that table.
+ */
+sync?: SyncConfig }
 /**
  * One saved cluster entry. `kubeconfig` and `context` are both optional;
  * when omitted, `kubectl` is invoked with no `--kubeconfig`/`--context`
@@ -587,6 +593,19 @@ export type Cluster = { name: string; kind?: ClusterKind; kubeconfig?: string | 
  * the tab. Detection is naïve (substring on context name), users can toggle.
  */
 export type ClusterKind = "K8s" | "K3s"
+/**
+ * What to do when the same file changed on both sides since the last sync.
+ */
+export type ConflictPolicy = 
+/**
+ * Merge what can be merged (host/cluster entries), and keep **this**
+ * machine's version of anything that truly collides. The default.
+ */
+"prefer_local" | 
+/**
+ * Same merge, but a true collision resolves to the remote version.
+ */
+"prefer_remote"
 /**
  * Parsed, runtime-agnostic detail for one container/instance, built from an
  * `inspect` call. Rendered by the Kluster detail popup.
@@ -798,6 +817,89 @@ export type PodInfo = { namespace: string; name: string; containers: string[];
  * e.g. `Running`, `Pending`, `CrashLoopBackOff`.
  */
 phase: string }
+/**
+ * Git-backed sync of the sshm config across machines.
+ * 
+ * Auth is SSH-key based: `repo_url` is an SSH remote (`git@host:owner/repo.git`)
+ * and `ssh_key` the private key handed to git through `GIT_SSH_COMMAND`. No
+ * credentials are ever written to the repo.
+ */
+export type SyncConfig = { 
+/**
+ * Master switch. Off = every automatic trigger is skipped and an explicit
+ * `sshm sync` refuses with a hint to run `sshm sync setup`.
+ */
+enabled?: boolean; 
+/**
+ * SSH remote, e.g. `git@github.com:me/sshm-config.git`.
+ */
+repo_url?: string; 
+/**
+ * Private key passed to `ssh -i`. `~` is expanded. Empty = whatever the
+ * user's ssh-agent / `~/.ssh/config` provides.
+ */
+ssh_key?: string; 
+/**
+ * Branch to track.
+ */
+branch?: string; mode?: SyncMode; 
+/**
+ * Interval used by [`SyncMode::Interval`], in seconds. Floored at 60 by
+ * [`SyncConfig::effective_interval`] so a typo can't hammer the remote.
+ */
+interval_secs?: number; 
+/**
+ * Sync once, right after the TUI starts.
+ */
+on_start?: boolean; 
+/**
+ * Sync once more when leaving the TUI, so local edits land upstream.
+ */
+on_exit?: boolean; 
+/**
+ * Files carried by a sync run.
+ */
+items?: SyncItem[]; conflict?: ConflictPolicy; 
+/**
+ * Fail instead of trusting an unknown host key. Off by default, which
+ * maps to ssh's `StrictHostKeyChecking=accept-new` (trust on first use,
+ * refuse on change).
+ */
+strict_host_key_checking?: boolean }
+/**
+ * Which shared config file a sync run carries.
+ */
+export type SyncItem = 
+/**
+ * `host.json` — hosts, folders, tunnels. Merged entry-by-entry.
+ */
+"hosts" | 
+/**
+ * `kluster.json` — saved clusters and Incus remotes.
+ */
+"kluster" | 
+/**
+ * `settings.toml` — app settings, minus the `[sync]` table which always
+ * stays machine-local (see [`crate::sync`]).
+ */
+"settings" | 
+/**
+ * `theme.toml` — colors.
+ */
+"theme"
+/**
+ * When an sshm process syncs on its own.
+ */
+export type SyncMode = 
+/**
+ * Never automatic: only `sshm sync` (or a cron entry calling it) syncs.
+ */
+"manual" | 
+/**
+ * The TUI syncs every `interval_secs` in the background, and
+ * `sshm sync --if-due` becomes a no-op until the interval has elapsed.
+ */
+"interval"
 /**
  * The embedded terminal session `id`'s child process exited.
  */

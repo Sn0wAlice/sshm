@@ -75,6 +75,9 @@ fn main() {
                 }
             }
         }
+        Some("sync") => {
+            commands::sync::dispatch(&args[2..]);
+        }
         Some("add-identity") => {
             let name = args.get(2).cloned();
             let extras: Vec<String> = if name.is_some() { args[3..].to_vec() } else { args[2..].to_vec() };
@@ -99,6 +102,12 @@ fn main() {
             println!("Import / export:");
             println!("  sshm load_local_conf                       # import from ~/.ssh/config");
             println!("  sshm export [path]                         # export DB as ~/.ssh/config format");
+            println!();
+            println!("Config sync (git over SSH):");
+            println!("  sshm sync setup                            # configure repo + key + schedule");
+            println!("  sshm sync                                  # sync now  (pull/push: one way)");
+            println!("  sshm sync status                           # config, last run, lock state");
+            println!("  sshm sync --if-due                         # cron-friendly; `sshm sync cron` prints a line");
             println!();
             println!("Inside the TUI:");
             println!("  ←/→  switch tabs (Hosts | Kluster | Identities | Settings | Theme | Help)");
