@@ -70,7 +70,9 @@ impl SyncRun {
             SyncRun::Done(r) => r.summary(),
             SyncRun::Busy(info) => format!(
                 "another sshm instance is syncing (pid {} on {}, {}s ago)",
-                info.pid, info.host, info.age_secs()
+                info.pid,
+                info.host,
+                info.age_secs()
             ),
             SyncRun::Skipped(why) => (*why).to_string(),
         }
@@ -197,7 +199,10 @@ mod tests {
 
     #[test]
     fn an_enabled_but_unconfigured_sync_never_runs() {
-        let cfg = SyncConfig { enabled: true, ..SyncConfig::default() };
+        let cfg = SyncConfig {
+            enabled: true,
+            ..SyncConfig::default()
+        };
         assert!(matches!(sync_if_due(&cfg).unwrap(), SyncRun::Skipped(_)));
     }
 

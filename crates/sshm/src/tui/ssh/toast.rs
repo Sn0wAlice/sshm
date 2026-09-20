@@ -1,8 +1,8 @@
-use std::time::Instant;
+use crate::tui::theme::Theme;
 use ratatui::layout::Rect;
 use ratatui::prelude::{Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use crate::tui::theme::Theme;
+use std::time::Instant;
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToastKind {
@@ -18,11 +18,19 @@ pub struct Toast {
 
 impl Toast {
     pub fn success(message: impl Into<String>) -> Self {
-        Toast { message: message.into(), created: Instant::now(), kind: ToastKind::Success }
+        Toast {
+            message: message.into(),
+            created: Instant::now(),
+            kind: ToastKind::Success,
+        }
     }
 
     pub fn error(message: impl Into<String>) -> Self {
-        Toast { message: message.into(), created: Instant::now(), kind: ToastKind::Error }
+        Toast {
+            message: message.into(),
+            created: Instant::now(),
+            kind: ToastKind::Error,
+        }
     }
 
     pub fn is_expired(&self) -> bool {
@@ -37,7 +45,12 @@ pub fn render_toast(f: &mut ratatui::Frame, screen: Rect, toast: &Toast, theme: 
     let x = screen.width.saturating_sub(msg_width + 1);
     let y = screen.height.saturating_sub(toast_height + 2);
 
-    let area = Rect { x, y, width: msg_width, height: toast_height };
+    let area = Rect {
+        x,
+        y,
+        width: msg_width,
+        height: toast_height,
+    };
 
     let border_color = match toast.kind {
         ToastKind::Success => theme.success,
@@ -59,7 +72,12 @@ pub fn render_toast(f: &mut ratatui::Frame, screen: Rect, toast: &Toast, theme: 
     f.render_widget(block, area);
 
     let text = Paragraph::new(Line::from(vec![
-        Span::styled(icon.to_string(), Style::default().fg(border_color).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            icon.to_string(),
+            Style::default()
+                .fg(border_color)
+                .add_modifier(Modifier::BOLD),
+        ),
         Span::styled(toast.message.clone(), Style::default().fg(theme.fg)),
     ]));
     f.render_widget(text, inner);

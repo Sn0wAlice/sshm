@@ -6,8 +6,8 @@
 //! to live alongside this (the trust-on-first-use prompt, the host-key-change
 //! recovery flow, and the `add-identity` command) moved to the frontend crate
 //! because they drive an interactive terminal prompt (`inquire`).
+pub mod agent;
 pub mod client;
 pub mod keys;
-pub mod agent;
 pub mod known_hosts;
 pub mod proxy;

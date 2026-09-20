@@ -55,9 +55,15 @@ impl SortMode {
 /// Heuristic: score = use_count / (1 + log10(hours_since)). Hosts never used
 /// score 0 (so they sink to the bottom).
 pub fn frecency_score(use_count: u32, last_connected_at: Option<&str>) -> f64 {
-    if use_count == 0 { return 0.0; }
-    let Some(stamp) = last_connected_at else { return 0.0; };
-    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(stamp) else { return 0.0; };
+    if use_count == 0 {
+        return 0.0;
+    }
+    let Some(stamp) = last_connected_at else {
+        return 0.0;
+    };
+    let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(stamp) else {
+        return 0.0;
+    };
     let hours = chrono::Utc::now()
         .signed_duration_since(parsed.with_timezone(&chrono::Utc))
         .num_minutes()
@@ -148,7 +154,9 @@ mod tests {
 /// Human-friendly relative formatting of `last_connected_at`.
 /// Returns `"never"` if the field is missing or unparsable.
 pub fn format_last_used(stamp: Option<&str>) -> String {
-    let Some(s) = stamp else { return "never".to_string() };
+    let Some(s) = stamp else {
+        return "never".to_string();
+    };
     let Ok(parsed) = chrono::DateTime::parse_from_rfc3339(s) else {
         return "never".to_string();
     };

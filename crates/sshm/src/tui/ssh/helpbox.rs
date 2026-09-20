@@ -1,6 +1,6 @@
+use crate::tui::theme::Theme;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use crate::tui::theme::Theme;
 
 #[derive(Clone, Copy)]
 pub enum HelpContext {
@@ -29,71 +29,38 @@ pub enum HelpContext {
 
 /// The full ` │ `-separated shortcut string for a context. This is the source
 /// of truth for both the (possibly truncated) footer bar and the `h` popup.
-fn help_text_for(ctx: HelpContext) -> &'static str {
+/// Translation-key suffix for a context. Used for both the shortcut string
+/// (`help.<suffix>`) and the popup title (`help.title.<suffix>`).
+fn context_key(ctx: HelpContext) -> &'static str {
     match ctx {
-        HelpContext::HostNav => {
-            "↑↓ move │ h help │ Enter connect │ o new-term │ / filter │ a add │ e edit │ y clone │ Y copy │ d delete │ Space select │ X run-cmd │ c check │ p forward │ t tunnels │ i identity │ f fav │ s sort │ q quit"
-        }
-        HelpContext::FolderNav => {
-            "↑↓ move │ h help │ Enter expand/collapse │ / filter │ a add │ r rename │ d delete │ t tunnels │ q quit"
-        }
-        HelpContext::FilterMode => {
-            "Type to filter (fuzzy) │ Esc clear │ Enter confirm"
-        }
-        HelpContext::DeleteModal => {
-            "←→ select │ Enter confirm │ Esc cancel"
-        }
-        HelpContext::SettingsTab => {
-            "↑↓ navigate │ h help │ Type to edit │ Enter save │ ←→ tab │ Esc reset"
-        }
-        HelpContext::ThemeTab => {
-            "↑↓ navigate │ h help │ Enter apply/save │ ←→ tab │ Esc reset"
-        }
-        HelpContext::HelpTab => {
-            "↑↓ scroll │ h help │ PageUp/PageDn fast scroll │ Home top │ ←→ tab │ q quit"
-        }
-        HelpContext::IdentitiesTab => {
-            "↑↓ move │ h help │ / filter │ g generate │ p push │ a agent-add │ x agent-del │ K known-hosts │ r refresh │ ←→ tab │ q quit"
-        }
-        HelpContext::KlusterHeaderRuntime => {
-            "↑↓ move │ h help │ Enter expand/collapse │ / filter │ r refresh │ n add cluster │ ←→ tab │ q quit"
-        }
-        HelpContext::KlusterHeaderCluster => {
-            "↑↓ move │ h help │ Enter expand/collapse │ / filter │ r refresh │ n add │ e edit │ d delete │ ←→ tab │ q quit"
-        }
-        HelpContext::KlusterHeaderDockerRemote => {
-            "↑↓ move │ h help │ Enter expand/collapse │ / filter │ r refresh │ n add docker remote │ d unlink │ ←→ tab │ q quit"
-        }
-        HelpContext::KlusterItem => {
-            "↑↓ move │ h help │ Enter shell │ i details │ l logs(-f) │ s start/stop │ R restart │ / filter │ r refresh │ ←→ tab │ q quit"
-        }
-        HelpContext::KlusterTerminalPod => {
-            "↑↓ move │ h help │ Enter shell │ i details │ l logs(-f) │ / filter │ d delete pod │ r refresh │ ←→ tab │ q quit"
-        }
-        HelpContext::Empty => {
-            "a add host │ h help │ q quit │ ←→ tab"
-        }
+        HelpContext::HostNav => "host_nav",
+        HelpContext::FolderNav => "folder_nav",
+        HelpContext::FilterMode => "filter_mode",
+        HelpContext::DeleteModal => "delete_modal",
+        HelpContext::SettingsTab => "settings_tab",
+        HelpContext::ThemeTab => "theme_tab",
+        HelpContext::HelpTab => "help_tab",
+        HelpContext::IdentitiesTab => "identities_tab",
+        HelpContext::KlusterHeaderRuntime => "kluster_header_runtime",
+        HelpContext::KlusterHeaderCluster => "kluster_header_cluster",
+        HelpContext::KlusterHeaderDockerRemote => "kluster_header_docker_remote",
+        HelpContext::KlusterItem => "kluster_item",
+        HelpContext::KlusterTerminalPod => "kluster_terminal_pod",
+        HelpContext::Empty => "empty",
     }
 }
 
+/// The full ` │ `-separated shortcut string for a context. This is the source
+/// of truth for both the (possibly truncated) footer bar and the `h` popup.
+///
+/// Localized: the key letters are fixed, the descriptions after them are not.
+fn help_text_for(ctx: HelpContext) -> String {
+    crate::t!(&format!("help.{}", context_key(ctx)))
+}
+
 /// Short human label for a context, used as the popup title.
-fn context_label(ctx: HelpContext) -> &'static str {
-    match ctx {
-        HelpContext::HostNav => "Hosts",
-        HelpContext::FolderNav => "Folder",
-        HelpContext::FilterMode => "Filter",
-        HelpContext::DeleteModal => "Delete",
-        HelpContext::SettingsTab => "Settings",
-        HelpContext::ThemeTab => "Theme",
-        HelpContext::HelpTab => "Help",
-        HelpContext::IdentitiesTab => "Identities",
-        HelpContext::KlusterHeaderRuntime => "Kluster — runtime header",
-        HelpContext::KlusterHeaderCluster => "Kluster — cluster header",
-        HelpContext::KlusterHeaderDockerRemote => "Kluster — Docker remote",
-        HelpContext::KlusterItem => "Kluster — container/pod",
-        HelpContext::KlusterTerminalPod => "Kluster — terminated pod",
-        HelpContext::Empty => "Empty",
-    }
+fn context_label(ctx: HelpContext) -> String {
+    crate::t!(&format!("help.title.{}", context_key(ctx)))
 }
 
 /// Build the contextual help bar, fitted to `width` display columns.
@@ -103,9 +70,9 @@ fn context_label(ctx: HelpContext) -> &'static str {
 /// is appended when one or more segments had to be dropped. Widen the terminal
 /// — or press `h` for the full popup — and the hidden shortcuts reappear.
 pub fn get_contextual_help(ctx: HelpContext, theme: &Theme, width: u16) -> Paragraph<'static> {
-    let spans = build_help_spans(help_text_for(ctx), theme, width);
-    Paragraph::new(Line::from(spans))
-        .style(Style::default().bg(theme.bg))
+    let text = help_text_for(ctx);
+    let spans = build_help_spans(&text, theme, width);
+    Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.bg))
 }
 
 /// Render the full contextual help as a centered popup overlay — i.e. every
@@ -113,7 +80,8 @@ pub fn get_contextual_help(ctx: HelpContext, theme: &Theme, width: u16) -> Parag
 /// truncate. Sized to its content and clamped to the screen.
 pub fn draw_help_popup(f: &mut Frame, ctx: HelpContext, theme: &Theme) {
     let area = f.area();
-    let segments: Vec<&str> = help_text_for(ctx).split(" │ ").collect();
+    let text = help_text_for(ctx);
+    let segments: Vec<&str> = text.split(" │ ").collect();
 
     // One shortcut per line: key (bold accent) padded, then description.
     let mut lines: Vec<Line> = Vec::new();
@@ -122,13 +90,17 @@ pub fn draw_help_popup(f: &mut Frame, ctx: HelpContext, theme: &Theme) {
             Some((key, desc)) => lines.push(Line::from(vec![
                 Span::styled(
                     format!("  {:<13}", key),
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
                 ),
                 Span::styled(desc.to_string(), Style::default().fg(theme.fg)),
             ])),
             None => lines.push(Line::from(Span::styled(
                 format!("  {}", segment),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ))),
         }
     }
@@ -144,12 +116,21 @@ pub fn draw_help_popup(f: &mut Frame, ctx: HelpContext, theme: &Theme) {
     let h = (lines.len() as u16 + 2).min(area.height.max(1));
     let x = area.x + area.width.saturating_sub(w) / 2;
     let y = area.y + area.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let block = Block::default()
         .title(format!(" Help — {} ", context_label(ctx)))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
+        .border_style(
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
         .style(Style::default().bg(theme.bg).fg(theme.fg));
 
     f.render_widget(Clear, rect);
@@ -195,11 +176,19 @@ fn fit_segments(segments: &[&str], theme: &Theme, budget: usize) -> (Vec<Span<'s
             let desc = &segment[space_idx..];
             spans.push(Span::styled(
                 key.to_string(),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ));
-            spans.push(Span::styled(desc.to_string(), Style::default().fg(theme.muted)));
+            spans.push(Span::styled(
+                desc.to_string(),
+                Style::default().fg(theme.muted),
+            ));
         } else {
-            spans.push(Span::styled(segment.to_string(), Style::default().fg(theme.accent)));
+            spans.push(Span::styled(
+                segment.to_string(),
+                Style::default().fg(theme.accent),
+            ));
         }
         used += sep_w + seg_w;
     }

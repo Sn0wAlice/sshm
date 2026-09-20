@@ -42,11 +42,19 @@ fn route(r: &TunnelRecord) -> String {
     match t.kind {
         TunnelKind::Dynamic => format!("SOCKS5 on :{}", t.local_port),
         TunnelKind::Local => {
-            let rh = if t.remote_host.is_empty() { "localhost" } else { &t.remote_host };
+            let rh = if t.remote_host.is_empty() {
+                "localhost"
+            } else {
+                &t.remote_host
+            };
             format!(":{} -> {}:{}", t.local_port, rh, t.remote_port)
         }
         TunnelKind::Remote => {
-            let rh = if t.remote_host.is_empty() { "localhost" } else { &t.remote_host };
+            let rh = if t.remote_host.is_empty() {
+                "localhost"
+            } else {
+                &t.remote_host
+            };
             format!("remote :{} -> {}:{}", t.local_port, rh, t.remote_port)
         }
     }
@@ -72,8 +80,18 @@ fn list() {
 
     println!("{:<8}  {:<18}  {:<28}  LABEL", "PID", "HOST", "ROUTE");
     for r in &records {
-        let label = if r.tunnel.label.trim().is_empty() { "-" } else { r.tunnel.label.trim() };
-        println!("{:<8}  {:<18}  {:<28}  {}", r.pid, r.host_name, route(r), label);
+        let label = if r.tunnel.label.trim().is_empty() {
+            "-"
+        } else {
+            r.tunnel.label.trim()
+        };
+        println!(
+            "{:<8}  {:<18}  {:<28}  {}",
+            r.pid,
+            r.host_name,
+            route(r),
+            label
+        );
     }
 }
 
@@ -88,7 +106,9 @@ fn stop(pid_arg: &str) {
     };
     if crate::tui::app::tunnels::terminate_tunnel_pid(pid) {
         println!("Stopped {} ({})", route(&record), record.host_name);
-        println!("Note: the sshm instance that owns it will drop it from its list on the next tick.");
+        println!(
+            "Note: the sshm instance that owns it will drop it from its list on the next tick."
+        );
     } else {
         eprintln!("Could not signal PID {pid}.");
     }

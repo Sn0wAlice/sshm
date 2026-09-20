@@ -27,6 +27,8 @@ known_hosts_clean_failed = "known_hosts clean failed: {error}"
 fingerprint_pinned = "Pinned {host} to known_hosts"
 fingerprint_failed = "Host key action failed: {error}"
 quick_connect_oob = "No host #{n} in the visible list"
+opened_in_terminal = "Opened {name} in a new terminal"
+terminal_failed = "New terminal: {error}"
 
 [kluster]
 docker_unavailable = "Docker daemon not running"
@@ -46,3 +48,142 @@ sort_favorites = "favorites first"
 sort_frecency = "frecency (recent × frequent)"
 view_folders = "folders"
 view_tags = "tags"
+
+[tab]
+hosts = "Hosts"
+kluster = "Kluster"
+identities = "Identities"
+settings = "Settings"
+theme = "Theme"
+help = "Help"
+
+# Contextual shortcut bar (and the `h` popup). The key letters are fixed —
+# only the descriptions after them are translated. Keep the ` │ ` separator:
+# the footer truncates on those boundaries and the popup splits on them.
+[help]
+host_nav = "↑↓ move │ h help │ Enter connect │ o new-term │ / filter │ a add │ e edit │ y clone │ Y copy │ d delete │ Space select │ X run-cmd │ c check │ p forward │ t tunnels │ i identity │ f fav │ s sort │ q quit"
+folder_nav = "↑↓ move │ h help │ Enter expand/collapse │ / filter │ a add │ r rename │ d delete │ t tunnels │ q quit"
+filter_mode = "Type to filter (fuzzy) │ Esc clear │ Enter confirm"
+delete_modal = "←→ select │ Enter confirm │ Esc cancel"
+settings_tab = "↑↓ navigate │ h help │ Type to edit │ Enter save │ ←→ tab │ Esc reset"
+theme_tab = "↑↓ navigate │ h help │ Enter apply/save │ ←→ tab │ Esc reset"
+help_tab = "↑↓ scroll │ h help │ PageUp/PageDn fast scroll │ Home top │ ←→ tab │ q quit"
+identities_tab = "↑↓ move │ h help │ / filter │ g generate │ p push │ a agent-add │ x agent-del │ K known-hosts │ r refresh │ ←→ tab │ q quit"
+kluster_header_runtime = "↑↓ move │ h help │ Enter expand/collapse │ / filter │ r refresh │ n add cluster │ ←→ tab │ q quit"
+kluster_header_cluster = "↑↓ move │ h help │ Enter expand/collapse │ / filter │ r refresh │ n add │ e edit │ d delete │ ←→ tab │ q quit"
+kluster_header_docker_remote = "↑↓ move │ h help │ Enter expand/collapse │ / filter │ r refresh │ n add docker remote │ d unlink │ ←→ tab │ q quit"
+kluster_item = "↑↓ move │ h help │ Enter shell │ i details │ l logs(-f) │ s start/stop │ R restart │ / filter │ r refresh │ ←→ tab │ q quit"
+kluster_terminal_pod = "↑↓ move │ h help │ Enter shell │ i details │ l logs(-f) │ / filter │ d delete pod │ r refresh │ ←→ tab │ q quit"
+empty = "a add host │ h help │ q quit │ ←→ tab"
+
+[help.title]
+host_nav = "Hosts"
+folder_nav = "Folder"
+filter_mode = "Filter"
+delete_modal = "Delete"
+settings_tab = "Settings"
+theme_tab = "Theme"
+help_tab = "Help"
+identities_tab = "Identities"
+kluster_header_runtime = "Kluster — runtime header"
+kluster_header_cluster = "Kluster — cluster header"
+kluster_header_docker_remote = "Kluster — Docker remote"
+kluster_item = "Kluster — container/pod"
+kluster_terminal_pod = "Kluster — terminated pod"
+empty = "Empty"
+
+[form]
+toggle_hint = "  Space to toggle (off by default)"
+
+[form.host]
+title_new = "Create host"
+title_edit = "Edit host"
+name = "Name"
+host = "Host/IP"
+port = "Port"
+username = "Username"
+identity = "Identity file"
+proxy_jump = "ProxyJump"
+tags = "Tags"
+folder = "Folder"
+notes = "Notes"
+remote_command = "Run on connect"
+ssh_options = "ssh -o options"
+fa_warning = "  ⚠ shares your local agent with this host"
+
+[dialog]
+irreversible = "This action cannot be undone."
+error = "Error"
+
+[dialog.tunnel_closed]
+title = "Tunnel Closed"
+body = "SSH tunnel process exited.\n\nPress any key to return..."
+
+[dialog.button]
+delete = "Delete"
+cancel = "Cancel"
+delete_all = "Delete all"
+keep_hosts = "Keep hosts"
+
+[dialog.delete_host]
+title = "Confirm delete"
+body = "Delete host \"{name}\" ?"
+
+[dialog.delete_folder]
+title = "Confirm delete folder"
+body = "Delete empty folder \"{name}\" ?"
+note = "This will remove the folder only."
+
+[dialog.delete_folder_hosts]
+title = "Confirm delete folder & hosts"
+body = "Folder \"{name}\" contains {n} hosts."
+question = "What do you want to do?"
+
+[detail]
+name = "Name"
+user = "User"
+host = "Host"
+port = "Port"
+tags = "Tags"
+identity = "IdentityFile"
+proxy_jump = "ProxyJump"
+folder = "Folder"
+last_used = "Last used"
+uses = "Uses"
+frecency = "Frecency"
+forward_agent = "ForwardAgent: ⚠ ON (-A)\n"
+mosh = "Mosh: ● ON\n"
+run_on_connect = "Run on connect: {cmd}"
+notes = "Notes: {notes}"
+ssh_options = "ssh -o: {opts}"
+tunnels = "Tunnels: {n} saved [{kinds}]"
+
+[form.tunnel]
+socks_port = "SOCKS Port"
+local_port = "Local Port"
+remote_bind_port = "Remote Bind Port"
+remote_host = "Remote Host"
+remote_port = "Remote Port"
+label = "Label (optional)"
+save = "Save this tunnel on host"
+auto_restart = "Restart automatically if it drops"
+footer = "Tab/↑↓ navigate | Space toggle | Esc cancel"
+start = "Start Tunnel"
+
+[error]
+local_port = "Local port must be a number 1-65535"
+remote_port = "Remote port must be a number 1-65535"
+
+[empty]
+no_keys = "No keys found in ~/.ssh.\n\nPress 'g' to generate a new key."
+
+[fanout]
+prompt = "Command to run on the selected hosts:"
+targets = "Target hosts ({n}):"
+missing = "missing — will be skipped"
+confirm = "Run `{cmd}` on {n} host(s)?"
+skipped = "skipped (host no longer exists)"
+launch_failed = "failed to launch ssh"
+exit_status = "exit status"
+done = "Done — {ok} ok, {failed} failed."
+return = "Press Enter to return to sshm"

@@ -1,7 +1,7 @@
+use crate::models::{Database, TunnelKind};
+use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::Path;
-use anyhow::{anyhow, Context, Result};
-use crate::models::{Database, TunnelKind};
 
 /// Export the host database as an SSH config file.
 pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<()> {
@@ -58,7 +58,11 @@ pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<()> {
             }
         }
         for t in &host.tunnels {
-            let target_host = if t.remote_host.is_empty() { "localhost" } else { t.remote_host.as_str() };
+            let target_host = if t.remote_host.is_empty() {
+                "localhost"
+            } else {
+                t.remote_host.as_str()
+            };
             match t.kind {
                 TunnelKind::Local => {
                     content.push_str(&format!(
@@ -79,8 +83,7 @@ pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<()> {
         }
     }
 
-    fs::write(path, &content)
-        .with_context(|| format!("writing export file {}", path.display()))?;
+    fs::write(path, &content).with_context(|| format!("writing export file {}", path.display()))?;
 
     Ok(())
 }
@@ -96,7 +99,10 @@ mod tests {
         let path = dir.path().join("config");
         export_ssh_config(db, path.to_str().unwrap()).unwrap();
         let mut s = String::new();
-        std::fs::File::open(&path).unwrap().read_to_string(&mut s).unwrap();
+        std::fs::File::open(&path)
+            .unwrap()
+            .read_to_string(&mut s)
+            .unwrap();
         s
     }
 
@@ -117,7 +123,10 @@ mod tests {
         }));
         assert!(out.contains("    ServerAliveInterval 30\n"), "{out}");
         assert!(out.contains("    Compression yes\n"), "{out}");
-        assert!(!out.contains('='), "config syntax uses a space, not '=':\n{out}");
+        assert!(
+            !out.contains('='),
+            "config syntax uses a space, not '=':\n{out}"
+        );
     }
 
     #[test]

@@ -1,7 +1,9 @@
+use crate::tui::theme::Theme;
 use crossterm::event::KeyCode;
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
-use crate::tui::theme::Theme;
+use ratatui::widgets::{
+    Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 
 #[derive(Default)]
 pub struct HelpTabState {
@@ -286,11 +288,16 @@ pub fn draw_help_tab(f: &mut Frame, area: Rect, state: &HelpTabState, theme: &Th
         .lines()
         .map(|l| {
             if l.trim_start().starts_with("───") || l.trim_start().starts_with("═") {
-                Line::from(Span::styled(l.to_string(), Style::default().fg(theme.accent)))
+                Line::from(Span::styled(
+                    l.to_string(),
+                    Style::default().fg(theme.accent),
+                ))
             } else if l.contains("SSHM") && l.contains("SSH Host Manager") {
                 Line::from(Span::styled(
                     l.to_string(),
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
                 ))
             } else if l.trim_start().starts_with("•") {
                 Line::from(Span::styled(l.to_string(), Style::default().fg(theme.fg)))
@@ -309,9 +316,14 @@ pub fn draw_help_tab(f: &mut Frame, area: Rect, state: &HelpTabState, theme: &Th
                                 Span::raw(" ".repeat(indent)),
                                 Span::styled(
                                     key_part.to_string(),
-                                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                                    Style::default()
+                                        .fg(theme.accent)
+                                        .add_modifier(Modifier::BOLD),
                                 ),
-                                Span::styled(desc_part.to_string(), Style::default().fg(theme.muted)),
+                                Span::styled(
+                                    desc_part.to_string(),
+                                    Style::default().fg(theme.muted),
+                                ),
                             ]);
                         }
                     }
@@ -332,8 +344,7 @@ pub fn draw_help_tab(f: &mut Frame, area: Rect, state: &HelpTabState, theme: &Th
 
     // Scrollbar
     if total_lines > visible {
-        let mut sb_state = ScrollbarState::new(total_lines as usize)
-            .position(scroll as usize);
+        let mut sb_state = ScrollbarState::new(total_lines as usize).position(scroll as usize);
         let sb = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
         f.render_stateful_widget(sb, inner, &mut sb_state);
     }

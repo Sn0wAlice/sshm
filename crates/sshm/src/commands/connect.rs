@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use inquire::Select;
 use crate::models::Host;
 use crate::ssh::client::launch_ssh_with_recovery;
+use inquire::Select;
+use std::collections::HashMap;
 
 /// Launch `ssh` on the selected host. Returns the name of the host that was
 /// actually launched (so callers can bump connection history), or `None` if

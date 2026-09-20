@@ -60,7 +60,10 @@ pub fn available() -> bool {
                 .status()
                 .map(|s| s.success())
                 .unwrap_or(false);
-        *guard = Some(SystemCache { last: Instant::now(), value });
+        *guard = Some(SystemCache {
+            last: Instant::now(),
+            value,
+        });
         value
     } else {
         false
@@ -117,7 +120,10 @@ fn snapshot_to_info(v: &serde_json::Value) -> Option<ContainerInfo> {
         .and_then(|x| x.as_str())
         .unwrap_or("")
         .to_string();
-    let status_raw = v.get("status").and_then(|x| x.as_str()).unwrap_or("unknown");
+    let status_raw = v
+        .get("status")
+        .and_then(|x| x.as_str())
+        .unwrap_or("unknown");
     let running = status_raw.eq_ignore_ascii_case("running");
     // Present the status title-cased ("Running", "Stopped") to line up with
     // the human-readable Docker status strings in the same list.
@@ -214,9 +220,19 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
     overview.push("Name", cfg.get("id").and_then(|x| x.as_str()).unwrap_or(id));
     overview.push(
         "Image",
-        cfg.get("image").and_then(|i| i.get("reference")).and_then(|x| x.as_str()).unwrap_or(""),
+        cfg.get("image")
+            .and_then(|i| i.get("reference"))
+            .and_then(|x| x.as_str())
+            .unwrap_or(""),
     );
-    overview.push("Status", title_case(snap.get("status").and_then(|x| x.as_str()).unwrap_or("unknown")));
+    overview.push(
+        "Status",
+        title_case(
+            snap.get("status")
+                .and_then(|x| x.as_str())
+                .unwrap_or("unknown"),
+        ),
+    );
     if let Some(res) = cfg.get("resources") {
         if let Some(cpus) = res.get("cpus").and_then(|x| x.as_u64()) {
             overview.push("CPUs", cpus.to_string());
@@ -226,14 +242,28 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
         }
     }
     overview.push("OS/Arch", platform_str(cfg.get("platform")));
-    overview.push("Created", cfg.get("creationDate").and_then(|x| x.as_str()).unwrap_or(""));
-    overview.push("Started", snap.get("startedDate").and_then(|x| x.as_str()).unwrap_or(""));
+    overview.push(
+        "Created",
+        cfg.get("creationDate")
+            .and_then(|x| x.as_str())
+            .unwrap_or(""),
+    );
+    overview.push(
+        "Started",
+        snap.get("startedDate")
+            .and_then(|x| x.as_str())
+            .unwrap_or(""),
+    );
 
     // Networking — the snapshot's top-level `networks` array of Attachments.
     let mut net = DetailSection::new("Networking");
     if let Some(arr) = snap.get("networks").and_then(|x| x.as_array()) {
         for (i, a) in arr.iter().enumerate() {
-            let prefix = if arr.len() > 1 { format!("[{}] ", i) } else { String::new() };
+            let prefix = if arr.len() > 1 {
+                format!("[{}] ", i)
+            } else {
+                String::new()
+            };
             if let Some(ip) = a.get("ipv4Address").and_then(|x| x.as_str()) {
                 net.push(format!("{}IPv4", prefix), ip);
             }
@@ -253,7 +283,10 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
     let mut ports = DetailSection::new("Ports");
     if let Some(arr) = cfg.get("publishedPorts").and_then(|x| x.as_array()) {
         for p in arr {
-            let host_addr = p.get("hostAddress").and_then(|x| x.as_str()).unwrap_or("0.0.0.0");
+            let host_addr = p
+                .get("hostAddress")
+                .and_then(|x| x.as_str())
+                .unwrap_or("0.0.0.0");
             let host_port = p.get("hostPort").and_then(|x| x.as_u64()).unwrap_or(0);
             let ctr_port = p.get("containerPort").and_then(|x| x.as_u64()).unwrap_or(0);
             let proto = p.get("proto").and_then(|x| x.as_str()).unwrap_or("tcp");
@@ -271,7 +304,14 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
             let src = m.get("source").and_then(|x| x.as_str()).unwrap_or("");
             let dst = m.get("destination").and_then(|x| x.as_str()).unwrap_or("");
             if !dst.is_empty() {
-                mounts.push(dst.to_string(), if src.is_empty() { "(anonymous)".into() } else { src.to_string() });
+                mounts.push(
+                    dst.to_string(),
+                    if src.is_empty() {
+                        "(anonymous)".into()
+                    } else {
+                        src.to_string()
+                    },
+                );
             }
         }
     }
@@ -283,7 +323,10 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
             command.push("Executable", exe);
         }
         if let Some(args) = proc_.get("arguments").and_then(|x| x.as_array()) {
-            let joined: Vec<String> = args.iter().filter_map(|a| a.as_str().map(String::from)).collect();
+            let joined: Vec<String> = args
+                .iter()
+                .filter_map(|a| a.as_str().map(String::from))
+                .collect();
             command.push("Arguments", joined.join(" "));
         }
         if let Some(wd) = proc_.get("workingDirectory").and_then(|x| x.as_str()) {
@@ -295,12 +338,23 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
         .into_iter()
         .filter(|s| !s.is_empty())
         .collect();
-    let title = cfg.get("id").and_then(|x| x.as_str()).unwrap_or(id).to_string();
-    Some(ContainerDetail { title, sections, log_tail: Vec::new() })
+    let title = cfg
+        .get("id")
+        .and_then(|x| x.as_str())
+        .unwrap_or(id)
+        .to_string();
+    Some(ContainerDetail {
+        title,
+        sections,
+        log_tail: Vec::new(),
+    })
 }
 
 fn platform_str(v: Option<&serde_json::Value>) -> String {
-    let v = match v { Some(v) => v, None => return String::new() };
+    let v = match v {
+        Some(v) => v,
+        None => return String::new(),
+    };
     let os = v.get("os").and_then(|x| x.as_str()).unwrap_or("");
     let arch = v.get("architecture").and_then(|x| x.as_str()).unwrap_or("");
     match (os.is_empty(), arch.is_empty()) {
@@ -336,7 +390,11 @@ fn run_simple(args: &[&str]) -> Result<()> {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(anyhow::anyhow!(
             "{}",
-            if err.is_empty() { "non-zero exit".to_string() } else { err }
+            if err.is_empty() {
+                "non-zero exit".to_string()
+            } else {
+                err
+            }
         ));
     }
     Ok(())
@@ -391,7 +449,8 @@ mod tests {
 
     #[test]
     fn parse_skips_entries_without_id() {
-        let raw = r#"[ { "configuration": { "image": { "reference": "x" } }, "status": "running" } ]"#;
+        let raw =
+            r#"[ { "configuration": { "image": { "reference": "x" } }, "status": "running" } ]"#;
         assert!(parse_container_ls(raw).is_empty());
     }
 
@@ -416,13 +475,28 @@ mod tests {
         let d = parse_inspect("web", INSPECT).unwrap();
         assert_eq!(d.title, "web");
         let titles: Vec<&str> = d.sections.iter().map(|s| s.title.as_str()).collect();
-        assert_eq!(titles, vec!["Overview", "Networking", "Ports", "Volumes", "Command"]);
+        assert_eq!(
+            titles,
+            vec!["Overview", "Networking", "Ports", "Volumes", "Command"]
+        );
         let overview = &d.sections[0];
-        assert!(overview.rows.iter().any(|(k, v)| k == "Image" && v == "nginx:1.27"));
-        assert!(overview.rows.iter().any(|(k, v)| k == "Memory" && v == "1.0 GiB"));
-        assert!(overview.rows.iter().any(|(k, v)| k == "OS/Arch" && v == "linux/arm64"));
+        assert!(overview
+            .rows
+            .iter()
+            .any(|(k, v)| k == "Image" && v == "nginx:1.27"));
+        assert!(overview
+            .rows
+            .iter()
+            .any(|(k, v)| k == "Memory" && v == "1.0 GiB"));
+        assert!(overview
+            .rows
+            .iter()
+            .any(|(k, v)| k == "OS/Arch" && v == "linux/arm64"));
         let net = &d.sections[1];
-        assert!(net.rows.iter().any(|(k, v)| k == "IPv4" && v == "192.168.64.3/24"));
+        assert!(net
+            .rows
+            .iter()
+            .any(|(k, v)| k == "IPv4" && v == "192.168.64.3/24"));
     }
 
     #[test]

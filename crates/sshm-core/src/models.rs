@@ -188,7 +188,10 @@ impl Database {
     /// stat-ed (missing / permission denied).
     pub(crate) fn sig_of(path: &std::path::Path) -> Option<SourceSig> {
         let meta = std::fs::metadata(path).ok()?;
-        Some(SourceSig { mtime: meta.modified().ok()?, len: meta.len() })
+        Some(SourceSig {
+            mtime: meta.modified().ok()?,
+            len: meta.len(),
+        })
     }
 
     /// Record `path`'s current signature as this Database's baseline. Called
@@ -246,8 +249,12 @@ impl Database {
     }
 }
 
-fn default_port() -> u16 { 22 }
-fn default_username() -> String { "root".to_string() }
+fn default_port() -> u16 {
+    22
+}
+fn default_username() -> String {
+    "root".to_string()
+}
 
 /// Convertit `Option<Vec<String>>` en string d'affichage.
 /// Split the raw ssh-options form field into the list stored on a [`Host`].
@@ -295,7 +302,11 @@ mod tests {
         // constructor would quietly disagree with a file loaded from disk.
         let from_json: Host =
             serde_json::from_str(r#"{"name":"a","host":"h"}"#).expect("minimal host parses");
-        let from_default = Host { name: "a".into(), host: "h".into(), ..Default::default() };
+        let from_default = Host {
+            name: "a".into(),
+            host: "h".into(),
+            ..Default::default()
+        };
         assert_eq!(from_json, from_default);
         assert_eq!(from_default.port, 22);
         assert_eq!(from_default.username, "root");
@@ -303,7 +314,10 @@ mod tests {
 
     #[test]
     fn ssh_options_round_trip_through_the_form_field() {
-        let opts = vec!["ServerAliveInterval=30".to_string(), "Compression=yes".to_string()];
+        let opts = vec![
+            "ServerAliveInterval=30".to_string(),
+            "Compression=yes".to_string(),
+        ];
         assert_eq!(parse_ssh_options(&ssh_options_to_string(&opts)), opts);
     }
 
@@ -337,7 +351,10 @@ mod tests {
         assert!(invalid_ssh_option(&ok).is_none());
 
         let bad = vec!["A=1".to_string(), "Compression".to_string()];
-        assert_eq!(invalid_ssh_option(&bad).map(String::as_str), Some("Compression"));
+        assert_eq!(
+            invalid_ssh_option(&bad).map(String::as_str),
+            Some("Compression")
+        );
     }
 
     #[test]

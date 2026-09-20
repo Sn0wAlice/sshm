@@ -97,7 +97,9 @@ impl ClusterFormState {
     }
     fn push_char(&mut self, c: char) {
         if self.selected == FIELD_KIND {
-            if c == ' ' { self.cycle_kind(); }
+            if c == ' ' {
+                self.cycle_kind();
+            }
             return;
         }
         if let Some(f) = self.active_value_mut() {
@@ -119,7 +121,11 @@ impl ClusterFormState {
         }
         let to_opt = |s: &str| {
             let t = s.trim();
-            if t.is_empty() { None } else { Some(t.to_string()) }
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
         };
         Ok(Cluster {
             name: name.to_string(),
@@ -139,8 +145,14 @@ fn draw(f: &mut Frame, state: &ClusterFormState) {
     f.render_widget(Clear, area);
     let block = Block::default()
         .title(Span::styled(
-            if state.is_edit { " Edit cluster " } else { " Add cluster " },
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            if state.is_edit {
+                " Edit cluster "
+            } else {
+                " Add cluster "
+            },
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
@@ -168,40 +180,75 @@ fn draw(f: &mut Frame, state: &ClusterFormState) {
         let val_span = if sel {
             Span::styled(
                 format!("[{}]", value),
-                Style::default().bg(theme.accent).fg(theme.bg).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .bg(theme.accent)
+                    .fg(theme.bg)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
             Span::raw(format!("[{}]", value))
         };
         Paragraph::new(Line::from(vec![
-            Span::styled(format!("{label}: "), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{label}: "),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             val_span,
         ]))
     };
 
-    f.render_widget(mk("Name", &state.name, state.selected == FIELD_NAME), chunks[FIELD_NAME]);
+    f.render_widget(
+        mk("Name", &state.name, state.selected == FIELD_NAME),
+        chunks[FIELD_NAME],
+    );
 
     // Kind row — toggle, not text
     let kind_sel = state.selected == FIELD_KIND;
     let kind_style = if kind_sel {
-        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.fg)
     };
-    let kind_line = format!(
-        "Kind: < {} >  (←→/Space to switch)",
-        state.kind.label()
+    let kind_line = format!("Kind: < {} >  (←→/Space to switch)", state.kind.label());
+    f.render_widget(
+        Paragraph::new(kind_line).style(kind_style),
+        chunks[FIELD_KIND],
     );
-    f.render_widget(Paragraph::new(kind_line).style(kind_style), chunks[FIELD_KIND]);
 
-    f.render_widget(mk("Kubeconfig (empty = default)", &state.kubeconfig, state.selected == FIELD_KUBECONFIG), chunks[FIELD_KUBECONFIG]);
-    f.render_widget(mk("Context (empty = current)",     &state.context,    state.selected == FIELD_CONTEXT),    chunks[FIELD_CONTEXT]);
-    f.render_widget(mk("Default namespace (optional)",  &state.namespace_default, state.selected == FIELD_NAMESPACE), chunks[FIELD_NAMESPACE]);
+    f.render_widget(
+        mk(
+            "Kubeconfig (empty = default)",
+            &state.kubeconfig,
+            state.selected == FIELD_KUBECONFIG,
+        ),
+        chunks[FIELD_KUBECONFIG],
+    );
+    f.render_widget(
+        mk(
+            "Context (empty = current)",
+            &state.context,
+            state.selected == FIELD_CONTEXT,
+        ),
+        chunks[FIELD_CONTEXT],
+    );
+    f.render_widget(
+        mk(
+            "Default namespace (optional)",
+            &state.namespace_default,
+            state.selected == FIELD_NAMESPACE,
+        ),
+        chunks[FIELD_NAMESPACE],
+    );
 
     // Save button
     let save_sel = state.selected == FIELD_SAVE;
     let save_style = if save_sel {
-        Style::default().bg(theme.accent).fg(theme.bg).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(theme.accent)
+            .fg(theme.bg)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.accent)
     };
@@ -240,7 +287,9 @@ pub fn run_cluster_form(initial: Option<&Cluster>) -> Option<Cluster> {
 
         if event::poll(Duration::from_millis(120)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
-                if k.kind != KeyEventKind::Press { continue; }
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
                 match k.code {
                     KeyCode::Esc => break None,
                     KeyCode::Tab | KeyCode::Down => state.next_field(),
@@ -298,7 +347,9 @@ pub fn run_picker(title: &str, options: &[String]) -> Option<usize> {
             let block = Block::default()
                 .title(Span::styled(
                     format!(" {} ", title),
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
                 ))
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(theme.accent))
@@ -312,18 +363,13 @@ pub fn run_picker(title: &str, options: &[String]) -> Option<usize> {
                 .constraints([Constraint::Min(3), Constraint::Length(1)])
                 .split(inner);
 
-            let items: Vec<ListItem> = options
-                .iter()
-                .map(|o| ListItem::new(o.clone()))
-                .collect();
-            let list = List::new(items)
-                .highlight_symbol("➜ ")
-                .highlight_style(
-                    Style::default()
-                        .bg(theme.accent)
-                        .fg(theme.bg)
-                        .add_modifier(Modifier::BOLD),
-                );
+            let items: Vec<ListItem> = options.iter().map(|o| ListItem::new(o.clone())).collect();
+            let list = List::new(items).highlight_symbol("➜ ").highlight_style(
+                Style::default()
+                    .bg(theme.accent)
+                    .fg(theme.bg)
+                    .add_modifier(Modifier::BOLD),
+            );
             let mut ls = ListState::default();
             ls.select(Some(selected));
             f.render_stateful_widget(list, chunks[0], &mut ls);
@@ -335,14 +381,18 @@ pub fn run_picker(title: &str, options: &[String]) -> Option<usize> {
 
         if event::poll(Duration::from_millis(120)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
-                if k.kind != KeyEventKind::Press { continue; }
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
                 match k.code {
                     KeyCode::Esc => break None,
                     KeyCode::Up | KeyCode::Char('k') => {
                         selected = selected.saturating_sub(1);
                     }
                     KeyCode::Down | KeyCode::Char('j') => {
-                        if selected + 1 < options.len() { selected += 1; }
+                        if selected + 1 < options.len() {
+                            selected += 1;
+                        }
                     }
                     KeyCode::Enter => break Some(selected),
                     _ => {}
@@ -381,11 +431,18 @@ pub fn run_cluster_delete_confirm(cluster_name: &str) -> bool {
                 body_lines: vec![
                     format!("Remove \"{}\" from sshm?", cluster_name),
                     String::new(),
-                    "The remote cluster itself is unaffected — only the saved entry is deleted.".into(),
+                    "The remote cluster itself is unaffected — only the saved entry is deleted."
+                        .into(),
                 ],
                 buttons: vec![
-                    ModalButton { label: "Delete".into(), is_selected: button_idx == 0 },
-                    ModalButton { label: "Cancel".into(), is_selected: button_idx == 1 },
+                    ModalButton {
+                        label: "Delete".into(),
+                        is_selected: button_idx == 0,
+                    },
+                    ModalButton {
+                        label: "Cancel".into(),
+                        is_selected: button_idx == 1,
+                    },
                 ],
                 width_percent: 60,
                 height_percent: 30,
@@ -395,7 +452,9 @@ pub fn run_cluster_delete_confirm(cluster_name: &str) -> bool {
 
         if event::poll(Duration::from_millis(120)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
-                if k.kind != KeyEventKind::Press { continue; }
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
                 match k.code {
                     KeyCode::Esc => break false,
                     KeyCode::Left | KeyCode::Right | KeyCode::Tab | KeyCode::BackTab => {

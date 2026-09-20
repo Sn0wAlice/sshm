@@ -32,7 +32,11 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
 
     let block = Block::default()
         .title(Span::styled(
-            if state.is_edit { "Edit host" } else { "Create host" },
+            if state.is_edit {
+                crate::t!("form.host.title_edit")
+            } else {
+                crate::t!("form.host.title_new")
+            },
             Style::default().fg(accent).add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
@@ -70,32 +74,109 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
         let value_span = if selected {
             Span::styled(
                 format!("[{}]", value),
-                Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .bg(accent)
+                    .fg(bg)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
             Span::raw(format!("[{}]", value))
         };
         Paragraph::new(Line::from(vec![
-            Span::styled(format!("{label}: "), Style::default().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                format!("{label}: "),
+                Style::default().add_modifier(Modifier::BOLD),
+            ),
             value_span,
         ]))
     };
 
-    f.render_widget(mk_line("Name", &state.name, state.selected_field == 0), chunks[0]);
-    f.render_widget(mk_line("Host/IP", &state.host, state.selected_field == 1), chunks[1]);
-    f.render_widget(mk_line("Port", &state.port, state.selected_field == 2), chunks[2]);
-    f.render_widget(mk_line("Username", &state.username, state.selected_field == 3), chunks[3]);
-    f.render_widget(mk_line("Identity file", &state.identity_file, state.selected_field == 4), chunks[4]);
-    f.render_widget(mk_line("ProxyJump", &state.proxy_jump, state.selected_field == 5), chunks[5]);
-    f.render_widget(mk_line("Tags", &state.tags, state.selected_field == 6), chunks[6]);
-    f.render_widget(mk_line("Folder", &state.folder, state.selected_field == 7), chunks[7]);
-    f.render_widget(mk_line("Notes", &state.notes, state.selected_field == 8), chunks[8]);
     f.render_widget(
-        mk_line("Run on connect", &state.remote_command, state.selected_field == HostFormState::REMOTE_CMD_FIELD),
+        mk_line(
+            &crate::t!("form.host.name"),
+            &state.name,
+            state.selected_field == 0,
+        ),
+        chunks[0],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.host"),
+            &state.host,
+            state.selected_field == 1,
+        ),
+        chunks[1],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.port"),
+            &state.port,
+            state.selected_field == 2,
+        ),
+        chunks[2],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.username"),
+            &state.username,
+            state.selected_field == 3,
+        ),
+        chunks[3],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.identity"),
+            &state.identity_file,
+            state.selected_field == 4,
+        ),
+        chunks[4],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.proxy_jump"),
+            &state.proxy_jump,
+            state.selected_field == 5,
+        ),
+        chunks[5],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.tags"),
+            &state.tags,
+            state.selected_field == 6,
+        ),
+        chunks[6],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.folder"),
+            &state.folder,
+            state.selected_field == 7,
+        ),
+        chunks[7],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.notes"),
+            &state.notes,
+            state.selected_field == 8,
+        ),
+        chunks[8],
+    );
+    f.render_widget(
+        mk_line(
+            &crate::t!("form.host.remote_command"),
+            &state.remote_command,
+            state.selected_field == HostFormState::REMOTE_CMD_FIELD,
+        ),
         chunks[9],
     );
     f.render_widget(
-        mk_line("ssh -o options", &state.ssh_options, state.selected_field == HostFormState::SSH_OPTS_FIELD),
+        mk_line(
+            &crate::t!("form.host.ssh_options"),
+            &state.ssh_options,
+            state.selected_field == HostFormState::SSH_OPTS_FIELD,
+        ),
         chunks[10],
     );
 
@@ -104,24 +185,32 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
     let fa_value = if state.forward_agent { "[x]" } else { "[ ]" };
     let fa_label = "ForwardAgent (-A)";
     let fa_marker_style = if fa_selected {
-        Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(accent)
+            .fg(bg)
+            .add_modifier(Modifier::BOLD)
     } else if state.forward_agent {
-        Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.warning)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.fg)
     };
     let warning_style = if state.forward_agent {
-        Style::default().fg(theme.error)
+        Style::default().fg(theme.warning)
     } else {
         Style::default().fg(theme.muted)
     };
     let fa_warning = if state.forward_agent {
-        "  ⚠ shares your local agent with this host"
+        &crate::t!("form.host.fa_warning")
     } else {
-        "  Space to toggle (off by default)"
+        &crate::t!("form.toggle_hint")
     };
     let fa_para = Paragraph::new(Line::from(vec![
-        Span::styled(format!("{}: ", fa_label), Style::default().add_modifier(Modifier::BOLD)),
+        Span::styled(
+            format!("{}: ", fa_label),
+            Style::default().add_modifier(Modifier::BOLD),
+        ),
         Span::styled(fa_value, fa_marker_style),
         Span::styled(fa_warning.to_string(), warning_style),
     ]));
@@ -131,16 +220,21 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
     let mosh_selected = state.selected_field == HostFormState::MOSH_FIELD;
     let mosh_value = if state.mosh { "[x]" } else { "[ ]" };
     let mosh_marker_style = if mosh_selected {
-        Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(accent)
+            .fg(bg)
+            .add_modifier(Modifier::BOLD)
     } else if state.mosh {
-        Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.success)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.fg)
     };
     let mosh_hint = if state.mosh {
         "  connects with mosh instead of ssh"
     } else {
-        "  Space to toggle (off by default)"
+        &crate::t!("form.toggle_hint")
     };
     let mosh_para = Paragraph::new(Line::from(vec![
         Span::styled("Mosh: ", Style::default().add_modifier(Modifier::BOLD)),
@@ -151,7 +245,10 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
 
     let save_selected = state.selected_field == HostFormState::fields_count();
     let save_style = if save_selected {
-        Style::default().bg(accent).fg(bg).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(accent)
+            .fg(bg)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(accent)
     };
@@ -172,8 +269,18 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
     };
     if let Some(ref err) = state.error {
         let err_para = Paragraph::new(Line::from(vec![
-            Span::styled("✗ ", Style::default().fg(theme.error).add_modifier(Modifier::BOLD)),
-            Span::styled(err.clone(), Style::default().fg(theme.error).add_modifier(Modifier::BOLD)),
+            Span::styled(
+                "✗ ",
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                err.clone(),
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD),
+            ),
         ]));
         f.render_widget(err_para, footer_area);
     } else {
@@ -230,7 +337,12 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
     }
 
     let username = state.username.trim();
-    let username = if username.is_empty() { "root" } else { username }.to_string();
+    let username = if username.is_empty() {
+        "root"
+    } else {
+        username
+    }
+    .to_string();
 
     let identity_file = if state.identity_file.trim().is_empty() {
         None
@@ -258,18 +370,30 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
                 .map(|s| s.trim().to_string())
                 .filter(|s| !s.is_empty())
                 .collect();
-            if v.is_empty() { None } else { Some(v) }
+            if v.is_empty() {
+                None
+            } else {
+                Some(v)
+            }
         }
     };
 
     let notes = {
         let v = state.notes.trim();
-        if v.is_empty() { None } else { Some(v.to_string()) }
+        if v.is_empty() {
+            None
+        } else {
+            Some(v.to_string())
+        }
     };
 
     let remote_command = {
         let v = state.remote_command.trim();
-        if v.is_empty() { None } else { Some(v.to_string()) }
+        if v.is_empty() {
+            None
+        } else {
+            Some(v.to_string())
+        }
     };
 
     let ssh_options = parse_ssh_options(&state.ssh_options);
@@ -284,7 +408,14 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
             let (last_connected_at, use_count, favorite, tunnels) = db
                 .hosts
                 .get(orig_name)
-                .map(|h| (h.last_connected_at.clone(), h.use_count, h.favorite, h.tunnels.clone()))
+                .map(|h| {
+                    (
+                        h.last_connected_at.clone(),
+                        h.use_count,
+                        h.favorite,
+                        h.tunnels.clone(),
+                    )
+                })
                 .unwrap_or((None, 0, false, vec![]));
             db.hosts.remove(orig_name);
             let new_host = Host {

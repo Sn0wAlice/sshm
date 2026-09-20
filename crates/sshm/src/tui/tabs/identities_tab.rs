@@ -75,7 +75,11 @@ impl IdentitiesTabState {
                 .keys
                 .iter()
                 .enumerate()
-                .filter(|(_, k)| matcher.fuzzy_match(&key_haystack(k), &self.filter).is_some())
+                .filter(|(_, k)| {
+                    matcher
+                        .fuzzy_match(&key_haystack(k), &self.filter)
+                        .is_some()
+                })
                 .map(|(i, _)| i)
                 .collect();
         }
@@ -85,7 +89,9 @@ impl IdentitiesTabState {
     }
 
     pub fn selected_key(&self) -> Option<&KeyEntry> {
-        self.visible.get(self.selected).and_then(|&i| self.keys.get(i))
+        self.visible
+            .get(self.selected)
+            .and_then(|&i| self.keys.get(i))
     }
 
     fn move_down(&mut self) {
@@ -111,10 +117,7 @@ pub enum IdentitiesAction {
     KnownHostsClean,
 }
 
-pub fn handle_identities_event(
-    key: KeyCode,
-    state: &mut IdentitiesTabState,
-) -> IdentitiesAction {
+pub fn handle_identities_event(key: KeyCode, state: &mut IdentitiesTabState) -> IdentitiesAction {
     // While typing a filter, keystrokes edit the query; arrows still navigate.
     if state.input_mode {
         match key {
@@ -174,12 +177,7 @@ pub fn handle_identities_event(
     }
 }
 
-pub fn draw_identities_tab(
-    f: &mut Frame,
-    area: Rect,
-    state: &IdentitiesTabState,
-    theme: &Theme,
-) {
+pub fn draw_identities_tab(f: &mut Frame, area: Rect, state: &IdentitiesTabState, theme: &Theme) {
     let hchunks = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
@@ -206,13 +204,13 @@ pub fn draw_identities_tab(
             } else {
                 Style::default().fg(theme.muted)
             };
-            let mut spans = vec![
-                Span::styled(format!("{}  ", agent_marker), marker_style),
-            ];
+            let mut spans = vec![Span::styled(format!("{}  ", agent_marker), marker_style)];
             if k.is_hardware {
                 spans.push(Span::styled(
                     "[HW] ".to_string(),
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
             spans.push(Span::styled(
@@ -231,7 +229,11 @@ pub fn draw_identities_tab(
     let title = if state.input_mode {
         format!("SSH Keys — filter: {}▏", state.filter)
     } else if !state.filter.is_empty() {
-        format!("SSH Keys — filter: {} ({} match)", state.filter, state.visible.len())
+        format!(
+            "SSH Keys — filter: {} ({} match)",
+            state.filter,
+            state.visible.len()
+        )
     } else {
         "SSH Keys (~/.ssh)".to_string()
     };
@@ -267,15 +269,22 @@ pub fn draw_identities_tab(
             k.key_type,
             k.bits.map(|b| format!(" {} bits", b)).unwrap_or_default(),
             if k.is_hardware { "  [HW-backed]" } else { "" },
-            if k.comment.is_empty() { "(none)" } else { &k.comment },
+            if k.comment.is_empty() {
+                "(none)"
+            } else {
+                &k.comment
+            },
             k.fingerprint,
             if k.in_agent { "yes ●" } else { "no" },
             k.public.display(),
         )
     } else if state.keys.is_empty() {
-        "No keys found in ~/.ssh.\n\nPress 'g' to generate a new key.".to_string()
+        crate::t!("empty.no_keys").to_string()
     } else {
-        format!("No key matches \"{}\".\n\nEsc to clear the filter.", state.filter)
+        format!(
+            "No key matches \"{}\".\n\nEsc to clear the filter.",
+            state.filter
+        )
     };
 
     let detail = Paragraph::new(detail_text).block(

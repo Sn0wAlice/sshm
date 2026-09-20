@@ -1,12 +1,12 @@
+use super::path::{config_path, ensure_config_file};
+use crate::models::{Database, Host};
+use anyhow::{Context, Result};
+use serde::Serialize;
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, File};
 use std::io::{Read, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use anyhow::{Context, Result};
-use serde::Serialize;
-use crate::models::{Host, Database};
-use super::path::{config_path, ensure_config_file};
 
 /// Monotonic counter that makes temp-file names unique within a process;
 /// combined with the pid it stays unique across concurrent writers too.
@@ -37,8 +37,8 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 
     // Write + fsync the temp file, closing the handle (scope end) before rename.
     {
-        let mut f = File::create(&tmp)
-            .with_context(|| format!("creating temp file {}", tmp.display()))?;
+        let mut f =
+            File::create(&tmp).with_context(|| format!("creating temp file {}", tmp.display()))?;
         f.write_all(bytes)
             .with_context(|| format!("writing temp file {}", tmp.display()))?;
         f.sync_all()
@@ -57,9 +57,8 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
         Err(e) => {
             // rename can fail across filesystems; fall back to a direct write so
             // saving never hard-fails, then clean up the temp.
-            let res = fs::write(path, bytes).with_context(|| {
-                format!("rename failed ({e}); fallback-write {}", path.display())
-            });
+            let res = fs::write(path, bytes)
+                .with_context(|| format!("rename failed ({e}); fallback-write {}", path.display()));
             let _ = fs::remove_file(&tmp);
             res
         }
@@ -82,8 +81,13 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
     }
     if let Ok(map) = serde_json::from_str::<HashMap<String, Host>>(content) {
         let mut folders: Vec<String> = map.values().filter_map(|h| h.folder.clone()).collect();
-        folders.sort(); folders.dedup();
-        return Some(Database { hosts: map, folders, ..Default::default() });
+        folders.sort();
+        folders.dedup();
+        return Some(Database {
+            hosts: map,
+            folders,
+            ..Default::default()
+        });
     }
 
     let mut migrated: HashMap<String, Host> = HashMap::new();
@@ -91,65 +95,102 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
     for (alias, entry) in obj {
         if let Some(e) = entry.as_object() {
             let name = e.get("name").and_then(|x| x.as_str()).unwrap_or(alias);
-            let host = e.get("host").and_then(|x| x.as_str())
+            let host = e
+                .get("host")
+                .and_then(|x| x.as_str())
                 .or_else(|| e.get("ip").and_then(|x| x.as_str()))
                 .unwrap_or("");
             let port = e.get("port").and_then(|x| x.as_u64()).unwrap_or(22) as u16;
             let username = e.get("username").and_then(|x| x.as_str()).unwrap_or("root");
-            let identity_file = e.get("identity_file").and_then(|x| x.as_str()).map(|s| s.to_string());
-            let proxy_jump = e.get("proxy_jump").and_then(|x| x.as_str()).map(|s| s.to_string());
-            let folder = e.get("folder").and_then(|x| x.as_str()).map(|s| s.to_string());
+            let identity_file = e
+                .get("identity_file")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string());
+            let proxy_jump = e
+                .get("proxy_jump")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string());
+            let folder = e
+                .get("folder")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string());
             let tags = e.get("tags").and_then(|x| x.as_array()).map(|arr| {
-                arr.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect::<Vec<_>>()
+                arr.iter()
+                    .filter_map(|v| v.as_str().map(|s| s.to_string()))
+                    .collect::<Vec<_>>()
             });
-            let last_connected_at = e.get("last_connected_at").and_then(|x| x.as_str()).map(|s| s.to_string());
+            let last_connected_at = e
+                .get("last_connected_at")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string());
             let use_count = e.get("use_count").and_then(|x| x.as_u64()).unwrap_or(0) as u32;
             let favorite = e.get("favorite").and_then(|x| x.as_bool()).unwrap_or(false);
-            let tunnels = e.get("tunnels")
+            let tunnels = e
+                .get("tunnels")
                 .and_then(|x| serde_json::from_value(x.clone()).ok())
                 .unwrap_or_default();
-            let forward_agent = e.get("forward_agent").and_then(|x| x.as_bool()).unwrap_or(false);
+            let forward_agent = e
+                .get("forward_agent")
+                .and_then(|x| x.as_bool())
+                .unwrap_or(false);
             let mosh = e.get("mosh").and_then(|x| x.as_bool()).unwrap_or(false);
-            let notes = e.get("notes").and_then(|x| x.as_str()).map(|s| s.to_string());
+            let notes = e
+                .get("notes")
+                .and_then(|x| x.as_str())
+                .map(|s| s.to_string());
 
             if !host.is_empty() {
-                migrated.insert(alias.clone(), Host {
-                    name: name.to_string(),
-                    host: host.to_string(),
-                    port,
-                    username: username.to_string(),
-                    identity_file,
-                    proxy_jump,
-                    folder,
-                    tags,
-                    last_connected_at,
-                    use_count,
-                    favorite,
-                    tunnels,
-                    forward_agent,
-                    mosh,
-                    notes,
-                    ..Default::default()
-                });
+                migrated.insert(
+                    alias.clone(),
+                    Host {
+                        name: name.to_string(),
+                        host: host.to_string(),
+                        port,
+                        username: username.to_string(),
+                        identity_file,
+                        proxy_jump,
+                        folder,
+                        tags,
+                        last_connected_at,
+                        use_count,
+                        favorite,
+                        tunnels,
+                        forward_agent,
+                        mosh,
+                        notes,
+                        ..Default::default()
+                    },
+                );
             }
         }
     }
     let mut folders: Vec<String> = migrated.values().filter_map(|h| h.folder.clone()).collect();
-    folders.sort(); folders.dedup();
-    Some(Database { hosts: migrated, folders, ..Default::default() })
+    folders.sort();
+    folders.dedup();
+    Some(Database {
+        hosts: migrated,
+        folders,
+        ..Default::default()
+    })
 }
 
 /// Pure serialize: produce the canonical pretty JSON representation of `db`
 /// (sorted host map, deduped folders) — what `save_db` writes to disk.
 pub fn serialize_db(db: &Database) -> Result<String, serde_json::Error> {
     #[derive(Serialize)]
-    struct Out<'a> { hosts: BTreeMap<String, &'a Host>, folders: Vec<String> }
+    struct Out<'a> {
+        hosts: BTreeMap<String, &'a Host>,
+        folders: Vec<String>,
+    }
 
     let ordered: BTreeMap<_, _> = db.hosts.iter().map(|(k, v)| (k.clone(), v)).collect();
     let mut folders = db.folders.clone();
     folders.sort();
     folders.dedup();
-    serde_json::to_string_pretty(&Out { hosts: ordered, folders })
+    serde_json::to_string_pretty(&Out {
+        hosts: ordered,
+        folders,
+    })
 }
 
 /// Load the full Database (hosts + folders). Handles migration from legacy formats.
@@ -247,8 +288,13 @@ pub fn load_hosts() -> HashMap<String, Host> {
 /// Legacy: save only hosts map (folders inferred from hosts' `folder` fields)
 pub fn save_hosts(hosts: &HashMap<String, Host>) {
     let mut folders: Vec<String> = hosts.values().filter_map(|h| h.folder.clone()).collect();
-    folders.sort(); folders.dedup();
-    let db = Database { hosts: hosts.clone(), folders, ..Default::default() };
+    folders.sort();
+    folders.dedup();
+    let db = Database {
+        hosts: hosts.clone(),
+        folders,
+        ..Default::default()
+    };
     save_db(&db);
 }
 
@@ -375,8 +421,16 @@ mod tests {
         // file containing garbage, sitting in the same directory.
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("host.json");
-        atomic_write(&path, serialize_db(&db_with(&["a"]).clone()).unwrap().as_bytes()).unwrap();
-        fs::write(dir.path().join(".host.json.tmp-999-999"), "{ not valid json ").unwrap();
+        atomic_write(
+            &path,
+            serialize_db(&db_with(&["a"]).clone()).unwrap().as_bytes(),
+        )
+        .unwrap();
+        fs::write(
+            dir.path().join(".host.json.tmp-999-999"),
+            "{ not valid json ",
+        )
+        .unwrap();
 
         // Loading the fixed filename ignores the orphaned temp entirely.
         let loaded = read_db_at(&path);
@@ -395,7 +449,11 @@ mod tests {
         assert!(!db.reload_if_changed_from(&path).unwrap());
 
         // An external writer replaces the file with different content.
-        atomic_write(&path, serialize_db(&db_with(&["a", "b"])).unwrap().as_bytes()).unwrap();
+        atomic_write(
+            &path,
+            serialize_db(&db_with(&["a", "b"])).unwrap().as_bytes(),
+        )
+        .unwrap();
         assert!(db.reload_if_changed_from(&path).unwrap());
         assert_eq!(db.hosts.len(), 2);
         assert!(db.hosts.contains_key("b"));
@@ -438,7 +496,10 @@ mod tests {
         // Whatever won the last rename, the file must be *exactly* one of the
         // payloads — never a torn or interleaved write — and still parse.
         let final_text = fs::read_to_string(&*path).unwrap();
-        assert!(payloads.contains(&final_text), "file was not a whole payload");
+        assert!(
+            payloads.contains(&final_text),
+            "file was not a whole payload"
+        );
         assert_eq!(parse_db_text(&final_text).unwrap().hosts.len(), 1);
         // Every write cleaned up its own temp.
         assert_eq!(count_temp_siblings(dir.path()), 0);

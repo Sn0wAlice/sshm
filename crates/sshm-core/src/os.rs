@@ -38,7 +38,10 @@ fn applescript_quote(s: &str) -> String {
 
 /// POSIX-shell-quote a single argument.
 pub fn shell_quote(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || "-_./@:=".contains(c)) {
+    if !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || "-_./@:=".contains(c))
+    {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -168,7 +171,11 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
 /// Open `url` (or a path) with the system handler — `open` on macOS,
 /// `xdg-open` on Linux.
 pub fn open_url(url: &str) -> Result<(), String> {
-    let opener = if cfg!(target_os = "macos") { "open" } else { "xdg-open" };
+    let opener = if cfg!(target_os = "macos") {
+        "open"
+    } else {
+        "xdg-open"
+    };
     Command::new(opener)
         .arg(url)
         .stdin(Stdio::null())
@@ -210,7 +217,11 @@ fn detect_terminal() -> Option<Vec<String>> {
 
 /// macOS fallback: ask Terminal.app to run the command in a new window.
 fn macos_terminal(argv: &[String]) -> Result<(), String> {
-    let cmd_str = argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" ");
+    let cmd_str = argv
+        .iter()
+        .map(|a| shell_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ");
     let script = format!(
         "tell application \"Terminal\" to do script {}",
         applescript_quote(&cmd_str),
@@ -237,7 +248,10 @@ pub fn open_in_terminal(argv: &[String], terminal_override: &str) -> Result<(), 
     }
 
     let prefix: Vec<String> = if !terminal_override.trim().is_empty() {
-        terminal_override.split_whitespace().map(String::from).collect()
+        terminal_override
+            .split_whitespace()
+            .map(String::from)
+            .collect()
     } else {
         match detect_terminal() {
             Some(p) => p,

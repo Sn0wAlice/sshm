@@ -48,7 +48,10 @@ pub fn local_available() -> bool {
                     .map(|s| s.success())
             })
             .unwrap_or(false);
-        *g = Some(AvailCache { last: Instant::now(), value });
+        *g = Some(AvailCache {
+            last: Instant::now(),
+            value,
+        });
         value
     } else {
         false
@@ -56,7 +59,9 @@ pub fn local_available() -> bool {
 }
 
 pub fn invalidate_cache() {
-    if let Ok(mut g) = AVAIL_CACHE.lock() { *g = None; }
+    if let Ok(mut g) = AVAIL_CACHE.lock() {
+        *g = None;
+    }
 }
 
 /// Discover saved Incus remotes (excluding `local`) by scraping
@@ -121,16 +126,27 @@ pub fn parse_list_csv(raw: &str) -> Vec<IncusInstance> {
     raw.lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split(',').collect();
-            if parts.len() < 3 { return None; }
+            if parts.len() < 3 {
+                return None;
+            }
             let name = parts[0].trim().to_string();
             if name.is_empty() || name.eq_ignore_ascii_case("name") {
                 return None;
             }
             let status = parts[1].trim().to_string();
             let kind = parts[2].trim().to_string();
-            let image = parts.get(3).map(|s| s.trim().to_string()).unwrap_or_default();
+            let image = parts
+                .get(3)
+                .map(|s| s.trim().to_string())
+                .unwrap_or_default();
             let running = status.eq_ignore_ascii_case("running");
-            Some(IncusInstance { name, kind, status, image, running })
+            Some(IncusInstance {
+                name,
+                kind,
+                status,
+                image,
+                running,
+            })
         })
         .collect()
 }
@@ -177,11 +193,7 @@ pub fn logs(
 /// Run `incus start|stop|restart [<remote>:]<name>`. Output is captured; on
 /// failure the daemon's stderr is surfaced. `stop` and `restart` get a 5s
 /// graceful timeout.
-pub fn lifecycle(
-    name: &str,
-    remote: Option<&str>,
-    action: LifecycleAction,
-) -> Result<()> {
+pub fn lifecycle(name: &str, remote: Option<&str>, action: LifecycleAction) -> Result<()> {
     let mut cmd = Command::new("incus");
     cmd.arg(action.subcommand()).arg(qualified(name, remote));
     if matches!(action, LifecycleAction::Stop | LifecycleAction::Restart) {
@@ -193,7 +205,11 @@ pub fn lifecycle(
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(anyhow::anyhow!(
             "{}",
-            if err.is_empty() { "non-zero exit".to_string() } else { err }
+            if err.is_empty() {
+                "non-zero exit".to_string()
+            } else {
+                err
+            }
         ));
     }
     Ok(())

@@ -1,6 +1,6 @@
-use std::path::PathBuf;
-use std::io;
 use std::fs;
+use std::io;
+use std::path::PathBuf;
 
 /// The sshm configuration directory (`~/.config/sshm`), created on demand.
 pub fn config_dir() -> PathBuf {

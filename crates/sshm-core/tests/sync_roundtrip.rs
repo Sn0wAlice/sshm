@@ -27,7 +27,11 @@ fn git(args: &[&str], cwd: &Path) {
         .current_dir(cwd)
         .output()
         .expect("running git");
-    assert!(out.status.success(), "git {args:?}: {}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "git {args:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 fn host_json(entries: &[(&str, &str)]) -> String {
@@ -77,7 +81,12 @@ fn sync(cfg: &SyncConfig) -> sync::SyncReport {
 
 #[test]
 fn two_machines_converge_through_the_remote() {
-    if !Command::new("git").arg("--version").output().map(|o| o.status.success()).unwrap_or(false) {
+    if !Command::new("git")
+        .arg("--version")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+    {
         eprintln!("git not available — skipping");
         return;
     }
@@ -95,7 +104,11 @@ fn two_machines_converge_through_the_remote() {
     use_home(&home_a);
     write_hosts(&[("laptop", "10.0.0.1")]);
     let first = sync(&cfg);
-    assert!(first.pushed, "the first sync must publish: {}", first.summary());
+    assert!(
+        first.pushed,
+        "the first sync must publish: {}",
+        first.summary()
+    );
 
     // --- Machine B starts from nothing and adopts them ---
     use_home(&home_b);
@@ -129,11 +142,19 @@ fn two_machines_converge_through_the_remote() {
     sync(&cfg);
     use_home(&home_a);
     sync(&cfg);
-    assert_eq!(host_names(), vec!["desktop", "server"], "the deleted host stays deleted");
+    assert_eq!(
+        host_names(),
+        vec!["desktop", "server"],
+        "the deleted host stays deleted"
+    );
 
     // --- A quiet sync is a no-op, and the lock is always released ---
     let quiet = sync(&cfg);
-    assert!(!quiet.pushed, "nothing changed, nothing to push: {}", quiet.summary());
+    assert!(
+        !quiet.pushed,
+        "nothing changed, nothing to push: {}",
+        quiet.summary()
+    );
     assert_eq!(quiet.summary(), "already up to date");
     assert!(
         !sshm_core::config::path::sync_lock_path().exists(),

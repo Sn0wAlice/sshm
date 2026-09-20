@@ -1,22 +1,37 @@
 name: ci
 
 on:
-  #push:
-  #  branches: [main, workspace-refactor]
-  #pull_request:
+  push:
+    branches: [main]
+  pull_request:
   workflow_dispatch:
-    
+
 jobs:
-  # Engine + TUI: unit tests and clippy.
   rust:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
-          components: clippy
+          components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+
+      # Formatting first: it fails in milliseconds and its diff is noise in a
+      # review, so there is no point compiling before it is settled.
+      - name: Format
+        run: cargo fmt --all -- --check
+
       - name: Test (core + TUI)
         run: cargo test --workspace
+
+      # The active locale comes from the environment, so a test asserting an
+      # English literal passes here and fails on a French machine. Running the
+      # suite under `fr` is what keeps that honest — and it exercises the
+      # French bundle, which the en-only run never loads.
+      - name: Test (French locale)
+        run: cargo test --workspace
+        env:
+          SSHM_LANG: fr
+
       - name: Clippy (core + TUI)
         run: cargo clippy --workspace --all-targets -- -D warnings

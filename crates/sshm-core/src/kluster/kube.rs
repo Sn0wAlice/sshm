@@ -63,11 +63,11 @@ pub fn parse_pods_jsonpath(raw: &str) -> Vec<PodInfo> {
     raw.lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() < 4 { return None; }
-            let containers: Vec<String> = parts[3]
-                .split_whitespace()
-                .map(|s| s.to_string())
-                .collect();
+            if parts.len() < 4 {
+                return None;
+            }
+            let containers: Vec<String> =
+                parts[3].split_whitespace().map(|s| s.to_string()).collect();
             Some(PodInfo {
                 namespace: parts[0].trim().to_string(),
                 name: parts[1].trim().to_string(),
@@ -167,7 +167,10 @@ mod tests {
         };
         let cmd = base_cmd(&cluster);
         let args: Vec<&std::ffi::OsStr> = cmd.get_args().collect();
-        assert!(args.is_empty(), "expected no args when both unset, got {args:?}");
+        assert!(
+            args.is_empty(),
+            "expected no args when both unset, got {args:?}"
+        );
     }
 
     #[test]
@@ -180,9 +183,13 @@ mod tests {
             namespace_default: None,
         };
         let cmd = base_cmd(&cluster);
-        let args: Vec<String> = cmd.get_args()
+        let args: Vec<String> = cmd
+            .get_args()
             .map(|s| s.to_string_lossy().into_owned())
             .collect();
-        assert_eq!(args, vec!["--kubeconfig", "/tmp/kc", "--context", "homelab"]);
+        assert_eq!(
+            args,
+            vec!["--kubeconfig", "/tmp/kc", "--context", "homelab"]
+        );
     }
 }

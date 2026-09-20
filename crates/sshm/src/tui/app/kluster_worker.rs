@@ -110,8 +110,7 @@ fn run_probe(probe: &Probe<'_>, tx: &mpsc::Sender<KlusterUpdate>) {
             });
         }
         Probe::IncusRemote(remote) => {
-            let instances =
-                crate::kluster::incus::list_instances(Some(remote)).unwrap_or_default();
+            let instances = crate::kluster::incus::list_instances(Some(remote)).unwrap_or_default();
             let _ = tx.send(KlusterUpdate::IncusRemote {
                 remote: (*remote).to_string(),
                 instances,
@@ -160,7 +159,10 @@ pub fn spawn_kluster_worker(
                 } else {
                     Vec::new()
                 };
-                let _ = result_tx.send(KlusterUpdate::Docker { available, containers });
+                let _ = result_tx.send(KlusterUpdate::Docker {
+                    available,
+                    containers,
+                });
 
                 // Apple `container` (macOS) — local only, no remotes.
                 crate::kluster::apple::invalidate_cache();
@@ -257,11 +259,26 @@ mod tests {
         let probes = collect_probes(&t);
         assert_eq!(probes.len(), 5, "2 docker + 1 incus + 2 clusters");
         assert_eq!(
-            probes.iter().filter(|p| matches!(p, Probe::DockerRemote { .. })).count(),
+            probes
+                .iter()
+                .filter(|p| matches!(p, Probe::DockerRemote { .. }))
+                .count(),
             2
         );
-        assert_eq!(probes.iter().filter(|p| matches!(p, Probe::IncusRemote(_))).count(), 1);
-        assert_eq!(probes.iter().filter(|p| matches!(p, Probe::Cluster(_))).count(), 2);
+        assert_eq!(
+            probes
+                .iter()
+                .filter(|p| matches!(p, Probe::IncusRemote(_)))
+                .count(),
+            1
+        );
+        assert_eq!(
+            probes
+                .iter()
+                .filter(|p| matches!(p, Probe::Cluster(_)))
+                .count(),
+            2
+        );
     }
 
     #[test]
@@ -270,7 +287,10 @@ mod tests {
         // what fills in first on the screen.
         let t = targets();
         let probes = collect_probes(&t);
-        assert!(matches!(probes[0], Probe::DockerRemote { alias: "web", .. }));
+        assert!(matches!(
+            probes[0],
+            Probe::DockerRemote { alias: "web", .. }
+        ));
         assert!(matches!(probes[1], Probe::DockerRemote { alias: "db", .. }));
     }
 
@@ -304,6 +324,10 @@ mod tests {
         let chunks: Vec<_> = probes.chunks(MAX_PARALLEL_PROBES).collect();
         assert_eq!(chunks.len(), 3, "20 probes at 8 per pass");
         assert!(chunks.iter().all(|c| c.len() <= MAX_PARALLEL_PROBES));
-        assert_eq!(chunks.iter().map(|c| c.len()).sum::<usize>(), 20, "nothing dropped");
+        assert_eq!(
+            chunks.iter().map(|c| c.len()).sum::<usize>(),
+            20,
+            "nothing dropped"
+        );
     }
 }

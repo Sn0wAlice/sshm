@@ -18,7 +18,6 @@
 
 use std::collections::HashMap;
 use std::fs;
-use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -29,8 +28,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use serde::{Deserialize, Serialize};
 
 use crate::models::{Host, Tunnel, TunnelKind};
-use crate::tunnels::build_tunnel_argv;
 use crate::tui::theme::Theme;
+use crate::tunnels::build_tunnel_argv;
 
 /// PIDs of every live background tunnel of *this* process. Used by
 /// [`kill_all`] for the clean-quit cleanup (`q::press` calls `process::exit`,
@@ -68,18 +67,10 @@ pub fn kill_all() {
 // State-file persistence
 // ============================================================================
 
-/// `~/.config/sshm/tunnels/`.
-fn tunnels_dir() -> PathBuf {
-    let mut p = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    p.push("sshm");
-    p.push("tunnels");
-    p
-}
-
-/// Path of the state file owned by the SSHM process with PID `sshm_pid`.
-fn state_file_for(sshm_pid: u32) -> PathBuf {
-    tunnels_dir().join(format!("{}.json", sshm_pid))
-}
+// The directory and the file naming are the engine's: `sshm tunnel` reads the
+// same records through `sshm_core::tunnels`, and a second definition here is
+// how the two would quietly start looking in different places.
+use crate::tunnels::{state_file_for, tunnels_dir};
 
 /// One tunnel as serialized to the per-instance state file.
 #[derive(Serialize, Deserialize)]
@@ -102,7 +93,11 @@ fn process_cmdline(pid: u32) -> Option<String> {
         return None;
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
-    if s.is_empty() { None } else { Some(s) }
+    if s.is_empty() {
+        None
+    } else {
+        Some(s)
+    }
 }
 
 /// True when `pid` is alive *and* looks like an `sshm` process.
@@ -147,7 +142,11 @@ fn recover_orphans() -> usize {
         if path.extension().and_then(|e| e.to_str()) != Some("json") {
             continue;
         }
-        let owner_pid: u32 = match path.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse().ok()) {
+        let owner_pid: u32 = match path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse().ok())
+        {
             Some(p) => p,
             None => continue,
         };
@@ -352,10 +351,9 @@ impl TunnelManager {
             return Vec::new();
         }
         let now = Instant::now();
-        let (ready, waiting): (Vec<_>, Vec<_>) =
-            std::mem::take(&mut self.pending_restarts)
-                .into_iter()
-                .partition(|p| p.due <= now);
+        let (ready, waiting): (Vec<_>, Vec<_>) = std::mem::take(&mut self.pending_restarts)
+            .into_iter()
+            .partition(|p| p.due <= now);
         self.pending_restarts = waiting;
 
         let mut revived = Vec::new();
@@ -365,7 +363,11 @@ impl TunnelManager {
                 // reconnect to, so stop trying.
                 crate::os::notify(
                     "SSHM — tunnel not restarted",
-                    &format!("{} ({} no longer exists)", tunnel_route(&p.tunnel), p.host_name),
+                    &format!(
+                        "{} ({} no longer exists)",
+                        tunnel_route(&p.tunnel),
+                        p.host_name
+                    ),
                 );
                 continue;
             };
@@ -465,11 +467,19 @@ fn tunnel_route(t: &Tunnel) -> String {
     match t.kind {
         TunnelKind::Dynamic => format!("SOCKS5 on :{}", t.local_port),
         TunnelKind::Local => {
-            let rh = if t.remote_host.is_empty() { "localhost" } else { &t.remote_host };
+            let rh = if t.remote_host.is_empty() {
+                "localhost"
+            } else {
+                &t.remote_host
+            };
             format!(":{} → {}:{}", t.local_port, rh, t.remote_port)
         }
         TunnelKind::Remote => {
-            let rh = if t.remote_host.is_empty() { "localhost" } else { &t.remote_host };
+            let rh = if t.remote_host.is_empty() {
+                "localhost"
+            } else {
+                &t.remote_host
+            };
             format!("remote :{} → {}:{}", t.local_port, rh, t.remote_port)
         }
     }
@@ -486,12 +496,7 @@ fn fmt_uptime(secs: u64) -> String {
 }
 
 /// Render the background-tunnels dashboard as a centered popup overlay.
-pub fn draw_tunnels_popup(
-    f: &mut Frame,
-    manager: &TunnelManager,
-    selected: usize,
-    theme: &Theme,
-) {
+pub fn draw_tunnels_popup(f: &mut Frame, manager: &TunnelManager, selected: usize, theme: &Theme) {
     let area = f.area();
     let now = Utc::now();
 
@@ -506,7 +511,9 @@ pub fn draw_tunnels_popup(
         lines.push(ListItem::new(Line::from(vec![
             Span::styled(
                 format!(" {:<3}", t.tunnel.kind.short()),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 format!("{:<26}", tunnel_route(&t.tunnel)),
@@ -529,12 +536,21 @@ pub fn draw_tunnels_popup(
     let h = (body_h + 4).min(area.height.max(1)); // borders + title + footer
     let x = area.x + area.width.saturating_sub(w) / 2;
     let y = area.y + area.height.saturating_sub(h) / 2;
-    let rect = Rect { x, y, width: w, height: h };
+    let rect = Rect {
+        x,
+        y,
+        width: w,
+        height: h,
+    };
 
     let block = Block::default()
         .title(format!(" Background tunnels — {} active ", manager.len()))
         .borders(Borders::ALL)
-        .border_style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD))
+        .border_style(
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        )
         .style(Style::default().bg(theme.bg).fg(theme.fg));
     let inner = block.inner(rect);
     f.render_widget(Clear, rect);
@@ -554,14 +570,12 @@ pub fn draw_tunnels_popup(
     } else {
         let mut ls = ListState::default();
         ls.select(Some(selected.min(manager.active.len().saturating_sub(1))));
-        let list = List::new(lines)
-            .highlight_symbol("➜ ")
-            .highlight_style(
-                Style::default()
-                    .bg(theme.accent)
-                    .fg(theme.bg)
-                    .add_modifier(Modifier::BOLD),
-            );
+        let list = List::new(lines).highlight_symbol("➜ ").highlight_style(
+            Style::default()
+                .bg(theme.accent)
+                .fg(theme.bg)
+                .add_modifier(Modifier::BOLD),
+        );
         f.render_stateful_widget(list, chunks[0], &mut ls);
     }
 
@@ -664,7 +678,10 @@ mod tests {
 
     #[test]
     fn the_route_summary_names_what_is_forwarded() {
-        assert_eq!(tunnel_route(&tunnel(TunnelKind::Dynamic, 1080)), "SOCKS5 on :1080");
+        assert_eq!(
+            tunnel_route(&tunnel(TunnelKind::Dynamic, 1080)),
+            "SOCKS5 on :1080"
+        );
         assert_eq!(
             tunnel_route(&tunnel(TunnelKind::Local, 15432)),
             ":15432 → localhost:5432"

@@ -15,12 +15,12 @@ pub mod os;
 pub mod tty;
 
 pub mod config;
-pub mod ssh;
-pub mod import;
 pub mod filter;
 pub mod history;
 pub mod i18n;
+pub mod import;
 pub mod kluster;
+pub mod ssh;
 pub mod sync;
 pub mod tunnels;
 pub mod watch;

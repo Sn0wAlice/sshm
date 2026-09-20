@@ -1,7 +1,8 @@
-use std::collections::HashMap;
-use std::io::stdout;
-use std::process::{Child, Command, Stdio};
-use std::time::{Duration, Instant};
+use crate::models::{Host, Tunnel, TunnelKind};
+use crate::tui::ssh::modal::centered_rect;
+use crate::tui::ssh::portforward_state::{field, PortForwardForm};
+use crate::tui::theme;
+use crate::tunnels::build_tunnel_argv;
 use crossterm::{
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
@@ -12,11 +13,10 @@ use ratatui::{
     widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
     Terminal,
 };
-use crate::models::{Host, Tunnel, TunnelKind};
-use crate::tunnels::build_tunnel_argv;
-use crate::tui::theme;
-use crate::tui::ssh::modal::centered_rect;
-use crate::tui::ssh::portforward_state::{field, PortForwardForm};
+use std::collections::HashMap;
+use std::io::stdout;
+use std::process::{Child, Command, Stdio};
+use std::time::{Duration, Instant};
 
 // ============================================================================
 // Saved-tunnels picker state
@@ -106,17 +106,28 @@ fn run_tunnel_picker<B: Backend>(
 
         if event::poll(Duration::from_millis(120)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
-                if k.kind != KeyEventKind::Press { continue; }
-                let sel = state.selected().unwrap_or(0).min(tunnels.len().saturating_sub(1));
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
+                let sel = state
+                    .selected()
+                    .unwrap_or(0)
+                    .min(tunnels.len().saturating_sub(1));
                 match k.code {
                     KeyCode::Esc => return PickerOutcome::Cancel,
-                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('a') => return PickerOutcome::New,
+                    KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('a') => {
+                        return PickerOutcome::New
+                    }
                     KeyCode::Char('e') | KeyCode::Char('E') => return PickerOutcome::Edit(sel),
                     KeyCode::Char('d') | KeyCode::Char('D') => {
                         if sel < tunnels.len() {
                             tunnels.remove(sel);
                             let new_sel = sel.min(tunnels.len().saturating_sub(1));
-                            state.select(if tunnels.is_empty() { None } else { Some(new_sel) });
+                            state.select(if tunnels.is_empty() {
+                                None
+                            } else {
+                                Some(new_sel)
+                            });
                         }
                     }
                     KeyCode::Enter => {
@@ -162,7 +173,9 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     let block = Block::default()
         .title(Span::styled(
             format!(" Port Forward - {} ", host.name),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
@@ -198,86 +211,146 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
         .split(inner);
 
     let mut idx = 0;
-    let desc = Paragraph::new(format!("  SSH tunnel via {}@{}:{}", host.username, host.host, host.port))
-        .style(Style::default().fg(theme.muted));
-    f.render_widget(desc, chunks[idx]); idx += 1;
+    let desc = Paragraph::new(format!(
+        "  SSH tunnel via {}@{}:{}",
+        host.username, host.host, host.port
+    ))
+    .style(Style::default().fg(theme.muted));
+    f.render_widget(desc, chunks[idx]);
+    idx += 1;
     idx += 1; // spacer
 
     // Kind row
     let kind_sel = state.selected_field == field::KIND;
     let kind_style = if kind_sel {
-        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.fg)
     };
     let kind_line = format!("  Type: < {} >  (← → to switch)", state.kind.label());
-    f.render_widget(Paragraph::new(kind_line).style(kind_style), chunks[idx]); idx += 1;
+    f.render_widget(Paragraph::new(kind_line).style(kind_style), chunks[idx]);
+    idx += 1;
 
     // local port
     let lp_sel = state.selected_field == field::LOCAL_PORT;
     let cursor = if lp_sel { "|" } else { "" };
     let lp_label = match state.kind {
-        TunnelKind::Dynamic => "SOCKS Port",
-        TunnelKind::Local => "Local Port",
-        TunnelKind::Remote => "Remote Bind Port",
+        TunnelKind::Dynamic => crate::t!("form.tunnel.socks_port"),
+        TunnelKind::Local => crate::t!("form.tunnel.local_port"),
+        TunnelKind::Remote => crate::t!("form.tunnel.remote_bind_port"),
     };
     let lp_text = format!("  {}: {}{}", lp_label, state.local_port, cursor);
-    let lp_style = if lp_sel { Style::default().fg(theme.accent) } else { Style::default().fg(theme.fg) };
-    f.render_widget(Paragraph::new(lp_text).style(lp_style), chunks[idx]); idx += 1;
+    let lp_style = if lp_sel {
+        Style::default().fg(theme.accent)
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    f.render_widget(Paragraph::new(lp_text).style(lp_style), chunks[idx]);
+    idx += 1;
 
     if !dyn_mode {
         let rh_sel = state.selected_field == field::REMOTE_HOST;
-        let rh_text = format!("  Remote Host: {}{}",
-            if state.remote_host.is_empty() { "localhost" } else { state.remote_host.as_str() },
+        let rh_text = format!(
+            "  {}: {}{}",
+            crate::t!("form.tunnel.remote_host"),
+            if state.remote_host.is_empty() {
+                "localhost"
+            } else {
+                state.remote_host.as_str()
+            },
             if rh_sel { "|" } else { "" }
         );
-        let rh_style = if rh_sel { Style::default().fg(theme.accent) }
-            else if state.remote_host.is_empty() { Style::default().fg(theme.muted) }
-            else { Style::default().fg(theme.fg) };
-        f.render_widget(Paragraph::new(rh_text).style(rh_style), chunks[idx]); idx += 1;
+        let rh_style = if rh_sel {
+            Style::default().fg(theme.accent)
+        } else if state.remote_host.is_empty() {
+            Style::default().fg(theme.muted)
+        } else {
+            Style::default().fg(theme.fg)
+        };
+        f.render_widget(Paragraph::new(rh_text).style(rh_style), chunks[idx]);
+        idx += 1;
 
         let rp_sel = state.selected_field == field::REMOTE_PORT;
-        let rp_text = format!("  Remote Port: {}{}", state.remote_port, if rp_sel { "|" } else { "" });
-        let rp_style = if rp_sel { Style::default().fg(theme.accent) } else { Style::default().fg(theme.fg) };
-        f.render_widget(Paragraph::new(rp_text).style(rp_style), chunks[idx]); idx += 1;
+        let rp_text = format!(
+            "  {}: {}{}",
+            crate::t!("form.tunnel.remote_port"),
+            state.remote_port,
+            if rp_sel { "|" } else { "" }
+        );
+        let rp_style = if rp_sel {
+            Style::default().fg(theme.accent)
+        } else {
+            Style::default().fg(theme.fg)
+        };
+        f.render_widget(Paragraph::new(rp_text).style(rp_style), chunks[idx]);
+        idx += 1;
     }
 
     // label
     let lab_sel = state.selected_field == field::LABEL;
-    let lab_text = format!("  Label (optional): {}{}", state.label, if lab_sel { "|" } else { "" });
-    let lab_style = if lab_sel { Style::default().fg(theme.accent) } else { Style::default().fg(theme.fg) };
-    f.render_widget(Paragraph::new(lab_text).style(lab_style), chunks[idx]); idx += 1;
+    let lab_text = format!(
+        "  {}: {}{}",
+        crate::t!("form.tunnel.label"),
+        state.label,
+        if lab_sel { "|" } else { "" }
+    );
+    let lab_style = if lab_sel {
+        Style::default().fg(theme.accent)
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    f.render_widget(Paragraph::new(lab_text).style(lab_style), chunks[idx]);
+    idx += 1;
 
     // save toggle
     let save_sel = state.selected_field == field::SAVE;
     let save_mark = if state.save { "[x]" } else { "[ ]" };
-    let save_text = format!("  {} Save this tunnel on host (Space to toggle)", save_mark);
-    let save_style = if save_sel { Style::default().fg(theme.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.fg) };
-    f.render_widget(Paragraph::new(save_text).style(save_style), chunks[idx]); idx += 1;
+    let save_text = format!("  {} {}", save_mark, crate::t!("form.tunnel.save"));
+    let save_style = if save_sel {
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    f.render_widget(Paragraph::new(save_text).style(save_style), chunks[idx]);
+    idx += 1;
 
     // auto-restart toggle
     let ar_sel = state.selected_field == field::AUTO_RESTART;
     let ar_mark = if state.auto_restart { "[x]" } else { "[ ]" };
-    let ar_text = format!("  {} Restart automatically if it drops (Space to toggle)", ar_mark);
+    let ar_text = format!("  {} {}", ar_mark, crate::t!("form.tunnel.auto_restart"));
     let ar_style = if ar_sel {
-        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else if state.auto_restart {
         Style::default().fg(theme.success)
     } else {
         Style::default().fg(theme.fg)
     };
-    f.render_widget(Paragraph::new(ar_text).style(ar_style), chunks[idx]); idx += 1;
+    f.render_widget(Paragraph::new(ar_text).style(ar_style), chunks[idx]);
+    idx += 1;
 
     idx += 1; // spacer
 
     // start
     let start_sel = state.selected_field == field::START;
     let start_style = if start_sel {
-        Style::default().bg(theme.accent).fg(theme.bg).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(theme.accent)
+            .fg(theme.bg)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.accent)
     };
-    f.render_widget(Paragraph::new("  [ Start Tunnel ]").style(start_style), chunks[idx]); idx += 1;
+    f.render_widget(
+        Paragraph::new(format!("  [ {} ]", crate::t!("form.tunnel.start"))).style(start_style),
+        chunks[idx],
+    );
+    idx += 1;
 
     idx += 1; // spacer
 
@@ -287,10 +360,14 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     } else {
         let hint = match state.kind {
             TunnelKind::Local => "  -L: open localhost:LP forwarded to RH:RP via the SSH host.",
-            TunnelKind::Remote => "  -R: open <bind>:LP on the SSH host forwarded to RH:RP locally.",
-            TunnelKind::Dynamic => "  -D: open a SOCKS5 proxy on localhost:LP — point your apps at it.",
+            TunnelKind::Remote => {
+                "  -R: open <bind>:LP on the SSH host forwarded to RH:RP locally."
+            }
+            TunnelKind::Dynamic => {
+                "  -D: open a SOCKS5 proxy on localhost:LP — point your apps at it."
+            }
         };
-        Paragraph::new(format!("{}\n  Tab/↑↓ navigate  |  Esc cancel", hint))
+        Paragraph::new(format!("{}\n  {}", hint, crate::t!("form.tunnel.footer")))
             .style(Style::default().fg(theme.muted))
     };
     f.render_widget(help_para, chunks[idx]);
@@ -312,7 +389,13 @@ fn build_tunnel_lines(left: &str, right: &str, frame_idx: usize) -> Vec<String> 
     let pipe_len: usize = 12;
     let pos = frame_idx % pipe_len;
     let pipe: String = (0..pipe_len)
-        .map(|i| if (i + pipe_len - pos) % pipe_len < 3 { '▓' } else { '░' })
+        .map(|i| {
+            if (i + pipe_len - pos) % pipe_len < 3 {
+                '▓'
+            } else {
+                '░'
+            }
+        })
         .collect();
 
     let box_h = "─".repeat(box_w);
@@ -375,10 +458,7 @@ fn draw_tunnel_screen(
     let size = f.area();
     let theme = theme::load();
 
-    f.render_widget(
-        Block::default().style(Style::default().bg(theme.bg)),
-        size,
-    );
+    f.render_widget(Block::default().style(Style::default().bg(theme.bg)), size);
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -401,26 +481,45 @@ fn draw_tunnel_screen(
     let spinner_b = SPINNER[(frame_idx + 3) % SPINNER.len()];
     let title_str = format!(
         "{} {} TUNNEL ACTIVE {}",
-        spinner_a, tunnel.kind.short(), spinner_b
+        spinner_a,
+        tunnel.kind.short(),
+        spinner_b
     );
     let title = Paragraph::new(vec![
         Line::from(Span::styled(
             title_str,
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         )),
         Line::from(""),
-    ]).alignment(Alignment::Center);
+    ])
+    .alignment(Alignment::Center);
     f.render_widget(title, chunks[0]);
 
     let forwarding = match tunnel.kind {
         TunnelKind::Dynamic => format!("SOCKS5 on localhost:{}", tunnel.local_port),
         TunnelKind::Local => {
-            let rh = if tunnel.remote_host.is_empty() { "localhost" } else { tunnel.remote_host.as_str() };
-            format!("localhost:{} -> {}:{}", tunnel.local_port, rh, tunnel.remote_port)
+            let rh = if tunnel.remote_host.is_empty() {
+                "localhost"
+            } else {
+                tunnel.remote_host.as_str()
+            };
+            format!(
+                "localhost:{} -> {}:{}",
+                tunnel.local_port, rh, tunnel.remote_port
+            )
         }
         TunnelKind::Remote => {
-            let rh = if tunnel.remote_host.is_empty() { "localhost" } else { tunnel.remote_host.as_str() };
-            format!("remote:{} -> {}:{}", tunnel.local_port, rh, tunnel.remote_port)
+            let rh = if tunnel.remote_host.is_empty() {
+                "localhost"
+            } else {
+                tunnel.remote_host.as_str()
+            };
+            format!(
+                "remote:{} -> {}:{}",
+                tunnel.local_port, rh, tunnel.remote_port
+            )
         }
     };
 
@@ -433,9 +532,12 @@ fn draw_tunnel_screen(
         Span::styled("  |  Forwarding: ", Style::default().fg(theme.muted)),
         Span::styled(
             forwarding,
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ),
-    ])).alignment(Alignment::Center);
+    ]))
+    .alignment(Alignment::Center);
     f.render_widget(info, chunks[1]);
 
     let (left, right) = match tunnel.kind {
@@ -454,7 +556,10 @@ fn draw_tunnel_screen(
         .iter()
         .map(|l| Line::from(Span::styled(l.clone(), Style::default().fg(theme.accent))))
         .collect();
-    f.render_widget(Paragraph::new(tunnel_art).alignment(Alignment::Center), chunks[3]);
+    f.render_widget(
+        Paragraph::new(tunnel_art).alignment(Alignment::Center),
+        chunks[3],
+    );
 
     let pkt = build_packet_line(chunks[4].width as usize, frame_idx);
     let pkt_lines = vec![
@@ -468,7 +573,9 @@ fn draw_tunnel_screen(
         Span::styled("  Status: ", Style::default().fg(theme.muted)),
         Span::styled(
             format!("Tunnel active{:<4}", dots),
-            Style::default().fg(theme.success).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.success)
+                .add_modifier(Modifier::BOLD),
         ),
     ]));
     f.render_widget(status, chunks[5]);
@@ -488,7 +595,10 @@ fn draw_tunnel_screen(
     f.render_widget(timer, chunks[6]);
 
     let exit_style = if exit_selected {
-        Style::default().bg(theme.error).fg(theme.bg).add_modifier(Modifier::BOLD)
+        Style::default()
+            .bg(theme.error)
+            .fg(theme.bg)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.error)
     };
@@ -509,10 +619,7 @@ fn draw_tunnel_screen(
 /// user asked to start a tunnel (the caller spawns it via the `TunnelManager`).
 ///
 /// `all_hosts` is used to resolve multi-hop ProxyJump entries by saved-host name.
-pub fn run_port_forward(
-    host: &Host,
-    all_hosts: &HashMap<String, Host>,
-) -> PortForwardResult {
+pub fn run_port_forward(host: &Host, all_hosts: &HashMap<String, Host>) -> PortForwardResult {
     let mut stdout_handle = stdout();
     let _ = enable_raw_mode();
     let _ = execute!(stdout_handle, EnterAlternateScreen);
@@ -530,7 +637,11 @@ pub fn run_port_forward(
             let _ = disable_raw_mode();
             let _ = execute!(terminal.backend_mut(), LeaveAlternateScreen);
             return PortForwardResult {
-                updated_tunnels: if tunnels != original { Some(tunnels) } else { None },
+                updated_tunnels: if tunnels != original {
+                    Some(tunnels)
+                } else {
+                    None
+                },
                 start_background: $start,
             };
         }};
@@ -561,16 +672,22 @@ pub fn run_port_forward(
 
         if event::poll(Duration::from_millis(120)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
-                if k.kind != KeyEventKind::Press { continue; }
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
                 match k.code {
                     KeyCode::Esc => finish!(None),
                     KeyCode::Tab | KeyCode::Down => form.next_field(),
                     KeyCode::BackTab | KeyCode::Up => form.prev_field(),
                     KeyCode::Left => {
-                        if form.selected_field == field::KIND { form.cycle_kind(false); }
+                        if form.selected_field == field::KIND {
+                            form.cycle_kind(false);
+                        }
                     }
                     KeyCode::Right => {
-                        if form.selected_field == field::KIND { form.cycle_kind(true); }
+                        if form.selected_field == field::KIND {
+                            form.cycle_kind(true);
+                        }
                     }
                     // Space means "flip what's under the cursor": a toggle row
                     // flips, the kind selector advances. On a text row it is a
@@ -592,7 +709,10 @@ pub fn run_port_forward(
                                     }
                                     break t;
                                 }
-                                Err(e) => { form.error = Some(e); continue; }
+                                Err(e) => {
+                                    form.error = Some(e);
+                                    continue;
+                                }
                             }
                         } else {
                             form.next_field();
@@ -639,7 +759,7 @@ fn run_tunnel_loop<B: Backend>(
                 let area = centered_rect(50, 20, f.area());
                 f.render_widget(Clear, area);
                 let block = Block::default()
-                    .title(" Error ")
+                    .title(format!(" {} ", crate::t!("dialog.error")))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.error))
                     .style(Style::default().bg(theme.bg).fg(theme.fg));
@@ -652,7 +772,9 @@ fn run_tunnel_loop<B: Backend>(
             });
             loop {
                 if event::poll(Duration::from_millis(100)).unwrap_or(false) {
-                    if let Ok(Event::Key(_)) = event::read() { break; }
+                    if let Ok(Event::Key(_)) = event::read() {
+                        break;
+                    }
                 }
             }
             return;
@@ -666,7 +788,9 @@ fn run_tunnel_loop<B: Backend>(
 
     loop {
         if let Some(ref mut c) = child {
-            if let Ok(Some(_)) = c.try_wait() { child = None; }
+            if let Ok(Some(_)) = c.try_wait() {
+                child = None;
+            }
         }
         if last_frame.elapsed() >= Duration::from_millis(125) {
             frame_idx += 1;
@@ -685,14 +809,14 @@ fn run_tunnel_loop<B: Backend>(
                 let area = centered_rect(50, 30, size);
                 f.render_widget(Clear, area);
                 let block = Block::default()
-                    .title(" Tunnel Closed ")
+                    .title(format!(" {} ", crate::t!("dialog.tunnel_closed.title")))
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.error))
                     .style(Style::default().bg(theme.bg).fg(theme.fg));
                 let inner = block.inner(area);
                 f.render_widget(block, area);
                 f.render_widget(
-                    Paragraph::new("SSH tunnel process exited.\n\nPress any key to return..."),
+                    Paragraph::new(crate::t!("dialog.tunnel_closed.body")),
                     inner,
                 );
             }
@@ -700,8 +824,12 @@ fn run_tunnel_loop<B: Backend>(
 
         if event::poll(Duration::from_millis(50)).unwrap_or(false) {
             if let Ok(Event::Key(k)) = event::read() {
-                if k.kind != KeyEventKind::Press { continue; }
-                if !is_alive { break; }
+                if k.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if !is_alive {
+                    break;
+                }
                 match k.code {
                     KeyCode::Esc | KeyCode::Enter | KeyCode::Char('q') | KeyCode::Char('Q') => {
                         if let Some(ref mut c) = child {
@@ -730,7 +858,11 @@ mod render_tests {
     /// past the end and panics. That is exactly the mistake the auto-restart
     /// row could have introduced.
     fn render(state: &PortForwardForm) -> Vec<String> {
-        let host = Host { name: "web".into(), host: "10.0.0.5".into(), ..Default::default() };
+        let host = Host {
+            name: "web".into(),
+            host: "10.0.0.5".into(),
+            ..Default::default()
+        };
         let backend = TestBackend::new(100, 30);
         let mut terminal = Terminal::new(backend).expect("test terminal");
         terminal
@@ -754,9 +886,19 @@ mod render_tests {
 
     #[test]
     fn a_local_forward_renders_every_row() {
+        // Asserted through the translation keys, not English literals: the
+        // active locale comes from the environment, so a literal here would
+        // make the suite fail on a machine with `LANG=fr`.
         let text = rendered_text(&PortForwardForm::new());
-        for expected in ["Local Port", "Remote Host", "Remote Port", "Label", "Save", "Restart automatically", "Start Tunnel"] {
-            assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+        for key in [
+            "form.tunnel.local_port",
+            "form.tunnel.remote_host",
+            "form.tunnel.remote_port",
+            "form.tunnel.label",
+            "form.tunnel.start",
+        ] {
+            let expected = crate::t!(key);
+            assert!(text.contains(&expected), "missing {expected:?} in:\n{text}");
         }
     }
 
@@ -765,10 +907,15 @@ mod render_tests {
         let mut s = PortForwardForm::new();
         s.kind = TunnelKind::Dynamic;
         let text = rendered_text(&s);
-        assert!(!text.contains("Remote Host"), "SOCKS has no target host:\n{text}");
-        assert!(text.contains("SOCKS Port"), "the port row renames itself for SOCKS:\n{text}");
-        assert!(text.contains("Restart automatically"), "the toggle must survive the shorter layout");
-        assert!(text.contains("Start Tunnel"));
+        assert!(
+            !text.contains(&crate::t!("form.tunnel.remote_host")),
+            "SOCKS has no target host:\n{text}"
+        );
+        assert!(
+            text.contains(&crate::t!("form.tunnel.socks_port")),
+            "the port row renames itself for SOCKS:\n{text}"
+        );
+        assert!(text.contains(&crate::t!("form.tunnel.start")));
     }
 
     #[test]
@@ -788,15 +935,16 @@ mod render_tests {
     #[test]
     fn the_auto_restart_row_shows_its_state() {
         let mut s = PortForwardForm::new();
-        assert!(rendered_text(&s).contains("[ ] Restart automatically"));
+        let label = crate::t!("form.tunnel.auto_restart");
+        assert!(rendered_text(&s).contains(&format!("[ ] {label}")));
         s.auto_restart = true;
-        assert!(rendered_text(&s).contains("[x] Restart automatically"));
+        assert!(rendered_text(&s).contains(&format!("[x] {label}")));
     }
 
     #[test]
     fn a_validation_error_is_shown_to_the_user() {
         let mut s = PortForwardForm::new();
-        s.error = Some("Local port must be a number 1-65535".into());
-        assert!(rendered_text(&s).contains("Local port must be a number"));
+        s.error = Some(crate::t!("error.local_port"));
+        assert!(rendered_text(&s).contains(&crate::t!("error.local_port")));
     }
 }

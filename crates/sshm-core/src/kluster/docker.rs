@@ -1,8 +1,8 @@
 //! Thin wrappers around the `docker` CLI.
 
 use std::process::{Command, ExitStatus, Stdio};
-use std::time::{Duration, Instant};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
@@ -36,11 +36,17 @@ mod ssh_uri_tests {
 
     #[test]
     fn omits_port_when_default() {
-        assert_eq!(host_to_docker_uri(&h("alice", "1.2.3.4", 22)), "ssh://alice@1.2.3.4");
+        assert_eq!(
+            host_to_docker_uri(&h("alice", "1.2.3.4", 22)),
+            "ssh://alice@1.2.3.4"
+        );
     }
     #[test]
     fn includes_port_when_custom() {
-        assert_eq!(host_to_docker_uri(&h("alice", "1.2.3.4", 2222)), "ssh://alice@1.2.3.4:2222");
+        assert_eq!(
+            host_to_docker_uri(&h("alice", "1.2.3.4", 2222)),
+            "ssh://alice@1.2.3.4:2222"
+        );
     }
 }
 
@@ -70,7 +76,10 @@ pub fn daemon_running() -> bool {
             .status()
             .map(|s| s.success())
             .unwrap_or(false);
-        *guard = Some(DaemonCache { last: Instant::now(), value });
+        *guard = Some(DaemonCache {
+            last: Instant::now(),
+            value,
+        });
         value
     } else {
         false
@@ -127,7 +136,9 @@ pub fn parse_docker_ps(raw: &str) -> Vec<ContainerInfo> {
     raw.lines()
         .filter_map(|line| {
             let parts: Vec<&str> = line.split('\t').collect();
-            if parts.len() < 5 { return None; }
+            if parts.len() < 5 {
+                return None;
+            }
             let state = parts[4].trim().to_ascii_lowercase();
             Some(ContainerInfo {
                 id: parts[0].trim().to_string(),
@@ -145,7 +156,9 @@ pub fn parse_docker_ps(raw: &str) -> Vec<ContainerInfo> {
 pub fn exec_shell(id: &str, docker_host: Option<&str>) -> std::io::Result<ExitStatus> {
     crate::tty::release_terminal();
     let mut cmd = Command::new("docker");
-    if let Some(u) = docker_host { cmd.env("DOCKER_HOST", u); }
+    if let Some(u) = docker_host {
+        cmd.env("DOCKER_HOST", u);
+    }
     cmd.args(["exec", "-it", id, &shell_path()]).status()
 }
 
@@ -158,7 +171,9 @@ pub fn logs(
 ) -> std::io::Result<ExitStatus> {
     crate::tty::release_terminal();
     let mut cmd = Command::new("docker");
-    if let Some(u) = docker_host { cmd.env("DOCKER_HOST", u); }
+    if let Some(u) = docker_host {
+        cmd.env("DOCKER_HOST", u);
+    }
     cmd.arg("logs").arg("--tail").arg(tail.to_string());
     if follow {
         cmd.arg("--follow");
@@ -171,11 +186,7 @@ pub fn logs(
 /// Output is captured; on failure the daemon's stderr is surfaced. `stop` and
 /// `restart` are bounded to a 5s graceful window so the UI doesn't freeze for
 /// Docker's default 10s.
-pub fn lifecycle(
-    id: &str,
-    action: LifecycleAction,
-    docker_host: Option<&str>,
-) -> Result<()> {
+pub fn lifecycle(id: &str, action: LifecycleAction, docker_host: Option<&str>) -> Result<()> {
     let mut cmd = Command::new("docker");
     if let Some(u) = docker_host {
         cmd.env("DOCKER_HOST", u);
@@ -190,7 +201,11 @@ pub fn lifecycle(
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(anyhow::anyhow!(
             "{}",
-            if err.is_empty() { "non-zero exit".to_string() } else { err }
+            if err.is_empty() {
+                "non-zero exit".to_string()
+            } else {
+                err
+            }
         ));
     }
     Ok(())
@@ -200,7 +215,9 @@ pub fn lifecycle(
 /// plus a short log tail. `docker_host = Some(uri)` routes over SSH.
 pub fn inspect_detail(id: &str, docker_host: Option<&str>) -> Result<ContainerDetail> {
     let mut cmd = Command::new("docker");
-    if let Some(u) = docker_host { cmd.env("DOCKER_HOST", u); }
+    if let Some(u) = docker_host {
+        cmd.env("DOCKER_HOST", u);
+    }
     let out = cmd
         .args(["inspect", id])
         .stderr(Stdio::null())
@@ -214,7 +231,9 @@ pub fn inspect_detail(id: &str, docker_host: Option<&str>) -> Result<ContainerDe
         .ok_or_else(|| anyhow::anyhow!("could not parse docker inspect JSON"))?;
     // Best-effort recent logs.
     let mut lcmd = Command::new("docker");
-    if let Some(u) = docker_host { lcmd.env("DOCKER_HOST", u); }
+    if let Some(u) = docker_host {
+        lcmd.env("DOCKER_HOST", u);
+    }
     if let Ok(o) = lcmd
         .args(["logs", "--tail", "20", id])
         .stderr(Stdio::piped())
@@ -223,7 +242,10 @@ pub fn inspect_detail(id: &str, docker_host: Option<&str>) -> Result<ContainerDe
     {
         // docker sends container stdout on our stdout and stderr on ours;
         // merge both so the tail reflects what the container actually logged.
-        let mut lines: Vec<String> = String::from_utf8_lossy(&o.stdout).lines().map(String::from).collect();
+        let mut lines: Vec<String> = String::from_utf8_lossy(&o.stdout)
+            .lines()
+            .map(String::from)
+            .collect();
         lines.extend(String::from_utf8_lossy(&o.stderr).lines().map(String::from));
         detail.log_tail = lines;
     }
@@ -246,42 +268,85 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
 
     let mut overview = DetailSection::new("Overview");
     overview.push("Name", &name);
-    overview.push("Image", config.and_then(|c| c.get("Image")).and_then(|x| x.as_str()).unwrap_or(""));
-    overview.push("Status", state.and_then(|s| s.get("Status")).and_then(|x| x.as_str()).unwrap_or(""));
+    overview.push(
+        "Image",
+        config
+            .and_then(|c| c.get("Image"))
+            .and_then(|x| x.as_str())
+            .unwrap_or(""),
+    );
+    overview.push(
+        "Status",
+        state
+            .and_then(|s| s.get("Status"))
+            .and_then(|x| x.as_str())
+            .unwrap_or(""),
+    );
     if let Some(pid) = state.and_then(|s| s.get("Pid")).and_then(|x| x.as_u64()) {
-        if pid != 0 { overview.push("PID", pid.to_string()); }
+        if pid != 0 {
+            overview.push("PID", pid.to_string());
+        }
     }
-    overview.push("Created", obj.get("Created").and_then(|x| x.as_str()).unwrap_or(""));
-    overview.push("Started", state.and_then(|s| s.get("StartedAt")).and_then(|x| x.as_str()).unwrap_or(""));
+    overview.push(
+        "Created",
+        obj.get("Created").and_then(|x| x.as_str()).unwrap_or(""),
+    );
+    overview.push(
+        "Started",
+        state
+            .and_then(|s| s.get("StartedAt"))
+            .and_then(|x| x.as_str())
+            .unwrap_or(""),
+    );
 
     // Networking — top-level IP plus each named network.
     let mut net = DetailSection::new("Networking");
     let netset = obj.get("NetworkSettings");
-    if let Some(ip) = netset.and_then(|n| n.get("IPAddress")).and_then(|x| x.as_str()) {
+    if let Some(ip) = netset
+        .and_then(|n| n.get("IPAddress"))
+        .and_then(|x| x.as_str())
+    {
         net.push("IPv4", ip);
     }
-    if let Some(gw) = netset.and_then(|n| n.get("Gateway")).and_then(|x| x.as_str()) {
+    if let Some(gw) = netset
+        .and_then(|n| n.get("Gateway"))
+        .and_then(|x| x.as_str())
+    {
         net.push("Gateway", gw);
     }
-    if let Some(mac) = netset.and_then(|n| n.get("MacAddress")).and_then(|x| x.as_str()) {
+    if let Some(mac) = netset
+        .and_then(|n| n.get("MacAddress"))
+        .and_then(|x| x.as_str())
+    {
         net.push("MAC", mac);
     }
-    if let Some(networks) = netset.and_then(|n| n.get("Networks")).and_then(|x| x.as_object()) {
+    if let Some(networks) = netset
+        .and_then(|n| n.get("Networks"))
+        .and_then(|x| x.as_object())
+    {
         for (nname, nval) in networks {
             if let Some(ip) = nval.get("IPAddress").and_then(|x| x.as_str()) {
-                if !ip.is_empty() { net.push(format!("net:{}", nname), ip); }
+                if !ip.is_empty() {
+                    net.push(format!("net:{}", nname), ip);
+                }
             }
         }
     }
 
     // Ports — NetworkSettings.Ports maps "80/tcp" → [ {HostIp, HostPort} ].
     let mut ports = DetailSection::new("Ports");
-    if let Some(pmap) = netset.and_then(|n| n.get("Ports")).and_then(|x| x.as_object()) {
+    if let Some(pmap) = netset
+        .and_then(|n| n.get("Ports"))
+        .and_then(|x| x.as_object())
+    {
         for (cport, bindings) in pmap {
             match bindings.as_array() {
                 Some(arr) if !arr.is_empty() => {
                     for b in arr {
-                        let hip = b.get("HostIp").and_then(|x| x.as_str()).unwrap_or("0.0.0.0");
+                        let hip = b
+                            .get("HostIp")
+                            .and_then(|x| x.as_str())
+                            .unwrap_or("0.0.0.0");
                         let hport = b.get("HostPort").and_then(|x| x.as_str()).unwrap_or("");
                         ports.push(format!("{}:{}", hip, hport), format!("→ {}", cport));
                     }
@@ -300,7 +365,11 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
             let rw = m.get("RW").and_then(|x| x.as_bool()).unwrap_or(true);
             if !dst.is_empty() {
                 let mode = if rw { "rw" } else { "ro" };
-                let val = if src.is_empty() { format!("(volume, {})", mode) } else { format!("{} ({})", src, mode) };
+                let val = if src.is_empty() {
+                    format!("(volume, {})", mode)
+                } else {
+                    format!("{} ({})", src, mode)
+                };
                 mounts.push(dst.to_string(), val);
             }
         }
@@ -308,21 +377,40 @@ pub fn parse_inspect(id: &str, raw: &str) -> Option<ContainerDetail> {
 
     // Command / entrypoint.
     let mut command = DetailSection::new("Command");
-    if let Some(ep) = config.and_then(|c| c.get("Entrypoint")).and_then(|x| x.as_array()) {
-        let joined: Vec<String> = ep.iter().filter_map(|a| a.as_str().map(String::from)).collect();
+    if let Some(ep) = config
+        .and_then(|c| c.get("Entrypoint"))
+        .and_then(|x| x.as_array())
+    {
+        let joined: Vec<String> = ep
+            .iter()
+            .filter_map(|a| a.as_str().map(String::from))
+            .collect();
         command.push("Entrypoint", joined.join(" "));
     }
     if let Some(cmd) = config.and_then(|c| c.get("Cmd")).and_then(|x| x.as_array()) {
-        let joined: Vec<String> = cmd.iter().filter_map(|a| a.as_str().map(String::from)).collect();
+        let joined: Vec<String> = cmd
+            .iter()
+            .filter_map(|a| a.as_str().map(String::from))
+            .collect();
         command.push("Cmd", joined.join(" "));
     }
-    command.push("WorkingDir", config.and_then(|c| c.get("WorkingDir")).and_then(|x| x.as_str()).unwrap_or(""));
+    command.push(
+        "WorkingDir",
+        config
+            .and_then(|c| c.get("WorkingDir"))
+            .and_then(|x| x.as_str())
+            .unwrap_or(""),
+    );
 
     let sections: Vec<DetailSection> = [overview, net, ports, mounts, command]
         .into_iter()
         .filter(|s| !s.is_empty())
         .collect();
-    Some(ContainerDetail { title: name, sections, log_tail: Vec::new() })
+    Some(ContainerDetail {
+        title: name,
+        sections,
+        log_tail: Vec::new(),
+    })
 }
 
 #[cfg(test)]
@@ -375,14 +463,26 @@ mod tests {
         let d = parse_inspect("cid", INSPECT).unwrap();
         assert_eq!(d.title, "web");
         let titles: Vec<&str> = d.sections.iter().map(|s| s.title.as_str()).collect();
-        assert_eq!(titles, vec!["Overview", "Networking", "Ports", "Volumes", "Command"]);
+        assert_eq!(
+            titles,
+            vec!["Overview", "Networking", "Ports", "Volumes", "Command"]
+        );
         let overview = &d.sections[0];
-        assert!(overview.rows.iter().any(|(k, v)| k == "Image" && v == "nginx:1.27"));
+        assert!(overview
+            .rows
+            .iter()
+            .any(|(k, v)| k == "Image" && v == "nginx:1.27"));
         assert!(overview.rows.iter().any(|(k, v)| k == "PID" && v == "4321"));
         let ports = &d.sections[2];
-        assert!(ports.rows.iter().any(|(k, v)| k == "0.0.0.0:8080" && v == "→ 80/tcp"));
+        assert!(ports
+            .rows
+            .iter()
+            .any(|(k, v)| k == "0.0.0.0:8080" && v == "→ 80/tcp"));
         let mounts = &d.sections[3];
-        assert!(mounts.rows.iter().any(|(k, v)| k == "/var/www" && v == "/data (rw)"));
+        assert!(mounts
+            .rows
+            .iter()
+            .any(|(k, v)| k == "/var/www" && v == "/data (rw)"));
     }
 
     #[test]

@@ -1,10 +1,10 @@
+use crate::config::settings::AppConfig;
+use crate::tui::theme::Theme;
 use crossterm::event::KeyCode;
 use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
-use crate::config::settings::AppConfig;
-use crate::tui::theme::Theme;
 
 pub struct SettingsFormState {
     pub default_port: String,
@@ -60,16 +60,41 @@ struct Section {
 }
 
 const SECTIONS: &[Section] = &[
-    Section { title: "Defaults for new hosts", fields: &[0, 1, 2] },
-    Section { title: "Export",                 fields: &[3] },
-    Section { title: "Health checks",          fields: &[AUTO_HEALTH_FIELD, PAUSE_HEALTH_FIELD, HEALTH_TTL_FIELD, HEALTH_TIMEOUT_FIELD] },
-    Section { title: "Kluster",                fields: &[KLUSTER_REFRESH_FIELD, KLUSTER_TAIL_FIELD] },
-    Section { title: "Notifications",          fields: &[NOTIFY_FIELD] },
+    Section {
+        title: "Defaults for new hosts",
+        fields: &[0, 1, 2],
+    },
+    Section {
+        title: "Export",
+        fields: &[3],
+    },
+    Section {
+        title: "Health checks",
+        fields: &[
+            AUTO_HEALTH_FIELD,
+            PAUSE_HEALTH_FIELD,
+            HEALTH_TTL_FIELD,
+            HEALTH_TIMEOUT_FIELD,
+        ],
+    },
+    Section {
+        title: "Kluster",
+        fields: &[KLUSTER_REFRESH_FIELD, KLUSTER_TAIL_FIELD],
+    },
+    Section {
+        title: "Notifications",
+        fields: &[NOTIFY_FIELD],
+    },
     Section {
         title: "Config sync (git over SSH)",
         fields: &[
-            SYNC_ENABLED_FIELD, SYNC_REPO_FIELD, SYNC_KEY_FIELD, SYNC_BRANCH_FIELD,
-            SYNC_INTERVAL_FIELD, SYNC_ON_START_FIELD, SYNC_ON_EXIT_FIELD,
+            SYNC_ENABLED_FIELD,
+            SYNC_REPO_FIELD,
+            SYNC_KEY_FIELD,
+            SYNC_BRANCH_FIELD,
+            SYNC_INTERVAL_FIELD,
+            SYNC_ON_START_FIELD,
+            SYNC_ON_EXIT_FIELD,
         ],
     },
 ];
@@ -128,7 +153,9 @@ impl SettingsFormState {
         }
     }
 
-    pub fn fields_count() -> usize { 18 }
+    pub fn fields_count() -> usize {
+        18
+    }
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
@@ -238,8 +265,14 @@ pub enum SettingsAction {
 
 pub fn handle_settings_event(key: KeyCode, state: &mut SettingsFormState) -> SettingsAction {
     match key {
-        KeyCode::Tab | KeyCode::Down => { state.next_field(); SettingsAction::None }
-        KeyCode::BackTab | KeyCode::Up => { state.prev_field(); SettingsAction::None }
+        KeyCode::Tab | KeyCode::Down => {
+            state.next_field();
+            SettingsAction::None
+        }
+        KeyCode::BackTab | KeyCode::Up => {
+            state.prev_field();
+            SettingsAction::None
+        }
         KeyCode::Enter => {
             if state.selected_field == SettingsFormState::fields_count() {
                 SettingsAction::Save
@@ -263,8 +296,14 @@ pub fn handle_settings_event(key: KeyCode, state: &mut SettingsFormState) -> Set
                 SettingsAction::None
             }
         }
-        KeyCode::Char(c) => { state.push_char(c); SettingsAction::None }
-        KeyCode::Backspace => { state.pop_char(); SettingsAction::None }
+        KeyCode::Char(c) => {
+            state.push_char(c);
+            SettingsAction::None
+        }
+        KeyCode::Backspace => {
+            state.pop_char();
+            SettingsAction::None
+        }
         _ => SettingsAction::None,
     }
 }
@@ -305,7 +344,9 @@ fn settings_text_value(state: &SettingsFormState, i: usize) -> String {
 fn field_line(state: &SettingsFormState, i: usize, theme: &Theme) -> Line<'static> {
     let is_sel = state.selected_field == i;
     let label_style = if is_sel {
-        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.fg)
     };
@@ -326,7 +367,11 @@ fn field_line(state: &SettingsFormState, i: usize, theme: &Theme) -> Line<'stati
         } else {
             Style::default().fg(theme.muted)
         };
-        let hint = if is_sel { "   Space / ←→ to toggle" } else { "" };
+        let hint = if is_sel {
+            "   Space / ←→ to toggle"
+        } else {
+            ""
+        };
         Line::from(vec![
             label_span,
             Span::styled(val.to_string(), val_style),
@@ -341,7 +386,10 @@ fn field_line(state: &SettingsFormState, i: usize, theme: &Theme) -> Line<'stati
         };
         Line::from(vec![
             label_span,
-            Span::styled(format!("{}{}", settings_text_value(state, i), cursor), val_style),
+            Span::styled(
+                format!("{}{}", settings_text_value(state, i), cursor),
+                val_style,
+            ),
         ])
     }
 }
@@ -373,7 +421,9 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
         lines.push(Line::from(vec![
             Span::styled(
                 " ▸ ",
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             ),
             Span::styled(
                 sec.title.to_string(),
@@ -396,7 +446,10 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
         selected_line = lines.len();
     }
     let save_style = if sel == save_idx {
-        Style::default().fg(theme.bg).bg(theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.bg)
+            .bg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.accent)
     };
@@ -425,10 +478,7 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
     }
     .min(max_scroll);
 
-    f.render_widget(
-        Paragraph::new(lines).scroll((scroll as u16, 0)),
-        content,
-    );
+    f.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), content);
 
     // Scrollbar when the form is taller than the viewport.
     if total > visible {

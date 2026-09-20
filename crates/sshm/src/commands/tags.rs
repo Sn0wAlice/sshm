@@ -1,6 +1,6 @@
-use std::collections::HashMap;
-use crate::models::Host;
 use crate::config::io::save_hosts;
+use crate::models::Host;
+use std::collections::HashMap;
 
 pub fn tag_add(hosts: &mut HashMap<String, Host>, name: String, tags: Vec<String>) {
     if let Some(h) = hosts.get_mut(&name) {

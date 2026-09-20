@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
 use crate::models::{Database, Host};
 use crate::tui::app::Row;
+use std::collections::{HashMap, HashSet};
 
 /// Top-level grouping for the host list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -61,7 +61,9 @@ fn folder_chain(name: &str) -> Vec<String> {
     let mut out = Vec::new();
     let mut acc = String::new();
     for seg in name.split('/').filter(|s| !s.is_empty()) {
-        if !acc.is_empty() { acc.push('/'); }
+        if !acc.is_empty() {
+            acc.push('/');
+        }
         acc.push_str(seg);
         out.push(acc.clone());
     }
@@ -97,12 +99,19 @@ fn push_folder_subtree<'a>(
 
     for child in children {
         let is_collapsed = collapsed.get(child.as_str()).copied().unwrap_or(true);
-        rows.push(Row::Folder { name: child.clone(), collapsed: is_collapsed });
+        rows.push(Row::Folder {
+            name: child.clone(),
+            collapsed: is_collapsed,
+        });
 
         if !is_collapsed {
             push_folder_subtree(rows, Some(child.as_str()), folders, items, collapsed);
 
-            for h in items.iter().copied().filter(|h| h.folder.as_deref() == Some(child.as_str())) {
+            for h in items
+                .iter()
+                .copied()
+                .filter(|h| h.folder.as_deref() == Some(child.as_str()))
+            {
                 rows.push(Row::Host(h));
             }
         }
@@ -171,7 +180,10 @@ pub fn build_rows_by_tag<'a>(
         // user-defined folder of the same name.
         let key = format!("tag:{}", tag);
         let is_collapsed = collapsed.get(&key).copied().unwrap_or(true);
-        rows.push(Row::Folder { name: key.clone(), collapsed: is_collapsed });
+        rows.push(Row::Folder {
+            name: key.clone(),
+            collapsed: is_collapsed,
+        });
         if !is_collapsed {
             for h in hosts {
                 rows.push(Row::Host(h));

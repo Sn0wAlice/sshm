@@ -1,2 +1,2 @@
 pub mod matcher;
-pub use matcher::{wildcard_match, filter_hosts, apply_filter};
+pub use matcher::{apply_filter, filter_hosts, wildcard_match};

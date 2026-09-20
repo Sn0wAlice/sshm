@@ -1,7 +1,7 @@
-use std::fs;
-use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
@@ -66,15 +66,33 @@ pub struct AppConfig {
     pub sync: SyncConfig,
 }
 
-fn default_port() -> u16 { 22 }
-fn default_username() -> String { "root".to_string() }
-fn default_auto_health_check() -> bool { true }
-fn default_pause_health_on_session() -> bool { true }
-fn default_health_ttl_secs() -> u64 { 30 }
-fn default_health_probe_timeout_ms() -> u64 { 1500 }
-fn default_kluster_refresh_secs() -> u64 { 10 }
-fn default_kluster_log_tail_lines() -> u32 { 100 }
-fn default_notifications_enabled() -> bool { true }
+fn default_port() -> u16 {
+    22
+}
+fn default_username() -> String {
+    "root".to_string()
+}
+fn default_auto_health_check() -> bool {
+    true
+}
+fn default_pause_health_on_session() -> bool {
+    true
+}
+fn default_health_ttl_secs() -> u64 {
+    30
+}
+fn default_health_probe_timeout_ms() -> u64 {
+    1500
+}
+fn default_kluster_refresh_secs() -> u64 {
+    10
+}
+fn default_kluster_log_tail_lines() -> u32 {
+    100
+}
+fn default_notifications_enabled() -> bool {
+    true
+}
 
 impl Default for AppConfig {
     fn default() -> Self {
@@ -99,12 +117,10 @@ impl Default for AppConfig {
 }
 
 pub fn settings_path() -> PathBuf {
-    let base = dirs::config_dir().unwrap_or_else(|| {
-        dirs::home_dir()
-            .unwrap_or_else(|| PathBuf::from("."))
-            .join(".config")
-    });
-    base.join("sshm").join("settings.toml")
+    // Deliberately `config_dir()` rather than a second copy of its logic: the
+    // two used to be written out separately, and the day one changed the
+    // settings would have landed in a different directory from the hosts.
+    super::path::config_dir().join("settings.toml")
 }
 
 pub fn load_settings() -> AppConfig {
@@ -151,8 +167,12 @@ pub enum SyncItem {
 
 impl SyncItem {
     /// Every item, in a stable order.
-    pub const ALL: &'static [SyncItem] =
-        &[SyncItem::Hosts, SyncItem::Kluster, SyncItem::Settings, SyncItem::Theme];
+    pub const ALL: &'static [SyncItem] = &[
+        SyncItem::Hosts,
+        SyncItem::Kluster,
+        SyncItem::Settings,
+        SyncItem::Theme,
+    ];
 
     /// File name used both locally (in `~/.config/sshm`) and in the repo.
     pub fn file_name(&self) -> &'static str {
@@ -260,8 +280,12 @@ pub struct SyncConfig {
     pub strict_host_key_checking: bool,
 }
 
-fn default_sync_branch() -> String { "main".to_string() }
-fn default_sync_interval_secs() -> u64 { 900 }
+fn default_sync_branch() -> String {
+    "main".to_string()
+}
+fn default_sync_interval_secs() -> u64 {
+    900
+}
 fn default_sync_items() -> Vec<SyncItem> {
     // `settings.toml` is opt-in: it is the most machine-specific of the four
     // (terminal command, notification icon, health intervals).
@@ -313,7 +337,11 @@ impl SyncConfig {
     /// Branch to track, never empty.
     pub fn effective_branch(&self) -> String {
         let b = self.branch.trim();
-        if b.is_empty() { default_sync_branch() } else { b.to_string() }
+        if b.is_empty() {
+            default_sync_branch()
+        } else {
+            b.to_string()
+        }
     }
 
     /// Items to carry, never empty (falls back to the defaults) and
@@ -324,7 +352,11 @@ impl SyncConfig {
             .copied()
             .filter(|i| self.items.contains(i))
             .collect();
-        if chosen.is_empty() { default_sync_items() } else { chosen }
+        if chosen.is_empty() {
+            default_sync_items()
+        } else {
+            chosen
+        }
     }
 
     /// Automatic interval in seconds, floored at [`MIN_SYNC_INTERVAL_SECS`],

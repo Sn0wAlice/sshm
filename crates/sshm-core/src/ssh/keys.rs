@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
 use crate::models::Host;
 use crate::ssh::agent::agent_fingerprints;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// One private-key/public-key pair discovered under `~/.ssh`.
 #[derive(Debug, Clone)]
@@ -70,8 +70,12 @@ pub fn scan_ssh_dir() -> Vec<KeyEntry> {
             continue;
         }
 
-        let (bits, fingerprint, comment, key_type) = parse_pubkey_fingerprint(&public)
-            .unwrap_or((None, "(unknown)".to_string(), String::new(), "unknown".to_string()));
+        let (bits, fingerprint, comment, key_type) = parse_pubkey_fingerprint(&public).unwrap_or((
+            None,
+            "(unknown)".to_string(),
+            String::new(),
+            "unknown".to_string(),
+        ));
         let in_agent = agent_fps.iter().any(|f| f == &fingerprint);
         let file_name = private.file_name().and_then(|n| n.to_str()).unwrap_or("");
         let is_hardware = is_hardware_key(&key_type, file_name);
@@ -93,10 +97,12 @@ pub fn scan_ssh_dir() -> Vec<KeyEntry> {
 
 /// Parse one line of `ssh-keygen -lf <pub>`:
 ///     `256 SHA256:abc=== alice@laptop (ED25519)`
-fn parse_pubkey_fingerprint(
-    pub_path: &Path,
-) -> Option<(Option<u32>, String, String, String)> {
-    let out = Command::new("ssh-keygen").arg("-lf").arg(pub_path).output().ok()?;
+fn parse_pubkey_fingerprint(pub_path: &Path) -> Option<(Option<u32>, String, String, String)> {
+    let out = Command::new("ssh-keygen")
+        .arg("-lf")
+        .arg(pub_path)
+        .output()
+        .ok()?;
     if !out.status.success() {
         return None;
     }
@@ -128,8 +134,12 @@ pub fn generate_key(
     let mut cmd = Command::new("ssh-keygen");
     cmd.arg("-t").arg(key_type);
     match key_type {
-        "rsa" => { cmd.arg("-b").arg("4096"); }
-        "ecdsa" => { cmd.arg("-b").arg("521"); }
+        "rsa" => {
+            cmd.arg("-b").arg("4096");
+        }
+        "ecdsa" => {
+            cmd.arg("-b").arg("521");
+        }
         _ => {}
     }
     cmd.arg("-f").arg(path);
@@ -137,9 +147,7 @@ pub fn generate_key(
     cmd.arg("-N").arg(passphrase);
     let status = cmd.status()?;
     if !status.success() {
-        return Err(std::io::Error::other(format!(
-            "ssh-keygen exited {status}"
-        )));
+        return Err(std::io::Error::other(format!("ssh-keygen exited {status}")));
     }
     Ok(())
 }
@@ -148,15 +156,23 @@ pub fn pub_from_identity(identity: &str) -> Option<PathBuf> {
     let p = shellexpand::tilde(identity).to_string();
     let pubp = format!("{p}.pub");
     let pb = PathBuf::from(pubp);
-    if pb.exists() { Some(pb) } else { None }
+    if pb.exists() {
+        Some(pb)
+    } else {
+        None
+    }
 }
 
 pub fn default_pubkey_path() -> Option<PathBuf> {
     let home = dirs::home_dir()?;
     let p1 = home.join(".ssh/id_ed25519.pub");
-    if p1.exists() { return Some(p1); }
+    if p1.exists() {
+        return Some(p1);
+    }
     let p2 = home.join(".ssh/id_rsa.pub");
-    if p2.exists() { return Some(p2); }
+    if p2.exists() {
+        return Some(p2);
+    }
     None
 }
 
@@ -190,16 +206,20 @@ pub fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<(
     // 1) Try ssh-copy-id
     let mut try_copy_id = Command::new("ssh-copy-id");
     try_copy_id
-        .arg("-p").arg(h.port.to_string())
+        .arg("-p")
+        .arg(h.port.to_string())
         .arg("-f")
         .arg(format!("{}@{}", h.username, h.host))
-        .arg("-i").arg(pubkey_path);
+        .arg("-i")
+        .arg(pubkey_path);
 
     if let Some(j) = &h.proxy_jump {
         try_copy_id.arg("-o").arg(format!("ProxyJump={}", j));
     }
     if let Some(id) = &h.identity_file {
-        try_copy_id.arg("-o").arg(format!("IdentityFile={}", shellexpand::tilde(id)));
+        try_copy_id
+            .arg("-o")
+            .arg(format!("IdentityFile={}", shellexpand::tilde(id)));
     }
 
     match try_copy_id.status() {
@@ -213,11 +233,16 @@ pub fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<(
     let key_content = std::fs::read_to_string(pubkey_path)?;
     let mut ssh = Command::new("ssh");
     ssh.arg(format!("{}@{}", h.username, h.host))
-        .arg("-p").arg(h.port.to_string())
+        .arg("-p")
+        .arg(h.port.to_string())
         .stdin(Stdio::piped());
 
-    if let Some(j) = &h.proxy_jump { ssh.arg("-J").arg(j); }
-    if let Some(id) = &h.identity_file { ssh.arg("-i").arg(shellexpand::tilde(id).to_string()); }
+    if let Some(j) = &h.proxy_jump {
+        ssh.arg("-J").arg(j);
+    }
+    if let Some(id) = &h.identity_file {
+        ssh.arg("-i").arg(shellexpand::tilde(id).to_string());
+    }
 
     ssh.arg("bash").arg("-lc").arg(
         "set -e; \
@@ -239,7 +264,9 @@ pub fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<(
     }
     let status = child.wait()?;
     if !status.success() {
-        return Err(std::io::Error::other(format!("ssh exited with status {status}")));
+        return Err(std::io::Error::other(format!(
+            "ssh exited with status {status}"
+        )));
     }
     Ok(())
 }

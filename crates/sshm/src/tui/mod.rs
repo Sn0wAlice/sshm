@@ -1,7 +1,7 @@
 pub mod app;
-pub mod functions;
 pub mod char;
-pub mod theme;
+pub mod functions;
+pub mod health;
 pub mod ssh;
 pub mod tabs;
-pub mod health;
+pub mod theme;

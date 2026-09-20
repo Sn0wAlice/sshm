@@ -1,7 +1,7 @@
+use crate::tui::theme::{form_values, hex_to_color, Theme, PRESETS};
 use crossterm::event::KeyCode;
 use ratatui::prelude::*;
 use ratatui::widgets::{Block, Borders, Paragraph};
-use crate::tui::theme::{Theme, PRESETS, hex_to_color, form_values};
 
 /// Fields layout:
 /// 0..PRESETS.len()-1  = preset items
@@ -43,10 +43,18 @@ impl ThemeTabState {
         PRESETS.len() + 1 + 6 + 1 + 1
     }
 
-    fn separator_index() -> usize { PRESETS.len() }
-    fn custom_start() -> usize { PRESETS.len() + 1 }
-    pub fn transparent_index() -> usize { PRESETS.len() + 7 }
-    fn save_index() -> usize { PRESETS.len() + 8 }
+    fn separator_index() -> usize {
+        PRESETS.len()
+    }
+    fn custom_start() -> usize {
+        PRESETS.len() + 1
+    }
+    pub fn transparent_index() -> usize {
+        PRESETS.len() + 7
+    }
+    fn save_index() -> usize {
+        PRESETS.len() + 8
+    }
 
     pub fn next_field(&mut self) {
         self.selected_field = (self.selected_field + 1) % Self::total_fields();
@@ -124,8 +132,14 @@ pub enum ThemeAction {
 
 pub fn handle_theme_event(key: KeyCode, state: &mut ThemeTabState) -> ThemeAction {
     match key {
-        KeyCode::Down | KeyCode::Tab => { state.next_field(); ThemeAction::None }
-        KeyCode::Up | KeyCode::BackTab => { state.prev_field(); ThemeAction::None }
+        KeyCode::Down | KeyCode::Tab => {
+            state.next_field();
+            ThemeAction::None
+        }
+        KeyCode::Up | KeyCode::BackTab => {
+            state.prev_field();
+            ThemeAction::None
+        }
         KeyCode::Enter => {
             if state.is_on_preset() {
                 ThemeAction::ApplyPreset(state.selected_field)
@@ -180,7 +194,7 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
     }
     constraints.push(Constraint::Length(1)); // Transparent checkbox
     constraints.push(Constraint::Length(2)); // Save button
-    constraints.push(Constraint::Min(0));    // Spacer
+    constraints.push(Constraint::Min(0)); // Spacer
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
@@ -189,8 +203,11 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
         .split(inner);
 
     // --- Presets header ---
-    let header = Paragraph::new("  Presets (Enter to apply)")
-        .style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD));
+    let header = Paragraph::new("  Presets (Enter to apply)").style(
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    );
     f.render_widget(header, chunks[0]);
 
     // --- Preset items ---
@@ -203,7 +220,9 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
             Span::styled(
                 format!("{}  {:<14}", marker, preset.name),
                 if is_sel {
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(theme.fg)
                 },
@@ -219,13 +238,30 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
 
     // --- Custom separator ---
     let sep_chunk_idx = 1 + PRESETS.len();
-    let sep = Paragraph::new("\n  Custom Colors")
-        .style(Style::default().fg(theme.accent).add_modifier(Modifier::BOLD));
+    let sep = Paragraph::new("\n  Custom Colors").style(
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD),
+    );
     f.render_widget(sep, chunks[sep_chunk_idx]);
 
     // --- Custom fields ---
-    let custom_labels = ["Background", "Foreground", "Accent", "Muted", "Error", "Success"];
-    let custom_values = [&state.custom_bg, &state.custom_fg, &state.custom_accent, &state.custom_muted, &state.custom_error, &state.custom_success];
+    let custom_labels = [
+        "Background",
+        "Foreground",
+        "Accent",
+        "Muted",
+        "Error",
+        "Success",
+    ];
+    let custom_values = [
+        &state.custom_bg,
+        &state.custom_fg,
+        &state.custom_accent,
+        &state.custom_muted,
+        &state.custom_error,
+        &state.custom_success,
+    ];
     let custom_chunk_start = sep_chunk_idx + 1;
 
     for (i, (label, value)) in custom_labels.iter().zip(custom_values.iter()).enumerate() {
@@ -253,9 +289,16 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
             Style::default().fg(theme.fg)
         };
 
-        let suffix = if bg_overridden { "  (overridden — transparent)" } else { "" };
+        let suffix = if bg_overridden {
+            "  (overridden — transparent)"
+        } else {
+            ""
+        };
         let line = Line::from(vec![
-            Span::styled(format!("  {:<14}: {}{} ", label, value, cursor), label_style),
+            Span::styled(
+                format!("  {:<14}: {}{} ", label, value, cursor),
+                label_style,
+            ),
             preview_span,
             Span::styled(suffix, Style::default().fg(theme.muted)),
         ]);
@@ -268,12 +311,17 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
     let trans_sel = state.selected_field == ThemeTabState::transparent_index();
     let checkbox = if state.transparent_bg { "[x]" } else { "[ ]" };
     let trans_label_style = if trans_sel {
-        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.fg)
     };
     let trans_line = Line::from(vec![
-        Span::styled(format!("  {} Transparent background", checkbox), trans_label_style),
+        Span::styled(
+            format!("  {} Transparent background", checkbox),
+            trans_label_style,
+        ),
         Span::styled(
             "  (use the terminal's own background — Space to toggle)",
             Style::default().fg(theme.muted),
@@ -285,7 +333,10 @@ pub fn draw_theme_tab(f: &mut Frame, area: Rect, state: &ThemeTabState, theme: &
     let save_chunk = custom_chunk_start + 7;
     let is_save = state.selected_field == ThemeTabState::save_index();
     let save_style = if is_save {
-        Style::default().fg(theme.bg).bg(theme.accent).add_modifier(Modifier::BOLD)
+        Style::default()
+            .fg(theme.bg)
+            .bg(theme.accent)
+            .add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(theme.accent)
     };

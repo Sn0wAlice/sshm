@@ -27,6 +27,8 @@ known_hosts_clean_failed = "Nettoyage known_hosts échoué : {error}"
 fingerprint_pinned = "{host} épinglé dans known_hosts"
 fingerprint_failed = "Action sur la clé d'hôte échouée : {error}"
 quick_connect_oob = "Pas d'hôte n°{n} dans la liste visible"
+opened_in_terminal = "{name} ouvert dans un nouveau terminal"
+terminal_failed = "Nouveau terminal : {error}"
 
 [kluster]
 docker_unavailable = "Daemon Docker non démarré"
@@ -46,3 +48,143 @@ sort_favorites = "favoris d'abord"
 sort_frecency = "frecency (récent × fréquent)"
 view_folders = "dossiers"
 view_tags = "tags"
+
+[tab]
+hosts = "Hôtes"
+kluster = "Kluster"
+identities = "Identités"
+settings = "Réglages"
+theme = "Thème"
+help = "Aide"
+
+# Barre de raccourcis contextuelle (et popup `h`). Les lettres de touche sont
+# fixes — seules les descriptions qui suivent sont traduites. Garder le
+# séparateur ` │ ` : le pied de page tronque sur ces frontières et le popup
+# découpe dessus.
+[help]
+host_nav = "↑↓ naviguer │ h aide │ Entrée connexion │ o nouv-term │ / filtrer │ a ajouter │ e éditer │ y cloner │ Y copier │ d supprimer │ Espace sélectionner │ X lancer-cmd │ c tester │ p tunnel │ t tunnels │ i identité │ f favori │ s tri │ q quitter"
+folder_nav = "↑↓ naviguer │ h aide │ Entrée plier/déplier │ / filtrer │ a ajouter │ r renommer │ d supprimer │ t tunnels │ q quitter"
+filter_mode = "Taper pour filtrer (flou) │ Échap effacer │ Entrée valider"
+delete_modal = "←→ choisir │ Entrée confirmer │ Échap annuler"
+settings_tab = "↑↓ naviguer │ h aide │ Taper pour éditer │ Entrée enregistrer │ ←→ onglet │ Échap réinitialiser"
+theme_tab = "↑↓ naviguer │ h aide │ Entrée appliquer/enregistrer │ ←→ onglet │ Échap réinitialiser"
+help_tab = "↑↓ défiler │ h aide │ PgPréc/PgSuiv défilement rapide │ Origine haut │ ←→ onglet │ q quitter"
+identities_tab = "↑↓ naviguer │ h aide │ / filtrer │ g générer │ p pousser │ a agent-ajout │ x agent-retrait │ K known-hosts │ r rafraîchir │ ←→ onglet │ q quitter"
+kluster_header_runtime = "↑↓ naviguer │ h aide │ Entrée plier/déplier │ / filtrer │ r rafraîchir │ n ajouter cluster │ ←→ onglet │ q quitter"
+kluster_header_cluster = "↑↓ naviguer │ h aide │ Entrée plier/déplier │ / filtrer │ r rafraîchir │ n ajouter │ e éditer │ d supprimer │ ←→ onglet │ q quitter"
+kluster_header_docker_remote = "↑↓ naviguer │ h aide │ Entrée plier/déplier │ / filtrer │ r rafraîchir │ n ajouter remote docker │ d délier │ ←→ onglet │ q quitter"
+kluster_item = "↑↓ naviguer │ h aide │ Entrée shell │ i détails │ l logs(-f) │ s démarrer/arrêter │ R redémarrer │ / filtrer │ r rafraîchir │ ←→ onglet │ q quitter"
+kluster_terminal_pod = "↑↓ naviguer │ h aide │ Entrée shell │ i détails │ l logs(-f) │ / filtrer │ d supprimer pod │ r rafraîchir │ ←→ onglet │ q quitter"
+empty = "a ajouter un hôte │ h aide │ q quitter │ ←→ onglet"
+
+[help.title]
+host_nav = "Hôtes"
+folder_nav = "Dossier"
+filter_mode = "Filtre"
+delete_modal = "Suppression"
+settings_tab = "Réglages"
+theme_tab = "Thème"
+help_tab = "Aide"
+identities_tab = "Identités"
+kluster_header_runtime = "Kluster — en-tête runtime"
+kluster_header_cluster = "Kluster — en-tête cluster"
+kluster_header_docker_remote = "Kluster — remote Docker"
+kluster_item = "Kluster — conteneur/pod"
+kluster_terminal_pod = "Kluster — pod terminé"
+empty = "Vide"
+
+[form]
+toggle_hint = "  Espace pour basculer (désactivé par défaut)"
+
+[form.host]
+title_new = "Créer un hôte"
+title_edit = "Éditer l'hôte"
+name = "Nom"
+host = "Hôte/IP"
+port = "Port"
+username = "Utilisateur"
+identity = "Fichier de clé"
+proxy_jump = "ProxyJump"
+tags = "Tags"
+folder = "Dossier"
+notes = "Notes"
+remote_command = "Commande à la connexion"
+ssh_options = "Options ssh -o"
+fa_warning = "  ⚠ partage ton agent local avec cet hôte"
+
+[dialog]
+irreversible = "Cette action est irréversible."
+error = "Erreur"
+
+[dialog.tunnel_closed]
+title = "Tunnel fermé"
+body = "Le processus du tunnel SSH s'est arrêté.\n\nAppuie sur une touche pour revenir..."
+
+[dialog.button]
+delete = "Supprimer"
+cancel = "Annuler"
+delete_all = "Tout supprimer"
+keep_hosts = "Garder les hôtes"
+
+[dialog.delete_host]
+title = "Confirmer la suppression"
+body = "Supprimer l'hôte « {name} » ?"
+
+[dialog.delete_folder]
+title = "Confirmer la suppression du dossier"
+body = "Supprimer le dossier vide « {name} » ?"
+note = "Seul le dossier sera retiré."
+
+[dialog.delete_folder_hosts]
+title = "Confirmer la suppression du dossier et des hôtes"
+body = "Le dossier « {name} » contient {n} hôtes."
+question = "Que veux-tu faire ?"
+
+[detail]
+name = "Nom"
+user = "Utilisateur"
+host = "Hôte"
+port = "Port"
+tags = "Tags"
+identity = "Fichier de clé"
+proxy_jump = "ProxyJump"
+folder = "Dossier"
+last_used = "Dernier usage"
+uses = "Usages"
+frecency = "Frecency"
+forward_agent = "ForwardAgent : ⚠ ACTIF (-A)\n"
+mosh = "Mosh : ● ACTIF\n"
+run_on_connect = "Commande à la connexion : {cmd}"
+notes = "Notes : {notes}"
+ssh_options = "ssh -o : {opts}"
+tunnels = "Tunnels : {n} enregistré(s) [{kinds}]"
+
+[form.tunnel]
+socks_port = "Port SOCKS"
+local_port = "Port local"
+remote_bind_port = "Port de bind distant"
+remote_host = "Hôte distant"
+remote_port = "Port distant"
+label = "Libellé (optionnel)"
+save = "Enregistrer ce tunnel sur l'hôte"
+auto_restart = "Redémarrer automatiquement s'il tombe"
+footer = "Tab/↑↓ naviguer | Espace bascule | Échap annuler"
+start = "Démarrer le tunnel"
+
+[error]
+local_port = "Le port local doit être un nombre entre 1 et 65535"
+remote_port = "Le port distant doit être un nombre entre 1 et 65535"
+
+[empty]
+no_keys = "Aucune clé trouvée dans ~/.ssh.\n\nAppuie sur « g » pour en générer une."
+
+[fanout]
+prompt = "Commande à lancer sur les hôtes sélectionnés :"
+targets = "Hôtes ciblés ({n}) :"
+missing = "introuvable — sera ignoré"
+confirm = "Lancer « {cmd} » sur {n} hôte(s) ?"
+skipped = "ignoré (l'hôte n'existe plus)"
+launch_failed = "impossible de lancer ssh"
+exit_status = "code de sortie"
+done = "Terminé — {ok} ok, {failed} en échec."
+return = "Appuie sur Entrée pour revenir à sshm"

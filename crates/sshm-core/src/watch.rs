@@ -67,22 +67,21 @@ impl ConfigWatcher {
     pub fn start_in(dir: &Path) -> Result<Self> {
         let (raw_tx, raw_rx) = mpsc::channel::<DbChanged>();
 
-        let mut watcher =
-            notify::recommended_watcher(move |res: notify::Result<Event>| {
-                if let Ok(event) = res {
-                    // Ignore pure access/metadata reads; keep create/modify/
-                    // remove/rename — those are what an atomic save produces.
-                    if matches!(event.kind, EventKind::Access(_)) {
-                        return;
-                    }
-                    for p in &event.paths {
-                        if let Some(kind) = DbChanged::classify(p) {
-                            let _ = raw_tx.send(kind);
-                        }
+        let mut watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
+            if let Ok(event) = res {
+                // Ignore pure access/metadata reads; keep create/modify/
+                // remove/rename — those are what an atomic save produces.
+                if matches!(event.kind, EventKind::Access(_)) {
+                    return;
+                }
+                for p in &event.paths {
+                    if let Some(kind) = DbChanged::classify(p) {
+                        let _ = raw_tx.send(kind);
                     }
                 }
-            })
-            .context("creating filesystem watcher")?;
+            }
+        })
+        .context("creating filesystem watcher")?;
 
         watcher
             .watch(dir, RecursiveMode::NonRecursive)
@@ -94,7 +93,10 @@ impl ConfigWatcher {
             .spawn(move || debounce_loop(&raw_rx, &tx, DEBOUNCE))
             .context("spawning debounce thread")?;
 
-        Ok(ConfigWatcher { _watcher: watcher, rx })
+        Ok(ConfigWatcher {
+            _watcher: watcher,
+            rx,
+        })
     }
 
     /// Non-blocking: drain and return every debounced change pending right now,
@@ -160,15 +162,27 @@ mod tests {
 
     #[test]
     fn classify_matches_only_the_three_db_files() {
-        assert_eq!(DbChanged::classify(Path::new("/x/host.json")), Some(DbChanged::Hosts));
-        assert_eq!(DbChanged::classify(Path::new("/x/kluster.json")), Some(DbChanged::Kluster));
-        assert_eq!(DbChanged::classify(Path::new("/x/settings.toml")), Some(DbChanged::Settings));
+        assert_eq!(
+            DbChanged::classify(Path::new("/x/host.json")),
+            Some(DbChanged::Hosts)
+        );
+        assert_eq!(
+            DbChanged::classify(Path::new("/x/kluster.json")),
+            Some(DbChanged::Kluster)
+        );
+        assert_eq!(
+            DbChanged::classify(Path::new("/x/settings.toml")),
+            Some(DbChanged::Settings)
+        );
     }
 
     #[test]
     fn classify_ignores_temp_and_backup_files() {
         // The dotfile temp names atomic_write leaves behind, and .bak backups.
-        assert_eq!(DbChanged::classify(Path::new("/x/.host.json.tmp-1234-7")), None);
+        assert_eq!(
+            DbChanged::classify(Path::new("/x/.host.json.tmp-1234-7")),
+            None
+        );
         assert_eq!(DbChanged::classify(Path::new("/x/host.json.bak")), None);
         assert_eq!(DbChanged::classify(Path::new("/x/other.txt")), None);
     }
@@ -223,6 +237,9 @@ mod tests {
             }
             std::thread::sleep(Duration::from_millis(50));
         }
-        assert!(got.contains(&DbChanged::Hosts), "expected a Hosts change, got {got:?}");
+        assert!(
+            got.contains(&DbChanged::Hosts),
+            "expected a Hosts change, got {got:?}"
+        );
     }
 }

@@ -20,11 +20,20 @@ pub fn dispatch(args: &[String]) {
         "pull" => run_direction(Direction::Pull),
         "push" => run_direction(Direction::Push),
         "setup" => setup(),
-        "status" => { status(); Ok(()) }
+        "status" => {
+            status();
+            Ok(())
+        }
         "enable" => toggle(true),
         "disable" => toggle(false),
-        "cron" => { print_cron(); Ok(()) }
-        "help" | "-h" | "--help" => { usage(); Ok(()) }
+        "cron" => {
+            print_cron();
+            Ok(())
+        }
+        "help" | "-h" | "--help" => {
+            usage();
+            Ok(())
+        }
         other => {
             eprintln!("Unknown sync command: {other}");
             usage();
@@ -121,24 +130,37 @@ fn status() {
     println!("  Enabled     : {}", if cfg.enabled { "yes" } else { "no" });
     println!(
         "  Repository  : {}",
-        if cfg.is_configured() { cfg.repo_url.trim() } else { "(not configured)" }
+        if cfg.is_configured() {
+            cfg.repo_url.trim()
+        } else {
+            "(not configured)"
+        }
     );
     println!("  Branch      : {}", cfg.effective_branch());
     println!(
         "  SSH key     : {}",
-        cfg.expanded_key().unwrap_or_else(|| "(ssh-agent / ~/.ssh/config)".to_string())
+        cfg.expanded_key()
+            .unwrap_or_else(|| "(ssh-agent / ~/.ssh/config)".to_string())
     );
     let when = match cfg.effective_interval() {
         Some(secs) => format!("every {} min", secs / 60),
         None => "manual (or cron)".to_string(),
     };
     let mut triggers = vec![when];
-    if cfg.on_start { triggers.push("on start".into()) }
-    if cfg.on_exit { triggers.push("on exit".into()) }
+    if cfg.on_start {
+        triggers.push("on start".into())
+    }
+    if cfg.on_exit {
+        triggers.push("on exit".into())
+    }
     println!("  Schedule    : {}", triggers.join(", "));
     println!(
         "  Files       : {}",
-        cfg.effective_items().iter().map(|i| i.file_name()).collect::<Vec<_>>().join(", ")
+        cfg.effective_items()
+            .iter()
+            .map(|i| i.file_name())
+            .collect::<Vec<_>>()
+            .join(", ")
     );
     println!(
         "  Conflicts   : {}",
@@ -147,7 +169,10 @@ fn status() {
             ConflictPolicy::PreferRemote => "keep the remote version",
         }
     );
-    println!("  Working copy: {}", sshm_core::config::path::sync_repo_dir().display());
+    println!(
+        "  Working copy: {}",
+        sshm_core::config::path::sync_repo_dir().display()
+    );
 
     println!();
     match state.since_last_success() {
@@ -159,10 +184,14 @@ fn status() {
         None => println!("  Last success: never"),
     }
     if let Some(secs) = state.since_last_attempt() {
-        println!("  Last attempt: {}{}", ago(secs), match &state.last_host {
-            Some(h) => format!(" (from {h})"),
-            None => String::new(),
-        });
+        println!(
+            "  Last attempt: {}{}",
+            ago(secs),
+            match &state.last_host {
+                Some(h) => format!(" (from {h})"),
+                None => String::new(),
+            }
+        );
     }
     if let Some(err) = &state.last_error {
         println!("  Last error  : {err}");
@@ -170,7 +199,10 @@ fn status() {
     match sync::SyncLock::holder() {
         Some(info) => println!(
             "  Lock        : held by pid {} on {} ({}, {})",
-            info.pid, info.host, info.what, ago(info.age_secs())
+            info.pid,
+            info.host,
+            info.what,
+            ago(info.age_secs())
         ),
         None => println!("  Lock        : free"),
     }
@@ -191,7 +223,11 @@ fn print_cron() {
         .map(|p| p.display().to_string())
         .unwrap_or_else(|_| "sshm".to_string());
     let cfg = load_settings().sync;
-    let minutes = cfg.effective_interval().map(|s| s / 60).unwrap_or(15).max(1);
+    let minutes = cfg
+        .effective_interval()
+        .map(|s| s / 60)
+        .unwrap_or(15)
+        .max(1);
 
     println!("# Sync sshm's config on a schedule. `--if-due` respects the interval");
     println!("# in Settings and does nothing when another instance is already syncing,");
@@ -248,7 +284,11 @@ fn setup() -> Result<()> {
 
     let ssh_key = pick_key(&cur)?;
     let branch = Text::new("Branch:")
-        .with_initial_value(if cur.branch.is_empty() { "main" } else { &cur.branch })
+        .with_initial_value(if cur.branch.is_empty() {
+            "main"
+        } else {
+            &cur.branch
+        })
         .prompt()?;
 
     let items = pick_items(&cur)?;
@@ -279,7 +319,10 @@ fn setup() -> Result<()> {
     };
     save(&config)?;
     println!();
-    println!("Saved to {}.", crate::config::settings::settings_path().display());
+    println!(
+        "Saved to {}.",
+        crate::config::settings::settings_path().display()
+    );
 
     if let Err(e) = sync::preflight(&config.sync) {
         println!("⚠ {e}");
@@ -304,8 +347,10 @@ fn pick_key(cur: &SyncConfig) -> Result<String> {
     const NONE: &str = "None (use ssh-agent / ~/.ssh/config)";
 
     let keys = sshm_core::ssh::keys::scan_ssh_dir();
-    let mut options: Vec<String> =
-        keys.iter().map(|k| k.private.display().to_string()).collect();
+    let mut options: Vec<String> = keys
+        .iter()
+        .map(|k| k.private.display().to_string())
+        .collect();
     options.push(OTHER.to_string());
     options.push(NONE.to_string());
 
@@ -409,5 +454,9 @@ fn pick_conflict(cur: &SyncConfig) -> Result<ConflictPolicy> {
     let choice = Select::new("On a true conflict:", vec![LOCAL, REMOTE])
         .with_starting_cursor(start)
         .prompt()?;
-    Ok(if choice == LOCAL { ConflictPolicy::PreferLocal } else { ConflictPolicy::PreferRemote })
+    Ok(if choice == LOCAL {
+        ConflictPolicy::PreferLocal
+    } else {
+        ConflictPolicy::PreferRemote
+    })
 }

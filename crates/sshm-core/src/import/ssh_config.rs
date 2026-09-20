@@ -1,18 +1,17 @@
+use crate::models::Host;
+use ssh_config::SSHConfig;
 use std::collections::HashMap;
 use std::fs;
-use ssh_config::SSHConfig;
-use crate::models::Host;
 
 /// Pure-function variant of [`import_ssh_config`]: takes the raw text of an
 /// `~/.ssh/config` file and returns the parsed hosts (skipping wildcard
 /// patterns and aliases already present in `existing`).
 ///
 /// Kept testable by isolating I/O in [`import_ssh_config`].
-pub fn parse_ssh_config_text(
-    text: &str,
-    existing: &HashMap<String, Host>,
-) -> Vec<Host> {
-    let Ok(cfg) = SSHConfig::parse_str(text) else { return Vec::new(); };
+pub fn parse_ssh_config_text(text: &str, existing: &HashMap<String, Host>) -> Vec<Host> {
+    let Ok(cfg) = SSHConfig::parse_str(text) else {
+        return Vec::new();
+    };
 
     let mut aliases: Vec<String> = Vec::new();
     for line in text.lines() {
@@ -20,8 +19,12 @@ pub fn parse_ssh_config_text(
         if let Some(rest) = trimmed.strip_prefix("Host ") {
             for tok in rest.split(|c: char| c.is_whitespace() || c == ',') {
                 let alias = tok.trim();
-                if alias.is_empty() { continue; }
-                if alias.contains('*') || alias.contains('?') || alias.starts_with('!') { continue; }
+                if alias.is_empty() {
+                    continue;
+                }
+                if alias.contains('*') || alias.contains('?') || alias.starts_with('!') {
+                    continue;
+                }
                 aliases.push(alias.to_string());
             }
         }
@@ -31,12 +34,20 @@ pub fn parse_ssh_config_text(
 
     let mut out = Vec::new();
     for alias in aliases {
-        if existing.contains_key(&alias) { continue; }
+        if existing.contains_key(&alias) {
+            continue;
+        }
         let settings = cfg.query(&alias);
         let get = |k: &str| settings.get(k).map(|s| s.to_string());
-        let host = get("HostName").or_else(|| get("Hostname")).unwrap_or_else(|| alias.clone());
-        let username = get("User").or_else(|| get("Username")).unwrap_or_else(|| "root".into());
-        let port = get("Port").and_then(|p| p.parse::<u16>().ok()).unwrap_or(22);
+        let host = get("HostName")
+            .or_else(|| get("Hostname"))
+            .unwrap_or_else(|| alias.clone());
+        let username = get("User")
+            .or_else(|| get("Username"))
+            .unwrap_or_else(|| "root".into());
+        let port = get("Port")
+            .and_then(|p| p.parse::<u16>().ok())
+            .unwrap_or(22);
         let identity_file = get("IdentityFile");
         let proxy_jump = get("ProxyJump");
 
@@ -58,8 +69,12 @@ pub fn parse_ssh_config_text(
 /// I/O wrapper around [`parse_ssh_config_text`].
 pub fn import_ssh_config(hosts: &mut HashMap<String, Host>) {
     let ssh_path = dirs::home_dir().map(|h| h.join(".ssh/config"));
-    let Some(path) = ssh_path.filter(|p| p.exists()) else { return; };
-    let Ok(text) = fs::read_to_string(&path) else { return; };
+    let Some(path) = ssh_path.filter(|p| p.exists()) else {
+        return;
+    };
+    let Ok(text) = fs::read_to_string(&path) else {
+        return;
+    };
     for h in parse_ssh_config_text(&text, hosts) {
         hosts.insert(h.name.clone(), h);
     }

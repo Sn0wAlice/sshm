@@ -1,11 +1,11 @@
 use std::env;
 
-use sshm::config::io::{load_db, save_db};
-use sshm::config::export::export_ssh_config;
-use sshm::config::settings::load_settings;
-use sshm::models::Database;
 use sshm::commands;
+use sshm::config::export::export_ssh_config;
+use sshm::config::io::{load_db, save_db};
+use sshm::config::settings::load_settings;
 use sshm::import::ssh_config::import_ssh_config;
+use sshm::models::Database;
 use sshm::tui::app::run_tui;
 
 fn main() {
@@ -21,12 +21,18 @@ fn main() {
         Some("list") => {
             let filt = if args.get(2).map(String::as_str) == Some("--filter") {
                 args.get(3).cloned()
-            } else { None };
+            } else {
+                None
+            };
             commands::list::list_hosts_with_filter(&db.hosts, filt);
         }
         Some("connect") | Some("c") => {
             let name = args.get(2).cloned();
-            let extras: Vec<String> = if name.is_some() { args[3..].to_vec() } else { args[2..].to_vec() };
+            let extras: Vec<String> = if name.is_some() {
+                args[3..].to_vec()
+            } else {
+                args[2..].to_vec()
+            };
             let launched = commands::connect::connect_host(&db.hosts, name, &extras);
             if let Some(connected) = launched {
                 if let Some(host) = db.hosts.get_mut(&connected) {
@@ -37,16 +43,24 @@ fn main() {
         }
         Some("create") => commands::crud::create(&mut db, None),
         Some("delete") => commands::crud::delete(&mut db),
-        Some("edit")   => commands::crud::edit_host(&mut db),
-        Some("tag")    => match (args.get(2).map(String::as_str), args.get(3), args.get(4)) {
+        Some("edit") => commands::crud::edit_host(&mut db),
+        Some("tag") => match (args.get(2).map(String::as_str), args.get(3), args.get(4)) {
             (Some("add"), Some(name), Some(tlist)) => {
-                let tags: Vec<String> = tlist.split(',').flat_map(|s| s.split_whitespace())
-                    .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                let tags: Vec<String> = tlist
+                    .split(',')
+                    .flat_map(|s| s.split_whitespace())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 commands::tags::tag_add(&mut db.hosts, name.clone(), tags);
             }
             (Some("del"), Some(name), Some(tlist)) => {
-                let tags: Vec<String> = tlist.split(',').flat_map(|s| s.split_whitespace())
-                    .map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+                let tags: Vec<String> = tlist
+                    .split(',')
+                    .flat_map(|s| s.split_whitespace())
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+                    .collect();
                 commands::tags::tag_del(&mut db.hosts, name.clone(), tags);
             }
             _ => println!("Usage: sshm tag [add|del] <name> <tag1,tag2,...>"),
@@ -56,15 +70,19 @@ fn main() {
             import_ssh_config(&mut db.hosts);
             if db.hosts.len() > before {
                 save_db(&db);
-                println!("Imported {} new hosts from ~/.ssh/config.", db.hosts.len() - before);
+                println!(
+                    "Imported {} new hosts from ~/.ssh/config.",
+                    db.hosts.len() - before
+                );
             } else {
                 println!("No new hosts imported from ~/.ssh/config.");
             }
         }
         Some("export") => {
-            let path = args.get(2).cloned().unwrap_or_else(|| {
-                load_settings().export_path
-            });
+            let path = args
+                .get(2)
+                .cloned()
+                .unwrap_or_else(|| load_settings().export_path);
             if path.trim().is_empty() {
                 eprintln!("No export path provided. Usage: sshm export <path>");
                 eprintln!("Or set an export path in Settings.");
@@ -83,7 +101,11 @@ fn main() {
         }
         Some("add-identity") => {
             let name = args.get(2).cloned();
-            let extras: Vec<String> = if name.is_some() { args[3..].to_vec() } else { args[2..].to_vec() };
+            let extras: Vec<String> = if name.is_some() {
+                args[3..].to_vec()
+            } else {
+                args[2..].to_vec()
+            };
             sshm::ssh::add_identity::cmd_add_identity(&db.hosts, name, &extras);
         }
         Some("help") | Some("-h") | Some("--help") => {
@@ -100,19 +122,29 @@ fn main() {
             println!("  sshm tag del <name> <tag1,tag2>            # remove tags");
             println!();
             println!("Identities:");
-            println!("  sshm add-identity <name?> [--pub <path>]   # push pubkey to authorized_keys");
+            println!(
+                "  sshm add-identity <name?> [--pub <path>]   # push pubkey to authorized_keys"
+            );
             println!();
             println!("Import / export:");
             println!("  sshm load_local_conf                       # import from ~/.ssh/config");
-            println!("  sshm export [path]                         # export DB as ~/.ssh/config format");
+            println!(
+                "  sshm export [path]                         # export DB as ~/.ssh/config format"
+            );
             println!();
-            println!("Background tunnels:
+            println!(
+                "Background tunnels:
   sshm tunnel [list]                         # running tunnels, across every instance
   sshm tunnel stop <pid>                     # terminate one tunnel
 
-Config sync (git over SSH):");
-            println!("  sshm sync setup                            # configure repo + key + schedule");
-            println!("  sshm sync                                  # sync now  (pull/push: one way)");
+Config sync (git over SSH):"
+            );
+            println!(
+                "  sshm sync setup                            # configure repo + key + schedule"
+            );
+            println!(
+                "  sshm sync                                  # sync now  (pull/push: one way)"
+            );
             println!("  sshm sync status                           # config, last run, lock state");
             println!("  sshm sync --if-due                         # cron-friendly; `sshm sync cron` prints a line");
             println!();
@@ -127,7 +159,9 @@ Config sync (git over SSH):");
             // The tunnel manager outlives individual `run_tui` calls so that
             // background tunnels survive connecting to a host and returning.
             let mut tunnels = sshm::tui::app::tunnels::TunnelManager::new();
-            loop { run_tui(&mut db, &mut tunnels) }
+            loop {
+                run_tui(&mut db, &mut tunnels)
+            }
         }
     }
 }

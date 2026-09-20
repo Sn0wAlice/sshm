@@ -1,22 +1,34 @@
-use std::collections::HashMap;
 use crate::models::{tags_to_string, Database};
 use crate::tui::app::{HostStatus, Row};
 use ratatui::prelude::Style;
 use ratatui::widgets::{Block, Borders, Paragraph};
+use std::collections::HashMap;
 
 #[allow(clippy::too_many_arguments)]
-pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &mut ratatui::Frame<'_>, hchunks: &[ratatui::layout::Rect], theme: &crate::tui::theme::Theme, db: &Database, host_status: &HashMap<String, HostStatus>) {
+pub fn show_detail_box(
+    last_rows_len: usize,
+    selected: usize,
+    rows: &[Row],
+    f: &mut ratatui::Frame<'_>,
+    hchunks: &[ratatui::layout::Rect],
+    theme: &crate::tui::theme::Theme,
+    db: &Database,
+    host_status: &HashMap<String, HostStatus>,
+) {
     if let Some(sel) = (last_rows_len > 0).then_some(selected) {
         if let Some(row) = rows.get(sel) {
             match row {
                 Row::Host(h) => {
                     let status_line: String = match host_status.get(&h.name) {
-                        Some(HostStatus::Reachable { latency_ms, ssh_banner }) => {
-                            match ssh_banner {
-                                Some(b) => format!("Status: ● reachable ({} ms) — {}", latency_ms, b),
-                                None => format!("Status: ● reachable ({} ms) — no SSH banner", latency_ms),
+                        Some(HostStatus::Reachable {
+                            latency_ms,
+                            ssh_banner,
+                        }) => match ssh_banner {
+                            Some(b) => format!("Status: ● reachable ({} ms) — {}", latency_ms, b),
+                            None => {
+                                format!("Status: ● reachable ({} ms) — no SSH banner", latency_ms)
                             }
-                        }
+                        },
                         Some(HostStatus::Unreachable) => "Status: ● unreachable".to_string(),
                         None => "Status: — not checked".to_string(),
                     };
@@ -25,47 +37,65 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                     } else {
                         h.name.clone()
                     };
-                    let last_used = crate::history::format_last_used(h.last_connected_at.as_deref());
+                    let last_used =
+                        crate::history::format_last_used(h.last_connected_at.as_deref());
                     let fa_line = if h.forward_agent {
-                        "ForwardAgent: ⚠ ON (-A)\n"
+                        crate::t!("detail.forward_agent")
                     } else {
-                        ""
+                        String::new()
                     };
-                    let mosh_line = if h.mosh { "Mosh: ● ON\n" } else { "" };
+                    let mosh_line = if h.mosh {
+                        crate::t!("detail.mosh")
+                    } else {
+                        String::new()
+                    };
                     let run_line = match &h.remote_command {
-                        Some(c) if !c.trim().is_empty() => format!("Run on connect: {}\n", c.trim()),
+                        Some(c) if !c.trim().is_empty() => {
+                            crate::t!("detail.run_on_connect", "cmd" => c.trim()) + "\n"
+                        }
                         _ => String::new(),
                     };
                     let notes_line = match &h.notes {
-                        Some(n) if !n.trim().is_empty() => format!("Notes: {}\n", n.trim()),
+                        Some(n) if !n.trim().is_empty() => {
+                            crate::t!("detail.notes", "notes" => n.trim()) + "\n"
+                        }
                         _ => String::new(),
                     };
                     let opts_line = if h.ssh_options.is_empty() {
                         String::new()
                     } else {
-                        format!("ssh -o: {}\n", h.ssh_options.join("; "))
+                        crate::t!("detail.ssh_options", "opts" => h.ssh_options.join("; ")) + "\n"
                     };
                     let tunnels_line = if h.tunnels.is_empty() {
                         String::new()
                     } else {
-                        let kinds: Vec<String> = h.tunnels.iter()
+                        let kinds: Vec<String> = h
+                            .tunnels
+                            .iter()
                             .map(|t| t.kind.short().to_string())
                             .collect();
-                        format!("Tunnels: {} saved [{}]\n", h.tunnels.len(), kinds.join(", "))
+                        crate::t!("detail.tunnels", "n" => h.tunnels.len(), "kinds" => kinds.join(", "))
+                            + "\n"
                     };
-                    let frecency = crate::history::frecency_score(
-                        h.use_count,
-                        h.last_connected_at.as_deref(),
-                    );
+                    let frecency =
+                        crate::history::frecency_score(h.use_count, h.last_connected_at.as_deref());
                     let detail = format!(
-                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n{}{}{}{}{}{}Last used: {}\nUses: {}\nFrecency: {:.2}\n{}",
+                        "{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}: {}\n{}{}{}{}{}{}{}: {}\n{}: {}\n{}: {:.2}\n{}",
+                        crate::t!("detail.name"),
                         name_display,
+                        crate::t!("detail.user"),
                         h.username,
+                        crate::t!("detail.host"),
                         h.host,
+                        crate::t!("detail.port"),
                         h.port,
+                        crate::t!("detail.tags"),
                         tags_to_string(&h.tags),
+                        crate::t!("detail.identity"),
                         h.identity_file.as_deref().unwrap_or_default(),
+                        crate::t!("detail.proxy_jump"),
                         h.proxy_jump.as_deref().unwrap_or_default(),
+                        crate::t!("detail.folder"),
                         h.folder.as_deref().unwrap_or("-"),
                         fa_line,
                         mosh_line,
@@ -73,8 +103,11 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         opts_line,
                         tunnels_line,
                         notes_line,
+                        crate::t!("detail.last_used"),
                         last_used,
+                        crate::t!("detail.uses"),
                         h.use_count,
+                        crate::t!("detail.frecency"),
                         frecency,
                         status_line,
                     );
@@ -109,9 +142,7 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         })
                         .count();
 
-                    let sub_count = db.folders.iter()
-                        .filter(|f| f.starts_with(&prefix))
-                        .count();
+                    let sub_count = db.folders.iter().filter(|f| f.starts_with(&prefix)).count();
 
                     let state_text = if *collapsed { "collapsed" } else { "expanded" };
                     let detail = if sub_count > 0 {

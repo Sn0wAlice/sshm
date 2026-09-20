@@ -91,7 +91,8 @@ impl HostFormState {
     pub const MOSH_FIELD: usize = 12;
 
     pub fn next_field(&mut self) {
-        self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1); // +1 for Save
+        self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
+        // +1 for Save
     }
 
     pub fn prev_field(&mut self) {
@@ -123,11 +124,15 @@ impl HostFormState {
         self.error = None;
         // Toggle rows: space flips the boolean, everything else is ignored.
         if self.selected_field == Self::FA_FIELD {
-            if c == ' ' { self.forward_agent = !self.forward_agent; }
+            if c == ' ' {
+                self.forward_agent = !self.forward_agent;
+            }
             return;
         }
         if self.selected_field == Self::MOSH_FIELD {
-            if c == ' ' { self.mosh = !self.mosh; }
+            if c == ' ' {
+                self.mosh = !self.mosh;
+            }
             return;
         }
         if let Some(field) = self.active_value_mut() {
@@ -164,7 +169,10 @@ mod tests {
                 seen.push(i);
             }
         }
-        assert_eq!(seen, (0..=HostFormState::SSH_OPTS_FIELD).collect::<Vec<_>>());
+        assert_eq!(
+            seen,
+            (0..=HostFormState::SSH_OPTS_FIELD).collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -174,13 +182,19 @@ mod tests {
         let mut s = state();
         for idx in [HostFormState::FA_FIELD, HostFormState::MOSH_FIELD] {
             s.selected_field = idx;
-            assert!(s.active_value_mut().is_none(), "field {idx} must be a toggle");
+            assert!(
+                s.active_value_mut().is_none(),
+                "field {idx} must be a toggle"
+            );
         }
     }
 
     #[test]
     fn field_indices_are_consecutive_and_within_bounds() {
-        assert_eq!(HostFormState::SSH_OPTS_FIELD, HostFormState::REMOTE_CMD_FIELD + 1);
+        assert_eq!(
+            HostFormState::SSH_OPTS_FIELD,
+            HostFormState::REMOTE_CMD_FIELD + 1
+        );
         assert_eq!(HostFormState::FA_FIELD, HostFormState::SSH_OPTS_FIELD + 1);
         assert_eq!(HostFormState::MOSH_FIELD, HostFormState::FA_FIELD + 1);
         assert_eq!(HostFormState::MOSH_FIELD, HostFormState::fields_count() - 1);
@@ -207,7 +221,10 @@ mod tests {
             s.push_char(c);
         }
         assert_eq!(s.ssh_options, "A=1");
-        assert!(s.name.is_empty(), "characters must not leak into another field");
+        assert!(
+            s.name.is_empty(),
+            "characters must not leak into another field"
+        );
         s.pop_char();
         assert_eq!(s.ssh_options, "A=");
     }

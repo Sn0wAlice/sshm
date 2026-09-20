@@ -1,5 +1,5 @@
-use std::collections::HashMap;
 use crate::models::Host;
+use std::collections::HashMap;
 
 /// Résout une chaîne `proxy_jump` (potentiellement multi-hop, séparée par virgules).
 ///
@@ -64,7 +64,10 @@ mod tests {
     #[test]
     fn single_hop_resolved_by_name() {
         let mut hosts = HashMap::new();
-        hosts.insert("bastion".to_string(), mk_host("bastion", "1.2.3.4", "ubuntu", 22));
+        hosts.insert(
+            "bastion".to_string(),
+            mk_host("bastion", "1.2.3.4", "ubuntu", 22),
+        );
         assert_eq!(
             resolve_proxy_jump("bastion", &hosts),
             Some("ubuntu@1.2.3.4".to_string())
@@ -74,7 +77,10 @@ mod tests {
     #[test]
     fn single_hop_with_custom_port() {
         let mut hosts = HashMap::new();
-        hosts.insert("bastion".to_string(), mk_host("bastion", "1.2.3.4", "ubuntu", 2222));
+        hosts.insert(
+            "bastion".to_string(),
+            mk_host("bastion", "1.2.3.4", "ubuntu", 2222),
+        );
         assert_eq!(
             resolve_proxy_jump("bastion", &hosts),
             Some("ubuntu@1.2.3.4:2222".to_string())

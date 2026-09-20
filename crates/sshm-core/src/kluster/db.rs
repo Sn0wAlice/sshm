@@ -100,15 +100,13 @@ pub fn parse_kube_contexts(text: &str) -> Vec<String> {
         // A new top-level YAML key (`clusters:`, `users:`, …) ends the block.
         // List items (`- ...`) remain inside the block even at column 0 in
         // typical kubeconfigs (block sequence indented relative to the parent).
-        if in_contexts
-            && indent == 0
-            && trimmed.ends_with(':')
-            && !trimmed.starts_with('-')
-        {
+        if in_contexts && indent == 0 && trimmed.ends_with(':') && !trimmed.starts_with('-') {
             in_contexts = false;
             continue;
         }
-        if !in_contexts { continue; }
+        if !in_contexts {
+            continue;
+        }
         // Track the indentation of the first child entry; once we drop
         // back below it, the block is over.
         if let Some(bi) = block_indent {
@@ -197,8 +195,14 @@ contexts:
 
     #[test]
     fn cluster_kind_detection() {
-        assert_eq!(ClusterKind::from_context_name("homelab-k3s"), ClusterKind::K3s);
+        assert_eq!(
+            ClusterKind::from_context_name("homelab-k3s"),
+            ClusterKind::K3s
+        );
         assert_eq!(ClusterKind::from_context_name("prod-eks"), ClusterKind::K8s);
-        assert_eq!(ClusterKind::from_context_name("K3S-cluster"), ClusterKind::K3s);
+        assert_eq!(
+            ClusterKind::from_context_name("K3S-cluster"),
+            ClusterKind::K3s
+        );
     }
 }

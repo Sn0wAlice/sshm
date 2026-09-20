@@ -39,7 +39,9 @@ pub fn probe_host(host: &str, port: u16, connect_timeout: Duration) -> HostStatu
             let latency_ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
             let read_to = std::cmp::min(
                 Duration::from_millis(750),
-                connect_timeout.checked_div(3).unwrap_or(Duration::from_millis(300)),
+                connect_timeout
+                    .checked_div(3)
+                    .unwrap_or(Duration::from_millis(300)),
             );
             let _ = stream.set_read_timeout(Some(read_to));
 
@@ -50,7 +52,10 @@ pub fn probe_host(host: &str, port: u16, connect_timeout: Duration) -> HostStatu
                 Ok(n) if n > 0 => parse_ssh_banner(&buf[..n]),
                 _ => None,
             };
-            HostStatus::Reachable { latency_ms, ssh_banner: banner }
+            HostStatus::Reachable {
+                latency_ms,
+                ssh_banner: banner,
+            }
         }
         Err(_) => HostStatus::Unreachable,
     }
@@ -65,14 +70,23 @@ pub fn parse_ssh_banner(raw: &[u8]) -> Option<String> {
     // Take the first line only (banner is one line).
     let line_end = raw.iter().position(|&b| b == b'\n').unwrap_or(raw.len());
     let line = &raw[..line_end];
-    let line = std::str::from_utf8(line).ok()?.trim_end_matches('\r').trim();
-    if !line.starts_with("SSH-") { return None; }
+    let line = std::str::from_utf8(line)
+        .ok()?
+        .trim_end_matches('\r')
+        .trim();
+    if !line.starts_with("SSH-") {
+        return None;
+    }
     // SSH-2.0-OpenSSH_9.6 [optional comments separated by space]
     // Strip the "SSH-<proto>-" prefix to get "<software> [comments]".
     let after_proto = line.splitn(3, '-').nth(2)?;
     // Software version is up to the first space (comments follow after a space).
     let software = after_proto.split_whitespace().next()?;
-    if software.is_empty() { None } else { Some(software.to_string()) }
+    if software.is_empty() {
+        None
+    } else {
+        Some(software.to_string())
+    }
 }
 
 #[cfg(test)]

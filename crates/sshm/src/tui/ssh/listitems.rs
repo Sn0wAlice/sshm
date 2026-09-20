@@ -1,9 +1,9 @@
-use std::collections::{HashMap, HashSet};
 use crate::tui::app::{HostStatus, Row};
 use crate::tui::functions::folder_depth;
 use crate::tui::theme::Theme;
 use ratatui::prelude::{Line, Modifier, Span, Style};
 use ratatui::widgets::ListItem;
+use std::collections::{HashMap, HashSet};
 
 pub fn get_item_list<'a>(
     rows: &[Row],
@@ -26,7 +26,9 @@ pub fn get_item_list<'a>(
                 let indent = "    ".repeat(depth);
                 let glyph = if is_tag { "#" } else { icon };
                 let style = if is_tag {
-                    Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                    Style::default()
+                        .fg(theme.accent)
+                        .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().add_modifier(Modifier::BOLD)
                 };
@@ -44,12 +46,12 @@ pub fn get_item_list<'a>(
 
                 // Color based on reachability status
                 let name_style = match host_status.get(&h.name) {
-                    Some(HostStatus::Reachable { .. }) => {
-                        Style::default().fg(theme.success).add_modifier(Modifier::BOLD)
-                    }
-                    Some(HostStatus::Unreachable) => {
-                        Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
-                    }
+                    Some(HostStatus::Reachable { .. }) => Style::default()
+                        .fg(theme.success)
+                        .add_modifier(Modifier::BOLD),
+                    Some(HostStatus::Unreachable) => Style::default()
+                        .fg(theme.error)
+                        .add_modifier(Modifier::BOLD),
                     None => Style::default().add_modifier(Modifier::BOLD),
                 };
 
@@ -60,7 +62,10 @@ pub fn get_item_list<'a>(
                 };
 
                 let status_suffix: String = match host_status.get(&h.name) {
-                    Some(HostStatus::Reachable { latency_ms, ssh_banner }) => {
+                    Some(HostStatus::Reachable {
+                        latency_ms,
+                        ssh_banner,
+                    }) => {
                         let banner_mark = match ssh_banner {
                             Some(_) => " ssh",
                             None => " ?",
@@ -73,9 +78,15 @@ pub fn get_item_list<'a>(
 
                 let mut spans = vec![Span::raw(indent)];
                 if !selection.is_empty() {
-                    let mark = if selection.contains(&h.name) { "[x] " } else { "[ ] " };
+                    let mark = if selection.contains(&h.name) {
+                        "[x] "
+                    } else {
+                        "[ ] "
+                    };
                     let mark_style = if selection.contains(&h.name) {
-                        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD)
                     } else {
                         Style::default().fg(theme.muted)
                     };
@@ -84,7 +95,9 @@ pub fn get_item_list<'a>(
                 if h.favorite {
                     spans.push(Span::styled(
                         "★ ".to_string(),
-                        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD),
                     ));
                 }
                 spans.push(Span::styled(h.name.clone(), name_style));
@@ -93,7 +106,9 @@ pub fn get_item_list<'a>(
                 if h.forward_agent {
                     spans.push(Span::styled(
                         "  -A".to_string(),
-                        Style::default().fg(theme.error).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(theme.error)
+                            .add_modifier(Modifier::BOLD),
                     ));
                 }
 
@@ -101,7 +116,9 @@ pub fn get_item_list<'a>(
                     spans.push(Span::styled(
                         status_suffix,
                         match host_status.get(&h.name) {
-                            Some(HostStatus::Reachable { .. }) => Style::default().fg(theme.success),
+                            Some(HostStatus::Reachable { .. }) => {
+                                Style::default().fg(theme.success)
+                            }
                             Some(HostStatus::Unreachable) => Style::default().fg(theme.error),
                             _ => Style::default(),
                         },

@@ -1,8 +1,8 @@
-use std::path::PathBuf;
-use std::collections::HashMap;
-use inquire::Select;
+use super::keys::{default_pubkey_path, install_pubkey_on_host, pub_from_identity};
 use crate::models::Host;
-use super::keys::{pub_from_identity, default_pubkey_path, install_pubkey_on_host};
+use inquire::Select;
+use std::collections::HashMap;
+use std::path::PathBuf;
 
 /// Commande: ajoute une clé publique à authorized_keys du host
 pub fn cmd_add_identity(hosts: &HashMap<String, Host>, name: Option<String>, args: &[String]) {
@@ -45,7 +45,9 @@ pub fn cmd_add_identity(hosts: &HashMap<String, Host>, name: Option<String>, arg
         match pub_from_identity(id) {
             Some(pb) => pb,
             None => {
-                eprintln!("No .pub found next to identity_file; falling back to default ~/.ssh/id_*.pub");
+                eprintln!(
+                    "No .pub found next to identity_file; falling back to default ~/.ssh/id_*.pub"
+                );
                 match default_pubkey_path() {
                     Some(pb) => pb,
                     None => {
@@ -65,11 +67,18 @@ pub fn cmd_add_identity(hosts: &HashMap<String, Host>, name: Option<String>, arg
         }
     };
 
-    println!("Installing public key '{}' on {}@{}:{} …",
-        pubkey_path.display(), h.username, h.host, h.port);
+    println!(
+        "Installing public key '{}' on {}@{}:{} …",
+        pubkey_path.display(),
+        h.username,
+        h.host,
+        h.port
+    );
 
     match install_pubkey_on_host(h, &pubkey_path) {
-        Ok(_) => println!("✅ Public key installed. You should be able to connect without password."),
+        Ok(_) => {
+            println!("✅ Public key installed. You should be able to connect without password.")
+        }
         Err(e) => eprintln!("❌ Failed to install key: {e}"),
     }
 }

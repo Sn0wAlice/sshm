@@ -99,7 +99,10 @@ impl SyncLock {
         for attempt in 0..2 {
             match create_exclusive(path, &LockInfo::new(what)) {
                 Ok(()) => {
-                    return Ok(Some(SyncLock { path: path.to_path_buf(), released: false }))
+                    return Ok(Some(SyncLock {
+                        path: path.to_path_buf(),
+                        released: false,
+                    }))
                 }
                 Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {
                     if attempt == 1 {
@@ -188,7 +191,11 @@ fn create_exclusive(path: &Path, info: &LockInfo) -> std::io::Result<()> {
         LOCK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
     ));
     {
-        let mut f = OpenOptions::new().write(true).create(true).truncate(true).open(&tmp)?;
+        let mut f = OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .open(&tmp)?;
         let body = serde_json::to_vec_pretty(info).unwrap_or_else(|_| b"{}".to_vec());
         f.write_all(&body)?;
         f.sync_all()?;
@@ -313,7 +320,10 @@ mod tests {
         create_exclusive(&path, &ghost).unwrap();
 
         let taken = SyncLock::try_acquire_at(&path, "test").unwrap();
-        assert!(taken.is_some(), "a lock held by a dead pid must be taken over");
+        assert!(
+            taken.is_some(),
+            "a lock held by a dead pid must be taken over"
+        );
     }
 
     #[test]
@@ -358,7 +368,10 @@ mod tests {
     #[cfg(unix)]
     fn backdate(path: &Path, secs: i64) {
         let when = chrono::Utc::now().timestamp() - secs;
-        let tv = libc::timeval { tv_sec: when as libc::time_t, tv_usec: 0 };
+        let tv = libc::timeval {
+            tv_sec: when as libc::time_t,
+            tv_usec: 0,
+        };
         let times = [tv, tv];
         let c = std::ffi::CString::new(path.to_str().unwrap()).unwrap();
         // SAFETY: both pointers are valid for the duration of the call.
@@ -410,6 +423,10 @@ mod tests {
         for h in handles {
             h.join().unwrap();
         }
-        assert_eq!(held.lock().unwrap().len(), 1, "exactly one thread may hold the lock");
+        assert_eq!(
+            held.lock().unwrap().len(),
+            1,
+            "exactly one thread may hold the lock"
+        );
     }
 }

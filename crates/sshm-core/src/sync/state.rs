@@ -117,7 +117,10 @@ mod tests {
 
     #[test]
     fn an_old_attempt_is_due_again() {
-        let s = SyncState { last_attempt_at: Some(now() - 1000), ..SyncState::default() };
+        let s = SyncState {
+            last_attempt_at: Some(now() - 1000),
+            ..SyncState::default()
+        };
         assert!(s.is_due(900));
         assert!(!s.is_due(2000));
     }

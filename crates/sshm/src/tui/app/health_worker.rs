@@ -63,9 +63,8 @@ pub fn spawn_health_worker(
                     Ok(guard) => guard.clone(),
                     Err(_) => break,
                 };
-                let probe_timeout = Duration::from_millis(
-                    probe_timeout_ms.load(Ordering::Relaxed).max(100),
-                );
+                let probe_timeout =
+                    Duration::from_millis(probe_timeout_ms.load(Ordering::Relaxed).max(100));
                 for (name, host, port) in snapshot {
                     if stop.load(Ordering::Relaxed) {
                         return;
@@ -80,9 +79,7 @@ pub fn spawn_health_worker(
                         let _ = tx.send((name, status));
                     });
                 }
-                let interval = Duration::from_secs(
-                    interval_secs.load(Ordering::Relaxed).max(1),
-                );
+                let interval = Duration::from_secs(interval_secs.load(Ordering::Relaxed).max(1));
                 next_pass = Instant::now() + interval;
             }
             thread::sleep(Duration::from_millis(250));

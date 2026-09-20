@@ -27,7 +27,10 @@ pub fn build_forward_arg(t: &Tunnel) -> Vec<String> {
             } else {
                 t.remote_host.clone()
             };
-            vec!["-L".into(), format!("{}:{}:{}", t.local_port, rh, t.remote_port)]
+            vec![
+                "-L".into(),
+                format!("{}:{}:{}", t.local_port, rh, t.remote_port),
+            ]
         }
         TunnelKind::Remote => {
             let rh = if t.remote_host.is_empty() {
@@ -35,7 +38,10 @@ pub fn build_forward_arg(t: &Tunnel) -> Vec<String> {
             } else {
                 t.remote_host.clone()
             };
-            vec!["-R".into(), format!("{}:{}:{}", t.local_port, rh, t.remote_port)]
+            vec![
+                "-R".into(),
+                format!("{}:{}:{}", t.local_port, rh, t.remote_port),
+            ]
         }
         TunnelKind::Dynamic => vec!["-D".into(), t.local_port.to_string()],
     }
@@ -59,10 +65,7 @@ pub fn build_tunnel_argv(
 
 /// `~/.config/sshm/tunnels/`.
 pub fn tunnels_dir() -> PathBuf {
-    let mut p = dirs::config_dir().unwrap_or_else(|| PathBuf::from("."));
-    p.push("sshm");
-    p.push("tunnels");
-    p
+    crate::config::path::config_dir().join("tunnels")
 }
 
 /// State file owned by the sshm process with PID `sshm_pid`.
@@ -136,7 +139,15 @@ mod tests {
         let argv = build_tunnel_argv(&host(), &t, &HashMap::new());
         assert_eq!(
             argv,
-            vec!["ssh", "-N", "-L", "5432:localhost:5432", "root@10.0.0.5", "-p", "2222"]
+            vec![
+                "ssh",
+                "-N",
+                "-L",
+                "5432:localhost:5432",
+                "root@10.0.0.5",
+                "-p",
+                "2222"
+            ]
         );
     }
 
@@ -185,14 +196,29 @@ mod ssh_option_tests {
         let argv = build_tunnel_argv(&host, &t, &HashMap::new());
         assert_eq!(argv[0], "ssh");
         assert_eq!(argv[1], "-N");
-        for expected in ["-p", "2222", "-i", "/k/id", "-A", "-o", "ServerAliveInterval=30"] {
-            assert!(argv.iter().any(|a| a == expected), "missing {expected} in {argv:?}");
+        for expected in [
+            "-p",
+            "2222",
+            "-i",
+            "/k/id",
+            "-A",
+            "-o",
+            "ServerAliveInterval=30",
+        ] {
+            assert!(
+                argv.iter().any(|a| a == expected),
+                "missing {expected} in {argv:?}"
+            );
         }
     }
 
     #[test]
     fn the_forward_flag_still_precedes_the_target() {
-        let host = Host { name: "db".into(), host: "h".into(), ..Default::default() };
+        let host = Host {
+            name: "db".into(),
+            host: "h".into(),
+            ..Default::default()
+        };
         let t = Tunnel {
             label: String::new(),
             kind: TunnelKind::Dynamic,
@@ -251,7 +277,11 @@ mod record_tests {
     #[test]
     fn auto_restart_reaches_the_argv_path_unchanged() {
         // It is a frontend policy: nothing about it belongs on the ssh command.
-        let h = Host { name: "web".into(), host: "h".into(), ..Default::default() };
+        let h = Host {
+            name: "web".into(),
+            host: "h".into(),
+            ..Default::default()
+        };
         let mut t = Tunnel {
             label: String::new(),
             kind: TunnelKind::Local,

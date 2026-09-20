@@ -56,7 +56,10 @@ impl SyncReport {
     pub fn summary(&self) -> String {
         let mut parts: Vec<String> = Vec::new();
         if !self.updated_locally.is_empty() {
-            parts.push(format!("{} updated locally", self.updated_locally.join(", ")));
+            parts.push(format!(
+                "{} updated locally",
+                self.updated_locally.join(", ")
+            ));
         }
         if self.pushed {
             parts.push("pushed".to_string());
@@ -135,9 +138,7 @@ pub fn run(cfg: &SyncConfig, direction: Direction) -> Result<SyncReport> {
 /// True when the error is git refusing a non-fast-forward push.
 fn is_push_race(e: &anyhow::Error) -> bool {
     let text = format!("{e:#}");
-    text.contains("non-fast-forward")
-        || text.contains("fetch first")
-        || text.contains("[rejected]")
+    text.contains("non-fast-forward") || text.contains("fetch first") || text.contains("[rejected]")
 }
 
 fn attempt_sync(
@@ -172,18 +173,33 @@ fn attempt_sync(
         let local_disk = std::fs::read_to_string(item.local_path()).ok();
         let local_repo = local_disk.as_deref().map(|t| to_repo(item, t));
         let base = base_rev.as_deref().and_then(|rev| git.show_file(rev, file));
-        let remote = remote_commit.as_deref().and_then(|rev| git.show_file(rev, file));
+        let remote = remote_commit
+            .as_deref()
+            .and_then(|rev| git.show_file(rev, file));
 
-        let outcome = merge_item(item, base.as_deref(), local_repo.as_deref(), remote.as_deref(), policy);
+        let outcome = merge_item(
+            item,
+            base.as_deref(),
+            local_repo.as_deref(),
+            remote.as_deref(),
+            policy,
+        );
         stats.pulled += outcome.stats.pulled;
         stats.pushed += outcome.stats.pushed;
         stats.deleted += outcome.stats.deleted;
         stats.conflicts += outcome.stats.conflicts;
 
-        pending.push(Pending { item, local_disk, merged: outcome.content });
+        pending.push(Pending {
+            item,
+            local_disk,
+            merged: outcome.content,
+        });
     }
 
-    let mut report = SyncReport { stats, ..SyncReport::default() };
+    let mut report = SyncReport {
+        stats,
+        ..SyncReport::default()
+    };
 
     // --- Apply the merged result to the local config files ---
     // Every direction writes locally, push included: the merged state is what
@@ -308,21 +324,35 @@ mod tests {
     fn settings_leaving_this_machine_carry_no_sync_config() {
         let out = settings_neutralized(&sample_settings());
         assert!(!out.contains("secret_key"), "the key path must not travel");
-        assert!(!out.contains("github.com:me/private"), "the repo URL must not travel");
-        assert!(out.contains("alice"), "the rest of the settings still travel");
+        assert!(
+            !out.contains("github.com:me/private"),
+            "the repo URL must not travel"
+        );
+        assert!(
+            out.contains("alice"),
+            "the rest of the settings still travel"
+        );
         let back: AppConfig = toml::from_str(&out).unwrap();
         assert!(!back.sync.enabled);
     }
 
     #[test]
     fn settings_coming_back_keep_this_machines_sync_config() {
-        let mine = toml::from_str::<AppConfig>(&sample_settings()).unwrap().sync;
-        let theirs = AppConfig { default_username: "bob".into(), ..AppConfig::default() };
+        let mine = toml::from_str::<AppConfig>(&sample_settings())
+            .unwrap()
+            .sync;
+        let theirs = AppConfig {
+            default_username: "bob".into(),
+            ..AppConfig::default()
+        };
         let incoming = settings_neutralized(&toml::to_string_pretty(&theirs).unwrap());
 
         let merged: AppConfig = toml::from_str(&settings_with_sync(&incoming, &mine)).unwrap();
         assert_eq!(merged.default_username, "bob", "remote settings applied");
-        assert_eq!(merged.sync.ssh_key, "~/.ssh/secret_key", "local sync config kept");
+        assert_eq!(
+            merged.sync.ssh_key, "~/.ssh/secret_key",
+            "local sync config kept"
+        );
         assert!(merged.sync.enabled);
     }
 
@@ -344,14 +374,20 @@ mod tests {
         let sync_at = text.find("[sync]").expect("a [sync] table");
         let scalar_at = text.find("notification_icon").expect("a scalar setting");
         assert!(scalar_at < sync_at, "scalars must precede the [sync] table");
-        assert!(toml::from_str::<AppConfig>(&text).is_ok(), "and it must read back");
+        assert!(
+            toml::from_str::<AppConfig>(&text).is_ok(),
+            "and it must read back"
+        );
     }
 
     #[test]
     fn only_settings_gets_rewritten_on_the_way_out() {
         let raw = r#"{"hosts":{}}"#;
         assert_eq!(to_repo(SyncItem::Hosts, raw), raw);
-        assert_eq!(to_local(SyncItem::Theme, "bg = \"#000\"", &SyncConfig::default()), "bg = \"#000\"");
+        assert_eq!(
+            to_local(SyncItem::Theme, "bg = \"#000\"", &SyncConfig::default()),
+            "bg = \"#000\""
+        );
     }
 
     #[test]
@@ -385,7 +421,9 @@ mod tests {
     fn a_rejected_push_is_recognized_as_a_race() {
         let e = anyhow::anyhow!("git push: ! [rejected] main -> main (non-fast-forward)");
         assert!(is_push_race(&e));
-        assert!(!is_push_race(&anyhow::anyhow!("Permission denied (publickey)")));
+        assert!(!is_push_race(&anyhow::anyhow!(
+            "Permission denied (publickey)"
+        )));
     }
 
     #[test]
@@ -394,11 +432,17 @@ mod tests {
         assert_eq!(quiet.summary(), "already up to date");
 
         let busy = SyncReport {
-            stats: MergeStats { conflicts: 2, ..MergeStats::default() },
+            stats: MergeStats {
+                conflicts: 2,
+                ..MergeStats::default()
+            },
             updated_locally: vec!["host.json".into()],
             pushed: true,
             commit: None,
         };
-        assert_eq!(busy.summary(), "host.json updated locally · pushed · 2 conflict(s) resolved");
+        assert_eq!(
+            busy.summary(),
+            "host.json updated locally · pushed · 2 conflict(s) resolved"
+        );
     }
 }

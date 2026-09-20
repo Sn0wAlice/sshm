@@ -125,7 +125,10 @@ pub struct DetailSection {
 
 impl DetailSection {
     pub fn new(title: impl Into<String>) -> Self {
-        DetailSection { title: title.into(), rows: Vec::new() }
+        DetailSection {
+            title: title.into(),
+            rows: Vec::new(),
+        }
     }
     /// Push a `label → value` row, skipping empty values so the view stays
     /// terse (no rows of blanks for fields the runtime didn't report).

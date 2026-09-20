@@ -1,6 +1,6 @@
 use crossterm::execute;
 use crossterm::terminal::disable_raw_mode;
-use std::{process, io::stdout};
+use std::{io::stdout, process};
 
 use crossterm::{cursor::Show, terminal::LeaveAlternateScreen};
 pub fn press() {

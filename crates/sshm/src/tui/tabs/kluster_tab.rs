@@ -12,9 +12,7 @@ use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
 use std::collections::{HashMap, HashSet};
 
-use crate::kluster::{
-    Cluster, ContainerInfo, IncusInstance, KlusterDb, LifecycleAction, PodInfo,
-};
+use crate::kluster::{Cluster, ContainerInfo, IncusInstance, KlusterDb, LifecycleAction, PodInfo};
 use crate::tui::theme::Theme;
 
 /// Stable string key used in [`KlusterTabState::collapsed`] to identify a
@@ -23,9 +21,13 @@ fn header_key(row: &KlusterRow) -> Option<String> {
     match row {
         KlusterRow::DockerHeader { .. } => Some("docker".into()),
         KlusterRow::AppleHeader { .. } => Some("apple".into()),
-        KlusterRow::DockerRemoteHeader { remote_idx, .. } => Some(format!("docker_remote_{}", remote_idx)),
+        KlusterRow::DockerRemoteHeader { remote_idx, .. } => {
+            Some(format!("docker_remote_{}", remote_idx))
+        }
         KlusterRow::IncusLocalHeader { .. } => Some("incus_local".into()),
-        KlusterRow::IncusRemoteHeader { remote_idx, .. } => Some(format!("incus_remote_{}", remote_idx)),
+        KlusterRow::IncusRemoteHeader { remote_idx, .. } => {
+            Some(format!("incus_remote_{}", remote_idx))
+        }
         KlusterRow::ClusterHeader { cluster_idx, .. } => Some(format!("cluster_{}", cluster_idx)),
         _ => None,
     }
@@ -60,17 +62,33 @@ fn item_matches(text: &str, filter: &str) -> bool {
 /// stored alongside on `KlusterTabState`.
 #[derive(Debug, Clone)]
 pub enum KlusterRow {
-    DockerHeader { count: usize, available: bool },
+    DockerHeader {
+        count: usize,
+        available: bool,
+    },
     DockerContainer(usize),
     /// Apple `container` runtime (macOS) — local only.
-    AppleHeader { count: usize, available: bool },
+    AppleHeader {
+        count: usize,
+        available: bool,
+    },
     AppleContainer(usize),
     /// One header per saved Docker remote (over SSH). `remote_idx` indexes
     /// `db.docker_remotes`, `reachable` is the last status reported by the
     /// worker.
-    DockerRemoteHeader { remote_idx: usize, count: usize, reachable: bool },
-    DockerRemoteContainer { remote_idx: usize, container_idx: usize },
-    ClusterHeader { cluster_idx: usize, count: usize },
+    DockerRemoteHeader {
+        remote_idx: usize,
+        count: usize,
+        reachable: bool,
+    },
+    DockerRemoteContainer {
+        remote_idx: usize,
+        container_idx: usize,
+    },
+    ClusterHeader {
+        cluster_idx: usize,
+        count: usize,
+    },
     ClusterPod {
         cluster_idx: usize,
         pod_idx: usize,
@@ -78,10 +96,19 @@ pub enum KlusterRow {
         /// has expanded a specific one. `None` = use the first container.
         container: Option<String>,
     },
-    IncusLocalHeader { count: usize, available: bool },
+    IncusLocalHeader {
+        count: usize,
+        available: bool,
+    },
     IncusLocalInstance(usize),
-    IncusRemoteHeader { remote_idx: usize, count: usize },
-    IncusRemoteInstance { remote_idx: usize, instance_idx: usize },
+    IncusRemoteHeader {
+        remote_idx: usize,
+        count: usize,
+    },
+    IncusRemoteInstance {
+        remote_idx: usize,
+        instance_idx: usize,
+    },
 }
 
 pub struct KlusterTabState {
@@ -223,11 +250,18 @@ impl KlusterTabState {
                 .unwrap_or(false);
             let key = format!("docker_remote_{}", ri);
             let is_collapsed = !filtering && self.collapsed.contains(&key);
-            rows.push(KlusterRow::DockerRemoteHeader { remote_idx: ri, count, reachable });
+            rows.push(KlusterRow::DockerRemoteHeader {
+                remote_idx: ri,
+                count,
+                reachable,
+            });
             if !is_collapsed && reachable {
                 if let Some(list) = containers {
                     for ii in 0..list.len() {
-                        rows.push(KlusterRow::DockerRemoteContainer { remote_idx: ri, container_idx: ii });
+                        rows.push(KlusterRow::DockerRemoteContainer {
+                            remote_idx: ri,
+                            container_idx: ii,
+                        });
                     }
                 }
             }
@@ -241,11 +275,17 @@ impl KlusterTabState {
                 .unwrap_or(0);
             let key = format!("incus_remote_{}", ri);
             let is_collapsed = !filtering && self.collapsed.contains(&key);
-            rows.push(KlusterRow::IncusRemoteHeader { remote_idx: ri, count });
+            rows.push(KlusterRow::IncusRemoteHeader {
+                remote_idx: ri,
+                count,
+            });
             if !is_collapsed {
                 if let Some(list) = self.incus_remote_instances.get(remote) {
                     for ii in 0..list.len() {
-                        rows.push(KlusterRow::IncusRemoteInstance { remote_idx: ri, instance_idx: ii });
+                        rows.push(KlusterRow::IncusRemoteInstance {
+                            remote_idx: ri,
+                            instance_idx: ii,
+                        });
                     }
                 }
             }
@@ -255,7 +295,10 @@ impl KlusterTabState {
             let count = pods.map(|p| p.len()).unwrap_or(0);
             let key = format!("cluster_{}", ci);
             let is_collapsed = !filtering && self.collapsed.contains(&key);
-            rows.push(KlusterRow::ClusterHeader { cluster_idx: ci, count });
+            rows.push(KlusterRow::ClusterHeader {
+                cluster_idx: ci,
+                count,
+            });
             if !is_collapsed {
                 if let Some(pods) = pods {
                     for (pi, _pod) in pods.iter().enumerate() {
@@ -310,14 +353,21 @@ impl KlusterTabState {
                 .apple_containers
                 .get(*i)
                 .map(|c| format!("{} {}", c.name, c.image)),
-            KlusterRow::DockerRemoteContainer { remote_idx, container_idx } => self
+            KlusterRow::DockerRemoteContainer {
+                remote_idx,
+                container_idx,
+            } => self
                 .db
                 .docker_remotes
                 .get(*remote_idx)
                 .and_then(|r| self.docker_remote_containers.get(&r.host_alias))
                 .and_then(|v| v.get(*container_idx))
                 .map(|c| format!("{} {}", c.name, c.image)),
-            KlusterRow::ClusterPod { cluster_idx, pod_idx, .. } => self
+            KlusterRow::ClusterPod {
+                cluster_idx,
+                pod_idx,
+                ..
+            } => self
                 .cluster_pods
                 .get(*cluster_idx)
                 .and_then(|x| x.as_ref())
@@ -327,7 +377,10 @@ impl KlusterTabState {
                 .incus_local_instances
                 .get(*i)
                 .map(|inst| format!("{} {}", inst.name, inst.image)),
-            KlusterRow::IncusRemoteInstance { remote_idx, instance_idx } => self
+            KlusterRow::IncusRemoteInstance {
+                remote_idx,
+                instance_idx,
+            } => self
                 .db
                 .incus_remotes
                 .get(*remote_idx)
@@ -350,7 +403,9 @@ impl KlusterTabState {
         for key in self.collapsed.drain() {
             if let Some(rest) = key.strip_prefix(prefix) {
                 if let Ok(n) = rest.parse::<usize>() {
-                    if n == deleted_idx { continue; }
+                    if n == deleted_idx {
+                        continue;
+                    }
                     let new_n = if n > deleted_idx { n - 1 } else { n };
                     next.insert(format!("{}{}", prefix, new_n));
                     continue;
@@ -386,16 +441,30 @@ impl KlusterTabState {
             KlusterRow::AppleContainer(i) => {
                 self.apple_containers.get(*i).map(KlusterTarget::Apple)
             }
-            KlusterRow::DockerRemoteContainer { remote_idx, container_idx } => {
+            KlusterRow::DockerRemoteContainer {
+                remote_idx,
+                container_idx,
+            } => {
                 let remote = self.db.docker_remotes.get(*remote_idx)?;
                 let host_uri = self.docker_remote_uris.get(&remote.host_alias)?;
                 let containers = self.docker_remote_containers.get(&remote.host_alias)?;
                 let container = containers.get(*container_idx)?;
-                Some(KlusterTarget::DockerRemote { container, host_uri })
+                Some(KlusterTarget::DockerRemote {
+                    container,
+                    host_uri,
+                })
             }
-            KlusterRow::ClusterPod { cluster_idx, pod_idx, container } => {
+            KlusterRow::ClusterPod {
+                cluster_idx,
+                pod_idx,
+                container,
+            } => {
                 let cluster = self.db.clusters.get(*cluster_idx)?;
-                let pod = self.cluster_pods.get(*cluster_idx)?.as_ref()?.get(*pod_idx)?;
+                let pod = self
+                    .cluster_pods
+                    .get(*cluster_idx)?
+                    .as_ref()?
+                    .get(*pod_idx)?;
                 Some(KlusterTarget::Pod {
                     cluster,
                     pod,
@@ -405,12 +474,24 @@ impl KlusterTabState {
             KlusterRow::IncusLocalInstance(i) => {
                 self.incus_local_instances
                     .get(*i)
-                    .map(|inst| KlusterTarget::Incus { instance: inst, remote: None })
+                    .map(|inst| KlusterTarget::Incus {
+                        instance: inst,
+                        remote: None,
+                    })
             }
-            KlusterRow::IncusRemoteInstance { remote_idx, instance_idx } => {
+            KlusterRow::IncusRemoteInstance {
+                remote_idx,
+                instance_idx,
+            } => {
                 let remote = self.db.incus_remotes.get(*remote_idx)?;
-                let instance = self.incus_remote_instances.get(remote)?.get(*instance_idx)?;
-                Some(KlusterTarget::Incus { instance, remote: Some(remote.as_str()) })
+                let instance = self
+                    .incus_remote_instances
+                    .get(remote)?
+                    .get(*instance_idx)?;
+                Some(KlusterTarget::Incus {
+                    instance,
+                    remote: Some(remote.as_str()),
+                })
             }
             _ => None,
         }
@@ -565,8 +646,14 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
             .unwrap_or(false);
 
     match key {
-        KeyCode::Up | KeyCode::Char('k') => { state.move_up(); KlusterAction::None }
-        KeyCode::Down | KeyCode::Char('j') => { state.move_down(); KlusterAction::None }
+        KeyCode::Up | KeyCode::Char('k') => {
+            state.move_up();
+            KlusterAction::None
+        }
+        KeyCode::Down | KeyCode::Char('j') => {
+            state.move_down();
+            KlusterAction::None
+        }
         KeyCode::Char('r') => KlusterAction::Refresh,
         // `n` is context-aware: on a docker (local or remote) header, register
         // a new Docker remote; everywhere else it adds a k8s/k3s cluster.
@@ -645,23 +732,27 @@ pub fn draw_kluster_tab(f: &mut Frame, area: Rect, state: &KlusterTabState, them
     f.render_stateful_widget(list, area, &mut ls);
 }
 
-fn render_row<'a>(
-    row: &KlusterRow,
-    state: &KlusterTabState,
-    theme: &Theme,
-) -> ListItem<'a> {
+fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> ListItem<'a> {
     match row {
         KlusterRow::DockerHeader { count, available } => {
-            let glyph = if state.collapsed.contains("docker") { "▸" } else { "▾" };
+            let glyph = if state.collapsed.contains("docker") {
+                "▸"
+            } else {
+                "▾"
+            };
             let label = if *available {
                 format!("{} Docker (local) ({})", glyph, count)
             } else {
                 format!("{} Docker (local) (unavailable)", glyph)
             };
             let style = if *available {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.muted).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD)
             };
             ListItem::new(Line::from(Span::styled(label, style)))
         }
@@ -670,16 +761,24 @@ fn render_row<'a>(
             render_docker_container(c, theme)
         }
         KlusterRow::AppleHeader { count, available } => {
-            let glyph = if state.collapsed.contains("apple") { "▸" } else { "▾" };
+            let glyph = if state.collapsed.contains("apple") {
+                "▸"
+            } else {
+                "▾"
+            };
             let label = if *available {
                 format!("{} Apple container (local) ({})", glyph, count)
             } else {
                 format!("{} Apple container (local) (unavailable)", glyph)
             };
             let style = if *available {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.muted).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD)
             };
             ListItem::new(Line::from(Span::styled(label, style)))
         }
@@ -687,26 +786,41 @@ fn render_row<'a>(
             let c = &state.apple_containers[*i];
             render_docker_container(c, theme)
         }
-        KlusterRow::DockerRemoteHeader { remote_idx, count, reachable } => {
+        KlusterRow::DockerRemoteHeader {
+            remote_idx,
+            count,
+            reachable,
+        } => {
             let remote = &state.db.docker_remotes[*remote_idx];
             let key = format!("docker_remote_{}", remote_idx);
-            let glyph = if state.collapsed.contains(&key) { "▸" } else { "▾" };
+            let glyph = if state.collapsed.contains(&key) {
+                "▸"
+            } else {
+                "▾"
+            };
             let suffix = if *reachable {
                 format!("({})", count)
             } else {
                 "(unreachable)".to_string()
             };
             let style = if *reachable {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.error).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.error)
+                    .add_modifier(Modifier::BOLD)
             };
             ListItem::new(Line::from(Span::styled(
                 format!("{} Docker (remote {}) {}", glyph, remote.host_alias, suffix),
                 style,
             )))
         }
-        KlusterRow::DockerRemoteContainer { remote_idx, container_idx } => {
+        KlusterRow::DockerRemoteContainer {
+            remote_idx,
+            container_idx,
+        } => {
             let remote = &state.db.docker_remotes[*remote_idx];
             let containers = state.docker_remote_containers.get(&remote.host_alias);
             match containers.and_then(|v| v.get(*container_idx)) {
@@ -717,14 +831,30 @@ fn render_row<'a>(
         KlusterRow::ClusterHeader { cluster_idx, count } => {
             let cluster = &state.db.clusters[*cluster_idx];
             let key = format!("cluster_{}", cluster_idx);
-            let glyph = if state.collapsed.contains(&key) { "▸" } else { "▾" };
-            let label = format!("{} Cluster: {} ({})  [{}]", glyph, cluster.name, count, cluster.kind.label());
+            let glyph = if state.collapsed.contains(&key) {
+                "▸"
+            } else {
+                "▾"
+            };
+            let label = format!(
+                "{} Cluster: {} ({})  [{}]",
+                glyph,
+                cluster.name,
+                count,
+                cluster.kind.label()
+            );
             ListItem::new(Line::from(Span::styled(
                 label,
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             )))
         }
-        KlusterRow::ClusterPod { cluster_idx, pod_idx, .. } => {
+        KlusterRow::ClusterPod {
+            cluster_idx,
+            pod_idx,
+            ..
+        } => {
             let pods = state.cluster_pods[*cluster_idx].as_ref().unwrap();
             let pod = &pods[*pod_idx];
             let phase_style = match pod.phase.as_str() {
@@ -739,24 +869,38 @@ fn render_row<'a>(
             };
             ListItem::new(Line::from(vec![
                 Span::raw("    "),
-                Span::styled(format!("{}/", pod.namespace), Style::default().fg(theme.muted)),
-                Span::styled(pod.name.clone(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+                Span::styled(
+                    format!("{}/", pod.namespace),
+                    Style::default().fg(theme.muted),
+                ),
+                Span::styled(
+                    pod.name.clone(),
+                    Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+                ),
                 Span::raw("  "),
                 Span::styled(format!("● {} ", pod.phase), phase_style),
                 Span::styled(containers_repr, Style::default().fg(theme.muted)),
             ]))
         }
         KlusterRow::IncusLocalHeader { count, available } => {
-            let glyph = if state.collapsed.contains("incus_local") { "▸" } else { "▾" };
+            let glyph = if state.collapsed.contains("incus_local") {
+                "▸"
+            } else {
+                "▾"
+            };
             let label = if *available {
                 format!("{} Incus (local) ({})", glyph, count)
             } else {
                 format!("{} Incus (local) (unavailable)", glyph)
             };
             let style = if *available {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(theme.muted).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD)
             };
             ListItem::new(Line::from(Span::styled(label, style)))
         }
@@ -767,13 +911,22 @@ fn render_row<'a>(
         KlusterRow::IncusRemoteHeader { remote_idx, count } => {
             let remote = &state.db.incus_remotes[*remote_idx];
             let key = format!("incus_remote_{}", remote_idx);
-            let glyph = if state.collapsed.contains(&key) { "▸" } else { "▾" };
+            let glyph = if state.collapsed.contains(&key) {
+                "▸"
+            } else {
+                "▾"
+            };
             ListItem::new(Line::from(Span::styled(
                 format!("{} Incus (remote {}) ({})", glyph, remote, count),
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD),
             )))
         }
-        KlusterRow::IncusRemoteInstance { remote_idx, instance_idx } => {
+        KlusterRow::IncusRemoteInstance {
+            remote_idx,
+            instance_idx,
+        } => {
             let remote = &state.db.incus_remotes[*remote_idx];
             let inst = &state.incus_remote_instances[remote][*instance_idx];
             render_incus_instance(inst, theme)
@@ -791,7 +944,10 @@ fn render_docker_container<'a>(c: &ContainerInfo, theme: &Theme) -> ListItem<'a>
     ListItem::new(Line::from(vec![
         Span::raw("    "),
         Span::styled(format!("{} ", glyph), glyph_style),
-        Span::styled(c.name.clone(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            c.name.clone(),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
         Span::styled(c.image.clone(), Style::default().fg(theme.muted)),
         Span::raw("  "),
@@ -806,20 +962,29 @@ fn render_incus_instance<'a>(inst: &IncusInstance, theme: &Theme) -> ListItem<'a
     } else {
         Style::default().fg(theme.muted)
     };
-    let kind_short = if inst.kind.starts_with("virtual") { "vm" } else { "ct" };
+    let kind_short = if inst.kind.starts_with("virtual") {
+        "vm"
+    } else {
+        "ct"
+    };
     ListItem::new(Line::from(vec![
         Span::raw("    "),
         Span::styled(format!("{} ", glyph), glyph_style),
-        Span::styled(inst.name.clone(), Style::default().fg(theme.fg).add_modifier(Modifier::BOLD)),
+        Span::styled(
+            inst.name.clone(),
+            Style::default().fg(theme.fg).add_modifier(Modifier::BOLD),
+        ),
         Span::raw("  "),
-        Span::styled(format!("[{}]", kind_short), Style::default().fg(theme.muted)),
+        Span::styled(
+            format!("[{}]", kind_short),
+            Style::default().fg(theme.muted),
+        ),
         Span::raw("  "),
         Span::styled(inst.image.clone(), Style::default().fg(theme.muted)),
         Span::raw("  "),
         Span::styled(inst.status.clone(), Style::default().fg(theme.muted)),
     ]))
 }
-
 
 #[cfg(test)]
 mod tests {
@@ -833,7 +998,11 @@ mod tests {
             id: format!("id-{name}"),
             name: name.to_string(),
             image: "alpine".into(),
-            status: if running { "Up 2 minutes".into() } else { "Exited (0)".into() },
+            status: if running {
+                "Up 2 minutes".into()
+            } else {
+                "Exited (0)".into()
+            },
             running,
         }
     }
@@ -841,7 +1010,11 @@ mod tests {
     fn instance(name: &str, running: bool) -> IncusInstance {
         IncusInstance {
             name: name.to_string(),
-            status: if running { "RUNNING".into() } else { "STOPPED".into() },
+            status: if running {
+                "RUNNING".into()
+            } else {
+                "STOPPED".into()
+            },
             kind: "container".into(),
             image: String::new(),
             running,
@@ -878,7 +1051,10 @@ mod tests {
         let mut s = KlusterTabState::from_db(db);
         s.docker_available = true;
         s.docker_containers = vec![container("web", true), container("cache", false)];
-        s.cluster_pods = vec![Some(vec![pod("api-1", "Running"), pod("job-9", "Succeeded")])];
+        s.cluster_pods = vec![Some(vec![
+            pod("api-1", "Running"),
+            pod("job-9", "Succeeded"),
+        ])];
         s.collapsed.clear();
         s.rebuild_rows();
         s
@@ -1000,10 +1176,14 @@ mod tests {
     fn delete_only_fires_on_a_terminated_pod() {
         let mut s = state();
         // `api-1` is Running — `d` must not offer to delete it.
-        select(&mut s, |r| matches!(r, KlusterRow::ClusterPod { pod_idx: 0, .. }));
+        select(&mut s, |r| {
+            matches!(r, KlusterRow::ClusterPod { pod_idx: 0, .. })
+        });
         assert!(matches!(press(&mut s, 'd'), KlusterAction::None));
         // `job-9` is Succeeded — that one is cleanup.
-        select(&mut s, |r| matches!(r, KlusterRow::ClusterPod { pod_idx: 1, .. }));
+        select(&mut s, |r| {
+            matches!(r, KlusterRow::ClusterPod { pod_idx: 1, .. })
+        });
         assert!(matches!(press(&mut s, 'd'), KlusterAction::DeletePod));
     }
 
@@ -1027,14 +1207,21 @@ mod tests {
     #[test]
     fn d_on_a_docker_remote_header_unlinks_the_remote() {
         let db = KlusterDb {
-            docker_remotes: vec![DockerRemote { host_alias: "web".into() }],
+            docker_remotes: vec![DockerRemote {
+                host_alias: "web".into(),
+            }],
             ..Default::default()
         };
         let mut s = KlusterTabState::from_db(db);
         s.collapsed.clear();
         s.rebuild_rows();
-        select(&mut s, |r| matches!(r, KlusterRow::DockerRemoteHeader { .. }));
-        assert!(matches!(press(&mut s, 'd'), KlusterAction::DeleteDockerRemote));
+        select(&mut s, |r| {
+            matches!(r, KlusterRow::DockerRemoteHeader { .. })
+        });
+        assert!(matches!(
+            press(&mut s, 'd'),
+            KlusterAction::DeleteDockerRemote
+        ));
     }
 
     #[test]
@@ -1070,7 +1257,10 @@ mod tests {
             handle_kluster_event(KeyCode::Enter, &mut s),
             KlusterAction::None
         ));
-        assert!(s.flat_rows.len() < before, "the section should have collapsed");
+        assert!(
+            s.flat_rows.len() < before,
+            "the section should have collapsed"
+        );
     }
 
     // ---- navigation ------------------------------------------------------
@@ -1084,7 +1274,11 @@ mod tests {
 
         s.selected = s.flat_rows.len() - 1;
         handle_kluster_event(KeyCode::Down, &mut s);
-        assert_eq!(s.selected, s.flat_rows.len() - 1, "must not run past the last row");
+        assert_eq!(
+            s.selected,
+            s.flat_rows.len() - 1,
+            "must not run past the last row"
+        );
     }
 
     #[test]
@@ -1104,11 +1298,20 @@ mod tests {
         let mut s = state();
         select(&mut s, |r| matches!(r, KlusterRow::DockerHeader { .. }));
         s.toggle_collapsed_at_selected();
-        assert!(!s.flat_rows.iter().any(|r| matches!(r, KlusterRow::DockerContainer(_))));
-        assert!(s.flat_rows.iter().any(|r| matches!(r, KlusterRow::DockerHeader { .. })));
+        assert!(!s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::DockerContainer(_))));
+        assert!(s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::DockerHeader { .. })));
         s.toggle_collapsed_at_selected();
         assert_eq!(
-            s.flat_rows.iter().filter(|r| matches!(r, KlusterRow::DockerContainer(_))).count(),
+            s.flat_rows
+                .iter()
+                .filter(|r| matches!(r, KlusterRow::DockerContainer(_)))
+                .count(),
             2
         );
     }
@@ -1183,13 +1386,19 @@ mod tests {
         let mut s = state();
         select(&mut s, |r| matches!(r, KlusterRow::DockerHeader { .. }));
         s.toggle_collapsed_at_selected();
-        assert!(!s.flat_rows.iter().any(|r| matches!(r, KlusterRow::DockerContainer(_))));
+        assert!(!s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::DockerContainer(_))));
 
         press(&mut s, '/');
         for c in "web".chars() {
             press(&mut s, c);
         }
-        assert!(s.flat_rows.iter().any(|r| matches!(r, KlusterRow::DockerContainer(_))));
+        assert!(s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::DockerContainer(_))));
     }
 
     #[test]

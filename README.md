@@ -57,8 +57,8 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 
 ### Quality of life
 
-- **i18n** — UI strings translatable; English + French bundled. Pick via `SSHM_LANG=fr`
-- **Themes** — fully customizable colors via `theme.toml`, with an optional transparent background that uses the terminal's own
+- **i18n** — tab bar, forms, dialogs, shortcut bar and messages are all translated; English + French bundled. Pick via `SSHM_LANG=fr`. A few screens (Settings, Theme, the Kluster tab's own labels) are still English-only
+- **Themes** — nine customizable color roles via `theme.toml` (`bg`, `fg`, `accent`, `muted`, `error`, `success`, plus `warning`, `border` and `selection`), with an optional transparent background that uses the terminal's own
 - **Toast notifications** — non-intrusive feedback for actions
 - **Desktop notifications** — native OS alerts (`notify-send` / `osascript`) when a background tunnel drops or a host changes reachability
 - **Open in a new terminal** — `o` launches the SSH session in a separate terminal window (auto-detected, or set `external_terminal`)
@@ -383,6 +383,13 @@ muted = "#6c7086"
 error = "#f38ba8"
 success = "#a6e3a1"
 transparent_bg = false
+
+# Optional, `theme.toml`-only (the Theme tab edits the six above).
+# Each falls back to the role it used to borrow, so leaving them out
+# renders exactly like an older theme.
+warning = "#f9e2af"    # a caution, not a failure — falls back to `error`
+border = "#45475a"     # box borders and separators — falls back to `muted`
+selection = "#585b70"  # the selected row — falls back to `accent`
 ```
 
 Set `transparent_bg = true` (or tick **Transparent background** in the Theme
@@ -440,6 +447,7 @@ crates/sshm/src/             # the TUI + CLI (binary `sshm`)
 ├── ssh/                     # connect flow + add-identity wizard
 └── tui/
     ├── app/                 # main loop + worker submodules
+    │   ├── tab_events.rs    #   key handling for the self-contained tabs
     │   ├── health_worker.rs
     │   ├── kluster_worker.rs
     │   ├── sync_worker.rs
@@ -462,7 +470,16 @@ PRs welcome — especially for:
 - Platform support (Windows is currently best-effort)
 - More translations (just drop a `crates/sshm-core/src/locales/<code>.toml`)
 
-Run `cargo test` before sending a PR — the suite covers parsers (filter, kubeconfig, ssh_config, JSON migrations) and a handful of pure logic units (frecency, ssh banner, ProxyJump resolver, etc.).
+Before sending a PR, run what CI runs:
+
+```bash
+cargo fmt --all -- --check
+cargo test --workspace
+SSHM_LANG=fr cargo test --workspace
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+The suite covers the engine (parsers, sync merge, cross-process lock, known_hosts, ssh argv construction) and the parts of the TUI whose state is separable from rendering (form state, the Kluster tab's selection and key handling, theme fallbacks). The French run matters: the active locale comes from the environment, so a test asserting an English literal passes on an English machine and fails on a French one.
 
 ---
 

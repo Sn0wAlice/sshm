@@ -95,13 +95,19 @@ impl PortForwardForm {
 
     pub fn next_field(&mut self) {
         let visible = self.visible_fields();
-        let idx = visible.iter().position(|&f| f == self.selected_field).unwrap_or(0);
+        let idx = visible
+            .iter()
+            .position(|&f| f == self.selected_field)
+            .unwrap_or(0);
         self.selected_field = visible[(idx + 1) % visible.len()];
     }
 
     pub fn prev_field(&mut self) {
         let visible = self.visible_fields();
-        let idx = visible.iter().position(|&f| f == self.selected_field).unwrap_or(0);
+        let idx = visible
+            .iter()
+            .position(|&f| f == self.selected_field)
+            .unwrap_or(0);
         self.selected_field = visible[(idx + visible.len() - 1) % visible.len()];
     }
 
@@ -179,9 +185,9 @@ impl PortForwardForm {
             .local_port
             .trim()
             .parse()
-            .map_err(|_| "Local port must be a number 1-65535".to_string())?;
+            .map_err(|_| crate::t!("error.local_port"))?;
         if lp == 0 {
-            return Err("Local port must be a number 1-65535".to_string());
+            return Err(crate::t!("error.local_port"));
         }
         match self.kind {
             TunnelKind::Dynamic => Ok(Tunnel {
@@ -197,9 +203,9 @@ impl PortForwardForm {
                     .remote_port
                     .trim()
                     .parse()
-                    .map_err(|_| "Remote port must be a number 1-65535".to_string())?;
+                    .map_err(|_| crate::t!("error.remote_port"))?;
                 if rp == 0 {
-                    return Err("Remote port must be a number 1-65535".to_string());
+                    return Err(crate::t!("error.remote_port"));
                 }
                 Ok(Tunnel {
                     label: self.label.trim().to_string(),
@@ -246,7 +252,10 @@ mod tests {
         let visible = f.visible_fields();
         assert!(!visible.contains(&field::REMOTE_HOST));
         assert!(!visible.contains(&field::REMOTE_PORT));
-        assert!(visible.contains(&field::LOCAL_PORT), "a SOCKS port is still needed");
+        assert!(
+            visible.contains(&field::LOCAL_PORT),
+            "a SOCKS port is still needed"
+        );
     }
 
     #[test]
@@ -257,7 +266,11 @@ mod tests {
         f.cycle_kind(true); // Local -> Remote
         assert_eq!(f.selected_field, field::REMOTE_PORT, "still visible");
         f.cycle_kind(true); // Remote -> Dynamic
-        assert_eq!(f.selected_field, field::KIND, "snapped back to a visible row");
+        assert_eq!(
+            f.selected_field,
+            field::KIND,
+            "snapped back to a visible row"
+        );
     }
 
     #[test]
@@ -397,9 +410,9 @@ mod tests {
     #[test]
     fn a_missing_port_is_rejected_with_a_useful_message() {
         let mut f = form();
-        assert!(f.validate().unwrap_err().contains("Local port"));
+        assert_eq!(f.validate().unwrap_err(), crate::t!("error.local_port"));
         f.local_port = "8080".into();
-        assert!(f.validate().unwrap_err().contains("Remote port"));
+        assert_eq!(f.validate().unwrap_err(), crate::t!("error.remote_port"));
     }
 
     #[test]
@@ -461,7 +474,10 @@ mod tests {
             auto_restart: false,
         };
         let f = PortForwardForm::from_existing(&t);
-        assert_eq!(f.remote_port, "", "a 0 would render as a bogus '0' in the field");
+        assert_eq!(
+            f.remote_port, "",
+            "a 0 would render as a bogus '0' in the field"
+        );
         assert_eq!(f.validate().unwrap(), t);
     }
 }

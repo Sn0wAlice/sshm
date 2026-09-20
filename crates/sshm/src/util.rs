@@ -1,5 +1,9 @@
+use crossterm::{
+    cursor::Show,
+    execute,
+    terminal::{disable_raw_mode, Clear, ClearType},
+};
 use std::io::stdout;
-use crossterm::{cursor::Show, execute, terminal::{disable_raw_mode, Clear, ClearType}};
 
 pub fn clear_console() {
     let _ = execute!(stdout(), Clear(ClearType::All));

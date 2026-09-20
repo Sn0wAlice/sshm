@@ -7,8 +7,8 @@
 //! the connection entry point with trust-on-first-use + host-key-change
 //! recovery ([`client`]), and the `add-identity` command ([`add_identity`]).
 
-pub mod client;
 pub mod add_identity;
+pub mod client;
 
 // Pure, frontend-agnostic helpers — surfaced at their historical paths.
 pub use sshm_core::ssh::{agent, keys, known_hosts, proxy};

@@ -91,10 +91,7 @@ pub enum FingerprintOutcome {
 /// pinned key from `known_hosts` alongside the key the server presents right
 /// now, states whether they match, and offers to pin (trust-on-first-use),
 /// forget, or replace a stale key. `hostname`/`port` identify the target.
-pub fn run_host_fingerprint_flow(
-    hostname: &str,
-    port: u16,
-) -> std::io::Result<FingerprintOutcome> {
+pub fn run_host_fingerprint_flow(hostname: &str, port: u16) -> std::io::Result<FingerprintOutcome> {
     use crate::ssh::known_hosts;
     use inquire::Select;
 
@@ -121,7 +118,9 @@ pub fn run_host_fingerprint_flow(
 
     // Verdict — compared on fingerprint, ignoring which algorithm matched.
     let matches = !pinned.is_empty()
-        && live.iter().any(|l| pinned.iter().any(|p| p.fingerprint == l.fingerprint));
+        && live
+            .iter()
+            .any(|l| pinned.iter().any(|p| p.fingerprint == l.fingerprint));
     println!();
     match (pinned.is_empty(), live.is_empty()) {
         (true, false) => println!("  ⧗ Not pinned yet — this would be a trust-on-first-use."),

@@ -7,13 +7,13 @@
 //! - [`shell`] holds the `bash`-or-`sh` fallback string used by both.
 //! - [`db`] persists the user's saved cluster definitions in `kluster.json`.
 
-pub mod models;
-pub mod shell;
+pub mod apple;
 pub mod db;
 pub mod docker;
-pub mod apple;
-pub mod kube;
 pub mod incus;
+pub mod kube;
+pub mod models;
+pub mod shell;
 
 pub use models::{
     Cluster, ClusterKind, ContainerDetail, ContainerInfo, DetailSection, DockerRemote,

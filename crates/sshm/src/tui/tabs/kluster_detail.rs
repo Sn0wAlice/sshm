@@ -4,7 +4,9 @@
 //! [`crate::tui::app::kluster_actions::build_kluster_detail`].
 
 use ratatui::prelude::*;
-use ratatui::widgets::{Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState};
+use ratatui::widgets::{
+    Block, Borders, Clear, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
+};
 
 use crate::kluster::ContainerDetail;
 use crate::tui::ssh::modal::centered_rect;
@@ -34,7 +36,9 @@ fn detail_lines(detail: &ContainerDetail, theme: &Theme) -> Vec<Line<'static>> {
         }
         lines.push(Line::from(Span::styled(
             format!("▸ {}", sec.title),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         )));
         for (k, v) in &sec.rows {
             lines.push(Line::from(vec![
@@ -51,7 +55,9 @@ fn detail_lines(detail: &ContainerDetail, theme: &Theme) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
             format!("▸ Logs (last {})", detail.log_tail.len()),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
         )));
         for l in &detail.log_tail {
             lines.push(Line::from(Span::styled(
@@ -95,7 +101,9 @@ pub fn draw_kluster_detail(
     let block = Block::default()
         .title(Span::styled(
             format!(" {} ", detail.title),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ))
         .title_bottom(Span::styled(
             " ↑↓/jk scroll · Esc close ",
@@ -118,10 +126,7 @@ pub fn draw_kluster_detail(
     *scroll = (*scroll).min(max_scroll);
     let scroll = *scroll;
 
-    f.render_widget(
-        Paragraph::new(lines).scroll((scroll as u16, 0)),
-        inner,
-    );
+    f.render_widget(Paragraph::new(lines).scroll((scroll as u16, 0)), inner);
 
     if total > visible {
         let mut sb = ScrollbarState::new(total).position(scroll);

@@ -66,6 +66,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a host that is gone for good doesn't respawn forever. A tunnel you stopped
   yourself stays stopped, and one whose host was deleted meanwhile is dropped
   with a notification instead of retried.
+- **The interface speaks French, not just its toasts.** i18n used to cover
+  messages only — 35 call sites, all in two files — while every tab title,
+  form label, dialog and shortcut hint was hard-coded English. The chrome is
+  now translated too: the tab bar, the contextual shortcut bar and its `h`
+  popup, the host form, the port-forward form, the delete confirmations, the
+  host detail panel, the fan-out prompts and the empty states. 128 call sites
+  across 11 files, 145 keys in each bundle.
+- **Three more theme roles.** `warning`, `border` and `selection` join the six
+  existing ones in `theme.toml`. Each falls back to the role it used to borrow
+  — `error`, `muted` and `accent` respectively — so an existing theme renders
+  byte-for-byte as before, and the built-in theme now distinguishes a caution
+  (an enabled ForwardAgent) from a failure. Saving from the Theme tab, which
+  edits only the original six, preserves the three.
 - **The container shell is configurable.** `Enter` in the Kluster tab still
   execs `/bin/sh`, and still doesn't probe for anything nicer — the
   bash-fallback wrapper that used to live there caused more corner cases than
@@ -75,6 +88,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ForwardAgent` is now exported.** A host with `-A` enabled emits
   `ForwardAgent yes` in the exported ssh config; previously the setting was
   silently dropped.
+
+### Changed
+
+- **The whole tree is `rustfmt`-formatted, and CI enforces it.** It never had
+  been; every file drifted from the default style, so any future diff would
+  have mixed real changes with reformatting. This is a layout-only change —
+  the suite passes unchanged before and after.
+- **`run_tui` is 300 lines shorter.** The Settings, Theme, Identities and
+  Kluster key-event arms moved out of the ~1760-line loop into
+  `app/tab_events.rs`, each taking the slice of state it actually touches.
+  `app/mod.rs` goes from 2065 to 1766 lines. The Hosts arm — 730 lines that
+  reach most of the loop's state — is untouched and still needs that state
+  bundled before it can follow.
 
 ### Removed
 
@@ -104,6 +130,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-command left ssh waiting indefinitely and stalled the rest of the batch.
   `ServerAliveInterval` / `ServerAliveCountMax` now bound that case too; a
   command that is genuinely still running is untouched.
+- **CI never ran.** `push` and `pull_request` were commented out in
+  `ci.yml`, leaving only manual dispatch — so the test suite and clippy only
+  ran when someone clicked. Both triggers are back, and the job now also
+  checks formatting and runs the suite a second time under `SSHM_LANG=fr`
+  (the active locale comes from the environment, so an English-only run can
+  pass while a French machine fails).
+- **Four copies of the config directory.** `settings_path`, `theme_path` and
+  two `tunnels_dir` implementations each rebuilt the path from
+  `dirs::config_dir()` instead of calling `config::path::config_dir()`. They
+  agreed today but differed in their fallbacks, and the TUI's copy was the one
+  `sshm tunnel` reads through the engine — the two could have ended up looking
+  in different directories.
+- **A form row could be clipped on an 80-column terminal.** The port-forward
+  toggles carried a "(Space to toggle)" suffix that pushed the line past the
+  modal's width — in English already, and further in French. The hint moved to
+  the form's footer next to the other keys, and a test now holds every form
+  label to a width budget.
 - **Background tunnels ignored per-host ssh settings.** `TunnelManager::start`
   built its own ssh command rather than calling the engine's
   `build_tunnel_argv`, which in turn meant the `ssh_options` added in this

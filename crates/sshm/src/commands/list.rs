@@ -1,8 +1,8 @@
-use std::collections::HashMap;
-use prettytable::{row, Table};
-use crate::models::Host;
 use crate::filter::filter_hosts;
 use crate::models::tags_to_string;
+use crate::models::Host;
+use prettytable::{row, Table};
+use std::collections::HashMap;
 
 pub fn list_hosts_with_filter(hosts: &HashMap<String, Host>, filter: Option<String>) {
     let mut rows: Vec<&Host> = match filter {
@@ -18,7 +18,13 @@ pub fn list_hosts_with_filter(hosts: &HashMap<String, Host>, filter: Option<Stri
     let mut table = Table::new();
     table.add_row(row!["Name", "Username", "Host", "Port", "Tags"]);
     for h in rows {
-        table.add_row(row![h.name, h.username, h.host, h.port.to_string(), tags_to_string(&h.tags)]);
+        table.add_row(row![
+            h.name,
+            h.username,
+            h.host,
+            h.port.to_string(),
+            tags_to_string(&h.tags)
+        ]);
     }
     table.printstd();
 }

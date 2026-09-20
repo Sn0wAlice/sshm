@@ -7,18 +7,18 @@
 //! the workspace split.
 
 // --- Engine, re-exported so `crate::<module>` keeps working across the TUI ---
+pub use sshm_core::{cfg_io, cfg_path};
 pub use sshm_core::{
     config, filter, history, i18n, import, kluster, models, os, tty, tunnels, watch,
 };
-pub use sshm_core::{cfg_io, cfg_path};
 // Macro re-export: keeps `use crate::t;` working throughout the TUI.
 pub use sshm_core::t;
 
 // --- Frontend-only modules ---
-pub mod util;
+pub mod commands;
 pub mod ssh;
 pub mod tui;
-pub mod commands;
+pub mod util;
 
 // Convenience re-exports (matching the pre-split layout).
 pub use commands::{connect, crud, list, tags};

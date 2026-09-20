@@ -24,7 +24,10 @@ pub struct Git {
 /// Quote one argument for the `GIT_SSH_COMMAND` string, which git hands to a
 /// shell. Paths with spaces are common enough on macOS to matter.
 fn shell_quote(s: &str) -> String {
-    if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || "-_./@:=~".contains(c)) {
+    if !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_alphanumeric() || "-_./@:=~".contains(c))
+    {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\\''"))
@@ -39,7 +42,11 @@ pub fn ssh_command_for(cfg: &SyncConfig) -> String {
         // and burning the server's auth attempts before ours is tried.
         cmd.push_str(&format!(" -i {} -o IdentitiesOnly=yes", shell_quote(&key)));
     }
-    let host_keys = if cfg.strict_host_key_checking { "yes" } else { "accept-new" };
+    let host_keys = if cfg.strict_host_key_checking {
+        "yes"
+    } else {
+        "accept-new"
+    };
     cmd.push_str(&format!(" -o StrictHostKeyChecking={host_keys}"));
     // No password/passphrase prompts, and don't sit on a dead network.
     cmd.push_str(" -o BatchMode=yes -o ConnectTimeout=10");
@@ -48,7 +55,10 @@ pub fn ssh_command_for(cfg: &SyncConfig) -> String {
 
 impl Git {
     pub fn new(dir: impl Into<PathBuf>, cfg: &SyncConfig) -> Self {
-        Git { dir: dir.into(), ssh_command: ssh_command_for(cfg) }
+        Git {
+            dir: dir.into(),
+            ssh_command: ssh_command_for(cfg),
+        }
     }
 
     pub fn dir(&self) -> &Path {
@@ -73,7 +83,11 @@ impl Git {
         if !out.status.success() {
             let stderr = String::from_utf8_lossy(&out.stderr);
             let stdout = String::from_utf8_lossy(&out.stdout);
-            let detail = if stderr.trim().is_empty() { stdout } else { stderr };
+            let detail = if stderr.trim().is_empty() {
+                stdout
+            } else {
+                stderr
+            };
             bail!("git {}: {}", args.join(" "), detail.trim());
         }
         Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
@@ -119,7 +133,8 @@ impl Git {
             // `init -b` needs git >= 2.28; fall back to pointing HEAD at the
             // branch by hand on older ones.
             if self.run(&["init", "-q", "-b", branch]).is_err() {
-                self.run(&["init", "-q"]).context("initializing the sync working copy")?;
+                self.run(&["init", "-q"])
+                    .context("initializing the sync working copy")?;
                 let head = format!("refs/heads/{branch}");
                 self.run(&["symbolic-ref", "HEAD", &head])?;
             }
@@ -165,7 +180,11 @@ impl Git {
             return None;
         }
         let id = String::from_utf8_lossy(&out.stdout).trim().to_string();
-        if id.is_empty() { None } else { Some(id) }
+        if id.is_empty() {
+            None
+        } else {
+            Some(id)
+        }
     }
 
     /// Contents of `file` at `rev`, or `None` when either is absent.
@@ -212,7 +231,8 @@ impl Git {
     /// and the engine retries the whole fetch/merge cycle.
     pub fn push(&self, branch: &str) -> Result<()> {
         let refspec = format!("HEAD:refs/heads/{branch}");
-        self.run(&["push", "--quiet", "origin", &refspec]).map(|_| ())
+        self.run(&["push", "--quiet", "origin", &refspec])
+            .map(|_| ())
     }
 }
 

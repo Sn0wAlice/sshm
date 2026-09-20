@@ -1,7 +1,7 @@
-use std::collections::HashMap;
-use std::process::Command;
 use crate::models::Host;
 use crate::ssh::proxy::resolve_proxy_jump;
+use std::collections::HashMap;
+use std::process::Command;
 
 /// The ssh option flags that describe *how* to reach `h`: port, identity,
 /// ProxyJump chain, agent forwarding, then the host's raw `ssh_options`.
@@ -201,7 +201,10 @@ mod tests {
         h.remote_command = Some("exec tail -f /var/log/syslog".to_string());
         let argv = build_ssh_argv(&h, &HashMap::new());
         // User manages the shell lifecycle — no auto-appended exec.
-        assert_eq!(argv.last().unwrap(), "RemoteCommand=exec tail -f /var/log/syslog");
+        assert_eq!(
+            argv.last().unwrap(),
+            "RemoteCommand=exec tail -f /var/log/syslog"
+        );
     }
 
     #[test]
@@ -209,7 +212,9 @@ mod tests {
         let mut h = mk_host();
         h.remote_command = Some("   ".to_string());
         let argv = build_ssh_argv(&h, &HashMap::new());
-        assert!(!argv.iter().any(|a| a == "-t" || a.starts_with("RemoteCommand=")));
+        assert!(!argv
+            .iter()
+            .any(|a| a == "-t" || a.starts_with("RemoteCommand=")));
     }
 
     #[test]
@@ -252,7 +257,14 @@ mod tests {
         ];
         assert_eq!(
             build_ssh_opts(&h, &HashMap::new()),
-            vec!["-p", "22", "-o", "ServerAliveInterval=30", "-o", "SetEnv=FOO=bar"]
+            vec![
+                "-p",
+                "22",
+                "-o",
+                "ServerAliveInterval=30",
+                "-o",
+                "SetEnv=FOO=bar"
+            ]
         );
     }
 
@@ -274,7 +286,10 @@ mod tests {
         let opts = build_ssh_opts(&h, &HashMap::new());
         let a_pos = opts.iter().position(|o| o == "-A").unwrap();
         let override_pos = opts.iter().position(|o| o == "ForwardAgent=no").unwrap();
-        assert!(a_pos < override_pos, "raw options must come after the flags they override");
+        assert!(
+            a_pos < override_pos,
+            "raw options must come after the flags they override"
+        );
     }
 
     #[test]
@@ -282,7 +297,10 @@ mod tests {
         let mut h = mk_host();
         h.ssh_options = vec!["Compression=yes".to_string()];
         let argv = build_ssh_argv(&h, &HashMap::new());
-        assert_eq!(argv, vec!["ssh", "root@10.0.0.5", "-p", "22", "-o", "Compression=yes"]);
+        assert_eq!(
+            argv,
+            vec!["ssh", "root@10.0.0.5", "-p", "22", "-o", "Compression=yes"]
+        );
     }
 
     // ---- mosh quoting ----------------------------------------------------
@@ -327,10 +345,14 @@ mod tests {
             argv,
             vec![
                 "ssh",
-                "-o", "ConnectTimeout=10",
-                "-o", "ServerAliveInterval=10",
-                "-o", "ServerAliveCountMax=1",
-                "-p", "22",
+                "-o",
+                "ConnectTimeout=10",
+                "-o",
+                "ServerAliveInterval=10",
+                "-o",
+                "ServerAliveCountMax=1",
+                "-p",
+                "22",
                 "root@10.0.0.5",
                 "uptime",
             ]
@@ -348,7 +370,10 @@ mod tests {
         // Everything build_ssh_opts produces has to be present — a fan-out that
         // reached a host differently from an interactive connect would be a trap.
         for expected in ["-p", "2222", "-i", "/k/id", "-A", "-o", "Compression=yes"] {
-            assert!(argv.iter().any(|a| a == expected), "missing {expected} in {argv:?}");
+            assert!(
+                argv.iter().any(|a| a == expected),
+                "missing {expected} in {argv:?}"
+            );
         }
         assert_eq!(argv.last().unwrap(), "id");
     }

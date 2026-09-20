@@ -35,7 +35,10 @@ fn host_spec(hostname: &str, port: u16) -> String {
 /// Remove every line matching `hostname` from `~/.ssh/known_hosts`
 /// (equivalent to `ssh-keygen -R <hostname>`).
 pub fn remove_known_host(hostname: &str) -> std::io::Result<()> {
-    let status = Command::new("ssh-keygen").arg("-R").arg(hostname).status()?;
+    let status = Command::new("ssh-keygen")
+        .arg("-R")
+        .arg(hostname)
+        .status()?;
     if !status.success() {
         return Err(std::io::Error::other(format!(
             "ssh-keygen -R exited {status}"
@@ -178,7 +181,11 @@ fn fingerprints_from_lines(lines: &str) -> Vec<HostKey> {
     if std::fs::write(&tmp, lines).is_err() {
         return Vec::new();
     }
-    let out = Command::new("ssh-keygen").arg("-l").arg("-f").arg(&tmp).output();
+    let out = Command::new("ssh-keygen")
+        .arg("-l")
+        .arg("-f")
+        .arg(&tmp)
+        .output();
     let _ = std::fs::remove_file(&tmp);
     let Ok(out) = out else {
         return Vec::new();
@@ -212,11 +219,16 @@ fn parse_fingerprint_line(line: &str) -> Option<HostKey> {
         || fingerprint.starts_with("SHA1:")
         || fingerprint.starts_with("MD5:")
         || (fingerprint.contains(':')
-            && fingerprint.chars().all(|c| c.is_ascii_hexdigit() || c == ':'));
+            && fingerprint
+                .chars()
+                .all(|c| c.is_ascii_hexdigit() || c == ':'));
     if !looks_like_fingerprint {
         return None;
     }
-    Some(HostKey { key_type, fingerprint })
+    Some(HostKey {
+        key_type,
+        fingerprint,
+    })
 }
 
 #[cfg(test)]
@@ -249,7 +261,9 @@ mod tests {
 
     #[test]
     fn ignores_permission_denied() {
-        assert!(!stderr_indicates_key_changed("root@host: Permission denied (none)."));
+        assert!(!stderr_indicates_key_changed(
+            "root@host: Permission denied (none)."
+        ));
     }
 
     #[test]
@@ -264,20 +278,14 @@ mod tests {
 
     #[test]
     fn parses_standard_fingerprint_line() {
-        let hk = parse_fingerprint_line(
-            "256 SHA256:abc123DEF example.com (ED25519)",
-        )
-        .unwrap();
+        let hk = parse_fingerprint_line("256 SHA256:abc123DEF example.com (ED25519)").unwrap();
         assert_eq!(hk.fingerprint, "SHA256:abc123DEF");
         assert_eq!(hk.key_type, "ED25519");
     }
 
     #[test]
     fn parses_bracketed_host_line() {
-        let hk = parse_fingerprint_line(
-            "3072 SHA256:zzz [example.com]:2222 (RSA)",
-        )
-        .unwrap();
+        let hk = parse_fingerprint_line("3072 SHA256:zzz [example.com]:2222 (RSA)").unwrap();
         assert_eq!(hk.fingerprint, "SHA256:zzz");
         assert_eq!(hk.key_type, "RSA");
     }

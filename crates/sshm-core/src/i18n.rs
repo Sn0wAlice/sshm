@@ -46,7 +46,11 @@ fn parse_toml_strings(raw: &str) -> HashMap<String, String> {
         match value {
             toml::Value::Table(t) => {
                 for (k, v) in t {
-                    let next = if prefix.is_empty() { k.clone() } else { format!("{prefix}.{k}") };
+                    let next = if prefix.is_empty() {
+                        k.clone()
+                    } else {
+                        format!("{prefix}.{k}")
+                    };
                     walk(&next, v, out);
                 }
             }
@@ -143,7 +147,10 @@ mod tests {
 
     #[test]
     fn render_substitutes_placeholders() {
-        let s = render("Hello {name}, you have {n} messages", &[("name", "Alice"), ("n", "3")]);
+        let s = render(
+            "Hello {name}, you have {n} messages",
+            &[("name", "Alice"), ("n", "3")],
+        );
         assert_eq!(s, "Hello Alice, you have 3 messages");
     }
 
@@ -156,5 +163,138 @@ mod tests {
     #[test]
     fn lookup_falls_back_to_marker_for_unknown_key() {
         assert!(lookup("doesnotexist.foo").starts_with("??:"));
+    }
+
+    // ---- bundle integrity -------------------------------------------------
+    //
+    // `en` is the source of truth. These walk the bundled TOML directly rather
+    // than going through `bundles()`, which caches one locale per process.
+
+    fn bundle(code: &str) -> HashMap<String, String> {
+        let raw = LOCALES
+            .iter()
+            .find(|(c, _)| *c == code)
+            .expect("locale exists")
+            .1;
+        let parsed = parse_toml_strings(raw);
+        assert!(
+            !parsed.is_empty(),
+            "{code}.toml parsed to nothing — syntax error?"
+        );
+        parsed
+    }
+
+    #[test]
+    fn every_locale_parses() {
+        for (code, _) in LOCALES {
+            bundle(code);
+        }
+    }
+
+    #[test]
+    fn no_locale_is_missing_a_key() {
+        let en = bundle("en");
+        for (code, _) in LOCALES.iter().filter(|(c, _)| *c != "en") {
+            let other = bundle(code);
+            let mut missing: Vec<&String> = en.keys().filter(|k| !other.contains_key(*k)).collect();
+            missing.sort();
+            assert!(missing.is_empty(), "{code}.toml is missing: {missing:?}");
+        }
+    }
+
+    #[test]
+    fn no_locale_has_a_key_english_does_not() {
+        // A stray key is a typo or a leftover: it can never be reached, since
+        // lookups are driven by what the code asks for.
+        let en = bundle("en");
+        for (code, _) in LOCALES.iter().filter(|(c, _)| *c != "en") {
+            let other = bundle(code);
+            let mut extra: Vec<&String> = other.keys().filter(|k| !en.contains_key(*k)).collect();
+            extra.sort();
+            assert!(
+                extra.is_empty(),
+                "{code}.toml has keys en.toml does not: {extra:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn placeholders_match_across_locales() {
+        // A translation that drops `{n}` silently loses the number; one that
+        // invents `{count}` renders the literal braces to the user.
+        fn placeholders(s: &str) -> Vec<String> {
+            let mut out = Vec::new();
+            let mut rest = s;
+            while let Some(i) = rest.find('{') {
+                let Some(j) = rest[i..].find('}') else { break };
+                out.push(rest[i..=i + j].to_string());
+                rest = &rest[i + j + 1..];
+            }
+            out.sort();
+            out
+        }
+        let en = bundle("en");
+        for (code, _) in LOCALES.iter().filter(|(c, _)| *c != "en") {
+            let other = bundle(code);
+            for (key, en_val) in &en {
+                let Some(tr) = other.get(key) else { continue };
+                assert_eq!(
+                    placeholders(en_val),
+                    placeholders(tr),
+                    "{code}.toml `{key}` has different placeholders"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn help_strings_keep_their_segment_count() {
+        // The footer truncates on ` │ ` boundaries and the popup splits on
+        // them, so a translation that loses a separator loses a shortcut.
+        let en = bundle("en");
+        for (code, _) in LOCALES.iter().filter(|(c, _)| *c != "en") {
+            let other = bundle(code);
+            for (key, en_val) in en
+                .iter()
+                .filter(|(k, _)| k.starts_with("help.") && !k.starts_with("help.title."))
+            {
+                let Some(tr) = other.get(key) else { continue };
+                assert_eq!(
+                    en_val.split(" │ ").count(),
+                    tr.split(" │ ").count(),
+                    "{code}.toml `{key}` has a different number of shortcuts"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn no_translation_is_left_empty() {
+        for (code, _) in LOCALES {
+            for (key, val) in bundle(code) {
+                assert!(!val.trim().is_empty(), "{code}.toml `{key}` is empty");
+            }
+        }
+    }
+
+    #[test]
+    fn form_labels_fit_a_narrow_terminal() {
+        // Form rows render inside a modal sized to 70% of the terminal. On an
+        // 80-column terminal that is 56 columns, ~50 once borders and margins
+        // are taken — and a longer string is silently clipped, not wrapped.
+        // A French label overflowing here is exactly how this limit was found.
+        const BUDGET: usize = 50;
+        for (code, _) in LOCALES {
+            for (key, val) in bundle(code) {
+                if !key.starts_with("form.") {
+                    continue;
+                }
+                let width = val.chars().count();
+                assert!(
+                    width <= BUDGET,
+                    "{code}.toml `{key}` is {width} chars, over the {BUDGET}-column form budget: {val:?}"
+                );
+            }
+        }
     }
 }

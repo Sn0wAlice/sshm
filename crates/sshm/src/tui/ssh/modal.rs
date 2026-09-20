@@ -1,11 +1,15 @@
+use crate::tui::theme::Theme;
 use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::prelude::{Color, Line, Modifier, Span, Style};
 use ratatui::widgets::{Block, Borders, Clear, Paragraph};
-use crate::tui::theme::Theme;
 
 fn darken_color(c: Color) -> Color {
     match c {
-        Color::Rgb(r, g, b) => Color::Rgb(r.saturating_sub(20), g.saturating_sub(20), b.saturating_sub(20)),
+        Color::Rgb(r, g, b) => Color::Rgb(
+            r.saturating_sub(20),
+            g.saturating_sub(20),
+            b.saturating_sub(20),
+        ),
         _ => Color::Rgb(20, 20, 20),
     }
 }
@@ -51,12 +55,7 @@ pub fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
     horizontal[1]
 }
 
-pub fn render_modal(
-    f: &mut ratatui::Frame,
-    size: Rect,
-    config: &ModalConfig,
-    theme: &Theme,
-) {
+pub fn render_modal(f: &mut ratatui::Frame, size: Rect, config: &ModalConfig, theme: &Theme) {
     let area = centered_rect(config.width_percent, config.height_percent, size);
 
     // Shadow effect: dark rect offset by 1,1
@@ -76,7 +75,9 @@ pub fn render_modal(
     let block = Block::default()
         .title(Span::styled(
             format!(" {} ", config.title),
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
         .border_style(Style::default().fg(theme.accent))
@@ -86,7 +87,9 @@ pub fn render_modal(
     f.render_widget(block, area);
 
     // Body text
-    let body: Vec<Line> = config.body_lines.iter()
+    let body: Vec<Line> = config
+        .body_lines
+        .iter()
         .map(|l| Line::from(l.clone()))
         .collect();
     let msg = Paragraph::new(body).alignment(Alignment::Center);
@@ -102,14 +105,22 @@ pub fn render_modal(
 
     let mut button_spans: Vec<Span> = Vec::new();
     for (i, btn) in config.buttons.iter().enumerate() {
-        if i > 0 { button_spans.push(Span::raw("   ")); }
+        if i > 0 {
+            button_spans.push(Span::raw("   "));
+        }
         let span = if btn.is_selected {
             Span::styled(
                 format!("[ {} ]", btn.label),
-                Style::default().bg(theme.accent).fg(theme.bg).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .bg(theme.accent)
+                    .fg(theme.bg)
+                    .add_modifier(Modifier::BOLD),
             )
         } else {
-            Span::styled(format!("[ {} ]", btn.label), Style::default().fg(theme.accent))
+            Span::styled(
+                format!("[ {} ]", btn.label),
+                Style::default().fg(theme.accent),
+            )
         };
         button_spans.push(span);
     }

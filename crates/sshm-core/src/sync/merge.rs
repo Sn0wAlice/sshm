@@ -75,7 +75,10 @@ pub fn merge_item(
 ) -> Outcome {
     // Fast paths, valid for every file type.
     if same(local, remote) {
-        return Outcome { content: local.map(str::to_string), stats: MergeStats::default() };
+        return Outcome {
+            content: local.map(str::to_string),
+            stats: MergeStats::default(),
+        };
     }
     if same(base, local) {
         // Only the remote moved: take it wholesale (including a deletion).
@@ -84,12 +87,21 @@ pub fn merge_item(
             deleted: usize::from(remote.is_none()),
             ..MergeStats::default()
         };
-        return Outcome { content: remote.map(str::to_string), stats };
+        return Outcome {
+            content: remote.map(str::to_string),
+            stats,
+        };
     }
     if same(base, remote) {
         // Only we moved.
-        let stats = MergeStats { pushed: 1, ..MergeStats::default() };
-        return Outcome { content: local.map(str::to_string), stats };
+        let stats = MergeStats {
+            pushed: 1,
+            ..MergeStats::default()
+        };
+        return Outcome {
+            content: local.map(str::to_string),
+            stats,
+        };
     }
 
     // Both sides moved, differently.
@@ -104,7 +116,10 @@ pub fn merge_item(
             };
             Outcome {
                 content: winner.map(str::to_string),
-                stats: MergeStats { conflicts: 1, ..MergeStats::default() },
+                stats: MergeStats {
+                    conflicts: 1,
+                    ..MergeStats::default()
+                },
             }
         }
     }
@@ -125,8 +140,11 @@ fn merge_maps<T: Clone + PartialEq>(
     let mut out: BTreeMap<String, T> = BTreeMap::new();
     let mut stats = MergeStats::default();
 
-    let keys: BTreeSet<&String> =
-        base.keys().chain(local.keys()).chain(remote.keys()).collect();
+    let keys: BTreeSet<&String> = base
+        .keys()
+        .chain(local.keys())
+        .chain(remote.keys())
+        .collect();
 
     for key in keys {
         let b = base.get(key);
@@ -137,11 +155,19 @@ fn merge_maps<T: Clone + PartialEq>(
             l
         } else if b == l {
             // Remote added, changed or removed it; we didn't touch it.
-            if r.is_none() { stats.deleted += 1 } else { stats.pulled += 1 }
+            if r.is_none() {
+                stats.deleted += 1
+            } else {
+                stats.pulled += 1
+            }
             r
         } else if b == r {
             // Our side moved; remote stood still.
-            if l.is_none() { stats.deleted += 1 } else { stats.pushed += 1 }
+            if l.is_none() {
+                stats.deleted += 1
+            } else {
+                stats.pushed += 1
+            }
             l
         } else {
             // Genuinely divergent: both sides changed this entry.
@@ -185,11 +211,15 @@ fn merge_sets(
 // -----------------------------------------------------------------------------
 
 fn parse_hosts(text: Option<&str>) -> Database {
-    text.and_then(crate::config::io::parse_db_text).unwrap_or_default()
+    text.and_then(crate::config::io::parse_db_text)
+        .unwrap_or_default()
 }
 
 fn host_map(db: &Database) -> BTreeMap<String, Host> {
-    db.hosts.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+    db.hosts
+        .iter()
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
 }
 
 fn merge_hosts(
@@ -222,7 +252,10 @@ fn merge_hosts(
     };
 
     match crate::config::io::serialize_db(&merged) {
-        Ok(text) => Outcome { content: Some(text), stats },
+        Ok(text) => Outcome {
+            content: Some(text),
+            stats,
+        },
         // Unreachable in practice; degrade to the policy winner rather than
         // dropping somebody's hosts on the floor.
         Err(_) => Outcome {
@@ -230,7 +263,10 @@ fn merge_hosts(
                 ConflictPolicy::PreferLocal => local.map(str::to_string),
                 ConflictPolicy::PreferRemote => remote.map(str::to_string),
             },
-            stats: MergeStats { conflicts: 1, ..MergeStats::default() },
+            stats: MergeStats {
+                conflicts: 1,
+                ..MergeStats::default()
+            },
         },
     }
 }
@@ -245,11 +281,17 @@ fn parse_kluster(text: Option<&str>) -> KlusterDb {
 }
 
 fn cluster_map(db: &KlusterDb) -> BTreeMap<String, Cluster> {
-    db.clusters.iter().map(|c| (c.name.clone(), c.clone())).collect()
+    db.clusters
+        .iter()
+        .map(|c| (c.name.clone(), c.clone()))
+        .collect()
 }
 
 fn docker_map(db: &KlusterDb) -> BTreeMap<String, DockerRemote> {
-    db.docker_remotes.iter().map(|d| (d.host_alias.clone(), d.clone())).collect()
+    db.docker_remotes
+        .iter()
+        .map(|d| (d.host_alias.clone(), d.clone()))
+        .collect()
 }
 
 fn merge_kluster(
@@ -258,7 +300,11 @@ fn merge_kluster(
     remote: Option<&str>,
     policy: ConflictPolicy,
 ) -> Outcome {
-    let (b, l, r) = (parse_kluster(base), parse_kluster(local), parse_kluster(remote));
+    let (b, l, r) = (
+        parse_kluster(base),
+        parse_kluster(local),
+        parse_kluster(remote),
+    );
     let mut stats = MergeStats::default();
 
     let (clusters, s1) = merge_maps(&cluster_map(&b), &cluster_map(&l), &cluster_map(&r), policy);
@@ -279,13 +325,19 @@ fn merge_kluster(
     };
 
     match serde_json::to_string_pretty(&merged) {
-        Ok(text) => Outcome { content: Some(text), stats },
+        Ok(text) => Outcome {
+            content: Some(text),
+            stats,
+        },
         Err(_) => Outcome {
             content: match policy {
                 ConflictPolicy::PreferLocal => local.map(str::to_string),
                 ConflictPolicy::PreferRemote => remote.map(str::to_string),
             },
-            stats: MergeStats { conflicts: 1, ..MergeStats::default() },
+            stats: MergeStats {
+                conflicts: 1,
+                ..MergeStats::default()
+            },
         },
     }
 }
@@ -314,13 +366,21 @@ mod tests {
     }
 
     fn ip_of(text: &str, name: &str) -> String {
-        crate::config::io::parse_db_text(text).unwrap().hosts[name].host.clone()
+        crate::config::io::parse_db_text(text).unwrap().hosts[name]
+            .host
+            .clone()
     }
 
     #[test]
     fn identical_sides_are_a_no_op() {
         let a = host_json(&[("a", "1.1.1.1")]);
-        let out = merge_item(SyncItem::Hosts, Some(&a), Some(&a), Some(&a), ConflictPolicy::PreferLocal);
+        let out = merge_item(
+            SyncItem::Hosts,
+            Some(&a),
+            Some(&a),
+            Some(&a),
+            ConflictPolicy::PreferLocal,
+        );
         assert!(out.stats.is_quiet());
         assert_eq!(out.content.as_deref(), Some(a.as_str()));
     }
@@ -330,7 +390,11 @@ mod tests {
         let base = host_json(&[("a", "1.1.1.1")]);
         let remote = host_json(&[("a", "1.1.1.1"), ("b", "2.2.2.2")]);
         let out = merge_item(
-            SyncItem::Hosts, Some(&base), Some(&base), Some(&remote), ConflictPolicy::PreferLocal,
+            SyncItem::Hosts,
+            Some(&base),
+            Some(&base),
+            Some(&remote),
+            ConflictPolicy::PreferLocal,
         );
         assert_eq!(out.content.as_deref(), Some(remote.as_str()));
         assert_eq!(out.stats.pulled, 1);
@@ -341,7 +405,11 @@ mod tests {
         let base = host_json(&[("a", "1.1.1.1")]);
         let local = host_json(&[("a", "1.1.1.1"), ("b", "2.2.2.2")]);
         let out = merge_item(
-            SyncItem::Hosts, Some(&base), Some(&local), Some(&base), ConflictPolicy::PreferLocal,
+            SyncItem::Hosts,
+            Some(&base),
+            Some(&local),
+            Some(&base),
+            ConflictPolicy::PreferLocal,
         );
         assert_eq!(out.content.as_deref(), Some(local.as_str()));
         assert_eq!(out.stats.pushed, 1);
@@ -354,11 +422,18 @@ mod tests {
         let remote = host_json(&[("a", "1.1.1.1"), ("desktop", "10.0.0.2")]);
 
         let out = merge_item(
-            SyncItem::Hosts, Some(&base), Some(&local), Some(&remote), ConflictPolicy::PreferLocal,
+            SyncItem::Hosts,
+            Some(&base),
+            Some(&local),
+            Some(&remote),
+            ConflictPolicy::PreferLocal,
         );
         let text = out.content.expect("merged content");
         assert_eq!(names(&text), vec!["a", "desktop", "laptop"]);
-        assert_eq!(out.stats.conflicts, 0, "distinct additions are not a conflict");
+        assert_eq!(
+            out.stats.conflicts, 0,
+            "distinct additions are not a conflict"
+        );
         assert_eq!(out.stats.pulled, 1);
         assert_eq!(out.stats.pushed, 1);
     }
@@ -370,7 +445,11 @@ mod tests {
         let remote = host_json(&[("a", "1.1.1.1")]); // deleted `gone`
 
         let out = merge_item(
-            SyncItem::Hosts, Some(&base), Some(&local), Some(&remote), ConflictPolicy::PreferLocal,
+            SyncItem::Hosts,
+            Some(&base),
+            Some(&local),
+            Some(&remote),
+            ConflictPolicy::PreferLocal,
         );
         let text = out.content.unwrap();
         assert_eq!(names(&text), vec!["a", "new"]);
@@ -384,13 +463,21 @@ mod tests {
         let remote = host_json(&[("a", "20.0.0.1")]);
 
         let keep_local = merge_item(
-            SyncItem::Hosts, Some(&base), Some(&local), Some(&remote), ConflictPolicy::PreferLocal,
+            SyncItem::Hosts,
+            Some(&base),
+            Some(&local),
+            Some(&remote),
+            ConflictPolicy::PreferLocal,
         );
         assert_eq!(ip_of(&keep_local.content.unwrap(), "a"), "10.0.0.1");
         assert_eq!(keep_local.stats.conflicts, 1);
 
         let keep_remote = merge_item(
-            SyncItem::Hosts, Some(&base), Some(&local), Some(&remote), ConflictPolicy::PreferRemote,
+            SyncItem::Hosts,
+            Some(&base),
+            Some(&local),
+            Some(&remote),
+            ConflictPolicy::PreferRemote,
         );
         assert_eq!(ip_of(&keep_remote.content.unwrap(), "a"), "20.0.0.1");
         assert_eq!(keep_remote.stats.conflicts, 1);
@@ -399,7 +486,13 @@ mod tests {
     #[test]
     fn a_first_push_has_no_base_and_no_remote() {
         let local = host_json(&[("a", "1.1.1.1")]);
-        let out = merge_item(SyncItem::Hosts, None, Some(&local), None, ConflictPolicy::PreferLocal);
+        let out = merge_item(
+            SyncItem::Hosts,
+            None,
+            Some(&local),
+            None,
+            ConflictPolicy::PreferLocal,
+        );
         assert_eq!(out.content.as_deref(), Some(local.as_str()));
         assert_eq!(out.stats.pushed, 1, "the whole file is ours to contribute");
         assert_eq!(out.stats.conflicts, 0);
@@ -408,7 +501,13 @@ mod tests {
     #[test]
     fn a_fresh_machine_adopts_the_remote() {
         let remote = host_json(&[("a", "1.1.1.1")]);
-        let out = merge_item(SyncItem::Hosts, None, None, Some(&remote), ConflictPolicy::PreferLocal);
+        let out = merge_item(
+            SyncItem::Hosts,
+            None,
+            None,
+            Some(&remote),
+            ConflictPolicy::PreferLocal,
+        );
         assert_eq!(out.content.as_deref(), Some(remote.as_str()));
         assert_eq!(out.stats.pulled, 1);
     }
@@ -418,43 +517,72 @@ mod tests {
         // No common ancestor at all: both sides created host.json independently.
         let local = host_json(&[("laptop", "10.0.0.1")]);
         let remote = host_json(&[("desktop", "10.0.0.2")]);
-        let out = merge_item(SyncItem::Hosts, None, Some(&local), Some(&remote), ConflictPolicy::PreferLocal);
+        let out = merge_item(
+            SyncItem::Hosts,
+            None,
+            Some(&local),
+            Some(&remote),
+            ConflictPolicy::PreferLocal,
+        );
         assert_eq!(names(&out.content.unwrap()), vec!["desktop", "laptop"]);
     }
 
     #[test]
     fn folders_survive_for_hosts_that_survive() {
         let base = r#"{"hosts":{}, "folders":["Prod"]}"#.to_string();
-        let local = r#"{"hosts":{"a":{"name":"a","host":"1.1.1.1","folder":"Prod"}}, "folders":["Prod"]}"#.to_string();
+        let local =
+            r#"{"hosts":{"a":{"name":"a","host":"1.1.1.1","folder":"Prod"}}, "folders":["Prod"]}"#
+                .to_string();
         // Remote dropped the (then empty) folder.
         let remote = r#"{"hosts":{}, "folders":[]}"#.to_string();
 
         let out = merge_item(
-            SyncItem::Hosts, Some(&base), Some(&local), Some(&remote), ConflictPolicy::PreferLocal,
+            SyncItem::Hosts,
+            Some(&base),
+            Some(&local),
+            Some(&remote),
+            ConflictPolicy::PreferLocal,
         );
         let db = crate::config::io::parse_db_text(&out.content.unwrap()).unwrap();
         assert!(db.hosts.contains_key("a"));
-        assert!(db.folders.contains(&"Prod".to_string()), "the surviving host keeps its folder");
+        assert!(
+            db.folders.contains(&"Prod".to_string()),
+            "the surviving host keeps its folder"
+        );
     }
 
     #[test]
     fn trailing_newlines_are_not_a_change() {
         let a = host_json(&[("a", "1.1.1.1")]);
         let b = format!("{a}\n\n");
-        let out = merge_item(SyncItem::Hosts, Some(&a), Some(&b), Some(&a), ConflictPolicy::PreferLocal);
+        let out = merge_item(
+            SyncItem::Hosts,
+            Some(&a),
+            Some(&b),
+            Some(&a),
+            ConflictPolicy::PreferLocal,
+        );
         assert!(out.stats.is_quiet());
     }
 
     #[test]
     fn flat_files_fall_back_to_the_policy() {
         let out = merge_item(
-            SyncItem::Theme, Some("base"), Some("mine"), Some("theirs"), ConflictPolicy::PreferLocal,
+            SyncItem::Theme,
+            Some("base"),
+            Some("mine"),
+            Some("theirs"),
+            ConflictPolicy::PreferLocal,
         );
         assert_eq!(out.content.as_deref(), Some("mine"));
         assert_eq!(out.stats.conflicts, 1);
 
         let out = merge_item(
-            SyncItem::Theme, Some("base"), Some("mine"), Some("theirs"), ConflictPolicy::PreferRemote,
+            SyncItem::Theme,
+            Some("base"),
+            Some("mine"),
+            Some("theirs"),
+            ConflictPolicy::PreferRemote,
         );
         assert_eq!(out.content.as_deref(), Some("theirs"));
     }
@@ -466,7 +594,11 @@ mod tests {
         let remote = r#"{"clusters":[{"name":"prod","kind":"K8s"}],"incus_remotes":[],"docker_remotes":[{"host_alias":"bastion"}]}"#;
 
         let out = merge_item(
-            SyncItem::Kluster, Some(base), Some(local), Some(remote), ConflictPolicy::PreferLocal,
+            SyncItem::Kluster,
+            Some(base),
+            Some(local),
+            Some(remote),
+            ConflictPolicy::PreferLocal,
         );
         let db: KlusterDb = serde_json::from_str(&out.content.unwrap()).unwrap();
         let mut names: Vec<&str> = db.clusters.iter().map(|c| c.name.as_str()).collect();

@@ -50,7 +50,9 @@ impl IgnoreSigint {
 }
 impl Drop for IgnoreSigint {
     fn drop(&mut self) {
-        unsafe { libc::signal(libc::SIGINT, self.previous); }
+        unsafe {
+            libc::signal(libc::SIGINT, self.previous);
+        }
     }
 }
 
@@ -78,10 +80,15 @@ pub fn handle_kluster_open_shell<B: Backend>(
     let res = match target {
         KlusterTarget::Docker(c) => crate::kluster::docker::exec_shell(&c.id, None),
         KlusterTarget::Apple(c) => crate::kluster::apple::exec_shell(&c.id),
-        KlusterTarget::DockerRemote { container, host_uri } => {
-            crate::kluster::docker::exec_shell(&container.id, Some(host_uri))
-        }
-        KlusterTarget::Pod { cluster, pod, container } => {
+        KlusterTarget::DockerRemote {
+            container,
+            host_uri,
+        } => crate::kluster::docker::exec_shell(&container.id, Some(host_uri)),
+        KlusterTarget::Pod {
+            cluster,
+            pod,
+            container,
+        } => {
             // First container in the pod by default if none specified.
             let ctn = container.or_else(|| pod.containers.first().map(|s| s.as_str()));
             crate::kluster::kube::exec_shell(cluster, &pod.namespace, &pod.name, ctn)
@@ -115,10 +122,15 @@ pub fn handle_kluster_open_logs<B: Backend>(
     let res = match target {
         KlusterTarget::Docker(c) => crate::kluster::docker::logs(&c.id, tail, follow, None),
         KlusterTarget::Apple(c) => crate::kluster::apple::logs(&c.id, tail, follow),
-        KlusterTarget::DockerRemote { container, host_uri } => {
-            crate::kluster::docker::logs(&container.id, tail, follow, Some(host_uri))
-        }
-        KlusterTarget::Pod { cluster, pod, container } => {
+        KlusterTarget::DockerRemote {
+            container,
+            host_uri,
+        } => crate::kluster::docker::logs(&container.id, tail, follow, Some(host_uri)),
+        KlusterTarget::Pod {
+            cluster,
+            pod,
+            container,
+        } => {
             let ctn = container.or_else(|| pod.containers.first().map(|s| s.as_str()));
             crate::kluster::kube::logs(cluster, &pod.namespace, &pod.name, ctn, tail, follow)
         }
@@ -147,9 +159,10 @@ pub fn build_kluster_detail(
     };
     let result: Result<ContainerDetail> = match target {
         KlusterTarget::Docker(c) => crate::kluster::docker::inspect_detail(&c.id, None),
-        KlusterTarget::DockerRemote { container, host_uri } => {
-            crate::kluster::docker::inspect_detail(&container.id, Some(host_uri))
-        }
+        KlusterTarget::DockerRemote {
+            container,
+            host_uri,
+        } => crate::kluster::docker::inspect_detail(&container.id, Some(host_uri)),
         KlusterTarget::Apple(c) => crate::kluster::apple::inspect_detail(&c.id),
         KlusterTarget::Incus { instance, remote } => {
             let mut ov = DetailSection::new("Overview");
@@ -158,7 +171,11 @@ pub fn build_kluster_detail(
             ov.push("Status", &instance.status);
             ov.push("Image", &instance.image);
             ov.push("Remote", remote.unwrap_or("local"));
-            Ok(ContainerDetail { title: instance.name.clone(), sections: vec![ov], log_tail: Vec::new() })
+            Ok(ContainerDetail {
+                title: instance.name.clone(),
+                sections: vec![ov],
+                log_tail: Vec::new(),
+            })
         }
         KlusterTarget::Pod { cluster, pod, .. } => {
             let mut ov = DetailSection::new("Overview");
@@ -167,7 +184,11 @@ pub fn build_kluster_detail(
             ov.push("Phase", &pod.phase);
             ov.push("Cluster", &cluster.name);
             ov.push("Containers", pod.containers.join(", "));
-            Ok(ContainerDetail { title: pod.name.clone(), sections: vec![ov], log_tail: Vec::new() })
+            Ok(ContainerDetail {
+                title: pod.name.clone(),
+                sections: vec![ov],
+                log_tail: Vec::new(),
+            })
         }
     };
     match result {
@@ -201,7 +222,10 @@ pub fn handle_kluster_lifecycle(
             c.name.clone(),
             crate::kluster::apple::lifecycle(&c.id, action),
         ),
-        KlusterTarget::DockerRemote { container, host_uri } => (
+        KlusterTarget::DockerRemote {
+            container,
+            host_uri,
+        } => (
             container.name.clone(),
             crate::kluster::docker::lifecycle(&container.id, action, Some(host_uri)),
         ),
@@ -235,7 +259,9 @@ pub fn sync_kluster_targets(
     for r in &state.db.docker_remotes {
         if let Some(h) = hosts.get(&r.host_alias) {
             let uri = crate::kluster::docker::host_to_docker_uri(h);
-            state.docker_remote_uris.insert(r.host_alias.clone(), uri.clone());
+            state
+                .docker_remote_uris
+                .insert(r.host_alias.clone(), uri.clone());
             docker_remotes.push((r.host_alias.clone(), uri));
         }
     }
@@ -386,13 +412,8 @@ pub fn kluster_edit_cluster_flow<B: Backend>(
     };
 
     // Reject rename collisions with another existing cluster.
-    if updated.name != original_name
-        && state.db.clusters.iter().any(|c| c.name == updated.name)
-    {
-        return Err(anyhow::anyhow!(
-            "cluster '{}' already exists",
-            updated.name
-        ));
+    if updated.name != original_name && state.db.clusters.iter().any(|c| c.name == updated.name) {
+        return Err(anyhow::anyhow!("cluster '{}' already exists", updated.name));
     }
     state.db.clusters[cluster_idx] = updated;
     crate::kluster::db::save(&state.db).context("saving kluster.json")?;
@@ -409,28 +430,35 @@ pub fn kluster_delete_pod_flow<B: Backend>(
 ) -> Result<Option<String>> {
     use crate::kluster::Cluster;
     use crate::tui::tabs::kluster_tab::KlusterRow;
-    let (cluster, namespace, pod_name): (Cluster, String, String) = match state
-        .flat_rows
-        .get(state.selected)
-    {
-        Some(KlusterRow::ClusterPod { cluster_idx, pod_idx, .. }) => {
-            let cluster = state.db.clusters.get(*cluster_idx)
-                .ok_or_else(|| anyhow::anyhow!("cluster index out of range"))?
-                .clone();
-            let pods = state.cluster_pods.get(*cluster_idx)
-                .and_then(|x| x.as_ref())
-                .ok_or_else(|| anyhow::anyhow!("pod list not loaded"))?;
-            let pod = pods.get(*pod_idx)
-                .ok_or_else(|| anyhow::anyhow!("pod index out of range"))?;
-            (cluster, pod.namespace.clone(), pod.name.clone())
-        }
-        _ => return Ok(None),
-    };
+    let (cluster, namespace, pod_name): (Cluster, String, String) =
+        match state.flat_rows.get(state.selected) {
+            Some(KlusterRow::ClusterPod {
+                cluster_idx,
+                pod_idx,
+                ..
+            }) => {
+                let cluster = state
+                    .db
+                    .clusters
+                    .get(*cluster_idx)
+                    .ok_or_else(|| anyhow::anyhow!("cluster index out of range"))?
+                    .clone();
+                let pods = state
+                    .cluster_pods
+                    .get(*cluster_idx)
+                    .and_then(|x| x.as_ref())
+                    .ok_or_else(|| anyhow::anyhow!("pod list not loaded"))?;
+                let pod = pods
+                    .get(*pod_idx)
+                    .ok_or_else(|| anyhow::anyhow!("pod index out of range"))?;
+                (cluster, pod.namespace.clone(), pod.name.clone())
+            }
+            _ => return Ok(None),
+        };
 
     enter_foreground(terminal);
-    let confirmed = super::cluster_form::run_cluster_delete_confirm(
-        &format!("pod {}/{}", namespace, pod_name),
-    );
+    let confirmed =
+        super::cluster_form::run_cluster_delete_confirm(&format!("pod {}/{}", namespace, pod_name));
     if !confirmed {
         restore_tui(terminal);
         return Ok(None);
@@ -445,12 +473,20 @@ pub fn kluster_delete_pod_flow<B: Backend>(
             "kubectl delete pod {}/{} failed: {}",
             namespace,
             pod_name,
-            if stderr.is_empty() { "non-zero exit".to_string() } else { stderr }
+            if stderr.is_empty() {
+                "non-zero exit".to_string()
+            } else {
+                stderr
+            }
         ));
     }
     // Optimistically drop the entry from the cached list so the UI updates
     // immediately; the next refresh will re-confirm the state.
-    let cluster_idx = state.db.clusters.iter().position(|c| c.name == cluster.name);
+    let cluster_idx = state
+        .db
+        .clusters
+        .iter()
+        .position(|c| c.name == cluster.name);
     if let Some(ci) = cluster_idx {
         if let Some(Some(list)) = state.cluster_pods.get_mut(ci) {
             list.retain(|p| !(p.namespace == namespace && p.name == pod_name));
