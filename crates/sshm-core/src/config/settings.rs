@@ -39,6 +39,12 @@ pub struct AppConfig {
     /// Kluster tab.
     #[serde(default = "default_kluster_log_tail_lines")]
     pub kluster_log_tail_lines: u32,
+    /// Shell exec'd into a container / pod / instance from the Kluster tab.
+    /// Empty = `/bin/sh`, which every mainstream image ships. Point it
+    /// elsewhere for images that don't (a distroless or busybox build). One
+    /// declared value — sshm never probes for a nicer shell.
+    #[serde(default)]
+    pub kluster_shell: String,
     /// Command prefix used to open an SSH session in a new terminal window
     /// (the `o` hotkey). Empty = auto-detect. Example: `kitty -e`,
     /// `wezterm start --`, `gnome-terminal --`, `alacritty -e`.
@@ -83,6 +89,7 @@ impl Default for AppConfig {
             health_probe_timeout_ms: default_health_probe_timeout_ms(),
             kluster_refresh_secs: default_kluster_refresh_secs(),
             kluster_log_tail_lines: default_kluster_log_tail_lines(),
+            kluster_shell: String::new(),
             external_terminal: String::new(),
             notifications_enabled: true,
             notification_icon: String::new(),

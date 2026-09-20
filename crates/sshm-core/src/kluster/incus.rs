@@ -12,7 +12,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 
 use super::models::{IncusInstance, LifecycleAction};
-use super::shell::SHELL_PATH;
+use super::shell::shell_path;
 
 struct AvailCache {
     last: Instant,
@@ -148,7 +148,7 @@ pub fn exec_shell(name: &str, remote: Option<&str>) -> std::io::Result<ExitStatu
     Command::new("incus")
         .arg("exec")
         .arg(qualified(name, remote))
-        .args(["--", SHELL_PATH])
+        .args(["--", &shell_path()])
         .status()
 }
 

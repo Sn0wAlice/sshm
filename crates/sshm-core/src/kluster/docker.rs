@@ -7,7 +7,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result};
 
 use super::models::{ContainerDetail, ContainerInfo, DetailSection, LifecycleAction};
-use super::shell::SHELL_PATH;
+use super::shell::shell_path;
 
 /// Build the `ssh://[user@]host[:port]` URI passed to `DOCKER_HOST` for a
 /// remote Docker daemon reached over SSH.
@@ -146,7 +146,7 @@ pub fn exec_shell(id: &str, docker_host: Option<&str>) -> std::io::Result<ExitSt
     crate::tty::release_terminal();
     let mut cmd = Command::new("docker");
     if let Some(u) = docker_host { cmd.env("DOCKER_HOST", u); }
-    cmd.args(["exec", "-it", id, SHELL_PATH]).status()
+    cmd.args(["exec", "-it", id, &shell_path()]).status()
 }
 
 /// Run `docker logs [--tail N] [--follow] <id>` in the foreground.

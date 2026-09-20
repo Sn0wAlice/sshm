@@ -126,6 +126,15 @@ impl Default for KlusterTabState {
 impl KlusterTabState {
     pub fn new() -> Self {
         let (db, imported) = crate::kluster::db::load_or_bootstrap();
+        let mut state = Self::from_db(db);
+        state.bootstrap_imported = imported;
+        state
+    }
+
+    /// Build a state around an explicit [`KlusterDb`], touching no disk.
+    /// [`Self::new`] is this plus `load_or_bootstrap()`. Kept separate so the
+    /// row/selection logic can be exercised without a config directory.
+    pub fn from_db(db: KlusterDb) -> Self {
         let cluster_pods = vec![None; db.clusters.len()];
         // Collapse k8s/k3s cluster sections by default — they often hold 50+
         // pods and the noise hides everything else. Docker/Incus stay open.
@@ -148,7 +157,7 @@ impl KlusterTabState {
             selected: 0,
             flat_rows: Vec::new(),
             bootstrapped: false,
-            bootstrap_imported: imported,
+            bootstrap_imported: 0,
             collapsed,
             filter: String::new(),
             input_mode: false,
@@ -811,3 +820,433 @@ fn render_incus_instance<'a>(inst: &IncusInstance, theme: &Theme) -> ListItem<'a
     ]))
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::kluster::{ClusterKind, DockerRemote};
+
+    // ---- fixtures --------------------------------------------------------
+
+    fn container(name: &str, running: bool) -> ContainerInfo {
+        ContainerInfo {
+            id: format!("id-{name}"),
+            name: name.to_string(),
+            image: "alpine".into(),
+            status: if running { "Up 2 minutes".into() } else { "Exited (0)".into() },
+            running,
+        }
+    }
+
+    fn instance(name: &str, running: bool) -> IncusInstance {
+        IncusInstance {
+            name: name.to_string(),
+            status: if running { "RUNNING".into() } else { "STOPPED".into() },
+            kind: "container".into(),
+            image: String::new(),
+            running,
+        }
+    }
+
+    fn pod(name: &str, phase: &str) -> PodInfo {
+        PodInfo {
+            namespace: "default".into(),
+            name: name.to_string(),
+            containers: vec!["app".into()],
+            phase: phase.to_string(),
+        }
+    }
+
+    fn cluster(name: &str) -> Cluster {
+        Cluster {
+            name: name.to_string(),
+            kind: ClusterKind::K8s,
+            kubeconfig: None,
+            context: None,
+            namespace_default: None,
+        }
+    }
+
+    /// A state with local Docker (2 containers) and one cluster (2 pods),
+    /// everything expanded.
+    fn state() -> KlusterTabState {
+        let db = KlusterDb {
+            clusters: vec![cluster("prod")],
+            incus_remotes: vec![],
+            docker_remotes: vec![],
+        };
+        let mut s = KlusterTabState::from_db(db);
+        s.docker_available = true;
+        s.docker_containers = vec![container("web", true), container("cache", false)];
+        s.cluster_pods = vec![Some(vec![pod("api-1", "Running"), pod("job-9", "Succeeded")])];
+        s.collapsed.clear();
+        s.rebuild_rows();
+        s
+    }
+
+    /// Move the cursor to the first row satisfying `pred`.
+    fn select<F: Fn(&KlusterRow) -> bool>(s: &mut KlusterTabState, pred: F) {
+        s.selected = s
+            .flat_rows
+            .iter()
+            .position(pred)
+            .unwrap_or_else(|| panic!("no matching row in {:?}", s.flat_rows));
+    }
+
+    fn press(s: &mut KlusterTabState, c: char) -> KlusterAction {
+        handle_kluster_event(KeyCode::Char(c), s)
+    }
+
+    // ---- cursor → target -------------------------------------------------
+
+    #[test]
+    fn a_header_row_has_no_target() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerHeader { .. }));
+        assert!(s.current_target().is_none());
+    }
+
+    #[test]
+    fn the_cursor_resolves_to_the_container_under_it() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerContainer(_)));
+        match s.current_target() {
+            Some(KlusterTarget::Docker(c)) => assert_eq!(c.name, "web"),
+            _ => panic!("expected the first docker container"),
+        }
+        s.selected += 1;
+        match s.current_target() {
+            Some(KlusterTarget::Docker(c)) => assert_eq!(c.name, "cache"),
+            _ => panic!("expected the second docker container"),
+        }
+    }
+
+    #[test]
+    fn a_stale_row_index_resolves_to_nothing_rather_than_panicking() {
+        // The worker can shrink the snapshot between two frames: rows still
+        // reference indices that no longer exist.
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerContainer(_)));
+        s.selected += 1;
+        s.docker_containers.clear();
+        assert!(s.current_target().is_none());
+    }
+
+    #[test]
+    fn a_pod_target_carries_its_cluster() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::ClusterPod { .. }));
+        match s.current_target() {
+            Some(KlusterTarget::Pod { cluster, pod, .. }) => {
+                assert_eq!(cluster.name, "prod");
+                assert_eq!(pod.name, "api-1");
+            }
+            _ => panic!("expected a pod"),
+        }
+    }
+
+    // ---- per-row-type guards --------------------------------------------
+
+    #[test]
+    fn lifecycle_keys_do_nothing_on_a_pod() {
+        // k8s has no start/stop equivalent — the keys must be inert, not
+        // fire a Docker action against a pod.
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::ClusterPod { .. }));
+        assert!(matches!(press(&mut s, 's'), KlusterAction::None));
+        assert!(matches!(press(&mut s, 'R'), KlusterAction::None));
+    }
+
+    #[test]
+    fn s_stops_a_running_container_and_starts_a_stopped_one() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerContainer(0)));
+        assert!(matches!(
+            press(&mut s, 's'),
+            KlusterAction::Lifecycle(LifecycleAction::Stop)
+        ));
+        s.selected += 1; // "cache", not running
+        assert!(matches!(
+            press(&mut s, 's'),
+            KlusterAction::Lifecycle(LifecycleAction::Start)
+        ));
+    }
+
+    #[test]
+    fn restart_fires_regardless_of_running_state() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerContainer(1)));
+        assert!(matches!(
+            press(&mut s, 'R'),
+            KlusterAction::Lifecycle(LifecycleAction::Restart)
+        ));
+    }
+
+    #[test]
+    fn an_incus_instance_supports_lifecycle_too() {
+        let mut s = KlusterTabState::from_db(KlusterDb::default());
+        s.incus_local_available = true;
+        s.incus_local_instances = vec![instance("lxc-1", true)];
+        s.collapsed.clear();
+        s.rebuild_rows();
+        select(&mut s, |r| matches!(r, KlusterRow::IncusLocalInstance(_)));
+        assert!(matches!(
+            press(&mut s, 's'),
+            KlusterAction::Lifecycle(LifecycleAction::Stop)
+        ));
+    }
+
+    #[test]
+    fn delete_only_fires_on_a_terminated_pod() {
+        let mut s = state();
+        // `api-1` is Running — `d` must not offer to delete it.
+        select(&mut s, |r| matches!(r, KlusterRow::ClusterPod { pod_idx: 0, .. }));
+        assert!(matches!(press(&mut s, 'd'), KlusterAction::None));
+        // `job-9` is Succeeded — that one is cleanup.
+        select(&mut s, |r| matches!(r, KlusterRow::ClusterPod { pod_idx: 1, .. }));
+        assert!(matches!(press(&mut s, 'd'), KlusterAction::DeletePod));
+    }
+
+    #[test]
+    fn a_failed_pod_also_counts_as_terminated() {
+        let mut s = state();
+        s.cluster_pods = vec![Some(vec![pod("job-x", "Failed")])];
+        s.rebuild_rows();
+        select(&mut s, |r| matches!(r, KlusterRow::ClusterPod { .. }));
+        assert!(matches!(press(&mut s, 'd'), KlusterAction::DeletePod));
+    }
+
+    #[test]
+    fn d_on_a_cluster_header_unlinks_the_cluster_not_a_pod() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::ClusterHeader { .. }));
+        assert!(matches!(press(&mut s, 'd'), KlusterAction::DeleteCluster));
+        assert!(matches!(press(&mut s, 'e'), KlusterAction::EditCluster));
+    }
+
+    #[test]
+    fn d_on_a_docker_remote_header_unlinks_the_remote() {
+        let db = KlusterDb {
+            docker_remotes: vec![DockerRemote { host_alias: "web".into() }],
+            ..Default::default()
+        };
+        let mut s = KlusterTabState::from_db(db);
+        s.collapsed.clear();
+        s.rebuild_rows();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerRemoteHeader { .. }));
+        assert!(matches!(press(&mut s, 'd'), KlusterAction::DeleteDockerRemote));
+    }
+
+    #[test]
+    fn n_is_context_aware() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerHeader { .. }));
+        assert!(matches!(press(&mut s, 'n'), KlusterAction::AddDockerRemote));
+        select(&mut s, |r| matches!(r, KlusterRow::ClusterHeader { .. }));
+        assert!(matches!(press(&mut s, 'n'), KlusterAction::AddCluster));
+    }
+
+    #[test]
+    fn item_keys_are_inert_on_a_header() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerHeader { .. }));
+        assert!(matches!(press(&mut s, 'i'), KlusterAction::None));
+        assert!(matches!(press(&mut s, 'l'), KlusterAction::None));
+        assert!(matches!(press(&mut s, 's'), KlusterAction::None));
+    }
+
+    #[test]
+    fn enter_shells_into_an_item_and_folds_a_header() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerContainer(_)));
+        assert!(matches!(
+            handle_kluster_event(KeyCode::Enter, &mut s),
+            KlusterAction::OpenShell
+        ));
+
+        select(&mut s, |r| matches!(r, KlusterRow::DockerHeader { .. }));
+        let before = s.flat_rows.len();
+        assert!(matches!(
+            handle_kluster_event(KeyCode::Enter, &mut s),
+            KlusterAction::None
+        ));
+        assert!(s.flat_rows.len() < before, "the section should have collapsed");
+    }
+
+    // ---- navigation ------------------------------------------------------
+
+    #[test]
+    fn navigation_stops_at_both_ends() {
+        let mut s = state();
+        s.selected = 0;
+        handle_kluster_event(KeyCode::Up, &mut s);
+        assert_eq!(s.selected, 0, "must not underflow");
+
+        s.selected = s.flat_rows.len() - 1;
+        handle_kluster_event(KeyCode::Down, &mut s);
+        assert_eq!(s.selected, s.flat_rows.len() - 1, "must not run past the last row");
+    }
+
+    #[test]
+    fn jk_navigate_like_the_arrows() {
+        let mut s = state();
+        s.selected = 0;
+        press(&mut s, 'j');
+        assert_eq!(s.selected, 1);
+        press(&mut s, 'k');
+        assert_eq!(s.selected, 0);
+    }
+
+    // ---- collapse --------------------------------------------------------
+
+    #[test]
+    fn collapsing_hides_children_and_keeps_the_header() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerHeader { .. }));
+        s.toggle_collapsed_at_selected();
+        assert!(!s.flat_rows.iter().any(|r| matches!(r, KlusterRow::DockerContainer(_))));
+        assert!(s.flat_rows.iter().any(|r| matches!(r, KlusterRow::DockerHeader { .. })));
+        s.toggle_collapsed_at_selected();
+        assert_eq!(
+            s.flat_rows.iter().filter(|r| matches!(r, KlusterRow::DockerContainer(_))).count(),
+            2
+        );
+    }
+
+    #[test]
+    fn toggling_on_a_non_header_row_is_a_no_op() {
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerContainer(_)));
+        let before = s.flat_rows.len();
+        s.toggle_collapsed_at_selected();
+        assert_eq!(s.flat_rows.len(), before);
+    }
+
+    #[test]
+    fn deleting_a_cluster_renumbers_the_collapsed_set() {
+        // `collapsed` keys embed the cluster index, so removing cluster 1 has
+        // to shift 2→1, 3→2 … or the wrong sections stay folded.
+        let mut s = state();
+        s.collapsed = ["cluster_0", "cluster_2", "cluster_3", "docker"]
+            .iter()
+            .map(|k| k.to_string())
+            .collect();
+        s.shift_collapsed_after_delete("cluster_", 1);
+        let mut got: Vec<_> = s.collapsed.iter().cloned().collect();
+        got.sort();
+        assert_eq!(got, vec!["cluster_0", "cluster_1", "cluster_2", "docker"]);
+    }
+
+    #[test]
+    fn deleting_a_cluster_drops_its_own_collapsed_key() {
+        let mut s = state();
+        s.collapsed = ["cluster_1"].iter().map(|k| k.to_string()).collect();
+        s.shift_collapsed_after_delete("cluster_", 1);
+        assert!(s.collapsed.is_empty());
+    }
+
+    // ---- filter ----------------------------------------------------------
+
+    #[test]
+    fn slash_enters_filter_mode_and_esc_leaves_it() {
+        let mut s = state();
+        press(&mut s, '/');
+        assert!(s.input_mode);
+        press(&mut s, 'w');
+        assert_eq!(s.filter, "w");
+        handle_kluster_event(KeyCode::Esc, &mut s);
+        assert!(!s.input_mode);
+        assert!(s.filter.is_empty());
+    }
+
+    #[test]
+    fn filtering_narrows_to_matching_items() {
+        let mut s = state();
+        press(&mut s, '/');
+        for c in "web".chars() {
+            press(&mut s, c);
+        }
+        let names: Vec<_> = s
+            .flat_rows
+            .iter()
+            .filter_map(|r| match r {
+                KlusterRow::DockerContainer(i) => Some(s.docker_containers[*i].name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(names, vec!["web"], "only the matching container survives");
+    }
+
+    #[test]
+    fn a_filter_force_expands_collapsed_sections() {
+        // A match hidden inside a folded section would otherwise be invisible.
+        let mut s = state();
+        select(&mut s, |r| matches!(r, KlusterRow::DockerHeader { .. }));
+        s.toggle_collapsed_at_selected();
+        assert!(!s.flat_rows.iter().any(|r| matches!(r, KlusterRow::DockerContainer(_))));
+
+        press(&mut s, '/');
+        for c in "web".chars() {
+            press(&mut s, c);
+        }
+        assert!(s.flat_rows.iter().any(|r| matches!(r, KlusterRow::DockerContainer(_))));
+    }
+
+    #[test]
+    fn letters_edit_the_query_instead_of_firing_actions_while_filtering() {
+        // `d`, `s` and `n` are destructive elsewhere — inside the filter they
+        // must be plain characters.
+        let mut s = state();
+        press(&mut s, '/');
+        for c in "dsn".chars() {
+            assert!(matches!(press(&mut s, c), KlusterAction::None));
+        }
+        assert_eq!(s.filter, "dsn");
+    }
+
+    #[test]
+    fn arrows_still_navigate_while_filtering() {
+        let mut s = state();
+        press(&mut s, '/');
+        s.selected = 0;
+        handle_kluster_event(KeyCode::Down, &mut s);
+        assert_eq!(s.selected, 1);
+    }
+
+    #[test]
+    fn enter_confirms_the_filter_and_keeps_it_applied() {
+        let mut s = state();
+        press(&mut s, '/');
+        for c in "web".chars() {
+            press(&mut s, c);
+        }
+        handle_kluster_event(KeyCode::Enter, &mut s);
+        assert!(!s.input_mode, "typing is over");
+        assert_eq!(s.filter, "web", "but the filter stays applied");
+    }
+
+    #[test]
+    fn backspace_widens_the_filter_again() {
+        let mut s = state();
+        press(&mut s, '/');
+        for c in "web".chars() {
+            press(&mut s, c);
+        }
+        handle_kluster_event(KeyCode::Backspace, &mut s);
+        assert_eq!(s.filter, "we");
+    }
+
+    #[test]
+    fn an_empty_filter_matches_everything() {
+        assert!(item_matches("anything", ""));
+    }
+
+    #[test]
+    fn refresh_works_from_any_row() {
+        let mut s = state();
+        for i in 0..s.flat_rows.len() {
+            s.selected = i;
+            assert!(matches!(press(&mut s, 'r'), KlusterAction::Refresh));
+        }
+    }
+}

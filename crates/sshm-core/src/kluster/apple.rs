@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use anyhow::{Context, Result};
 
 use super::models::{ContainerDetail, ContainerInfo, DetailSection, LifecycleAction};
-use super::shell::SHELL_PATH;
+use super::shell::shell_path;
 
 /// True when `name` resolves on `PATH`.
 fn bin_exists(name: &str) -> bool {
@@ -143,7 +143,7 @@ fn title_case(s: &str) -> String {
 pub fn exec_shell(id: &str) -> std::io::Result<ExitStatus> {
     crate::tty::release_terminal();
     Command::new("container")
-        .args(["exec", "-i", "-t", id, SHELL_PATH])
+        .args(["exec", "-i", "-t", id, &shell_path()])
         .status()
 }
 

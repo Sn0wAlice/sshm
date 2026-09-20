@@ -227,6 +227,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     let mut app_config = load_settings();
     crate::os::set_notifications_enabled(app_config.notifications_enabled);
     crate::os::set_notification_icon(&app_config.notification_icon);
+    crate::kluster::shell::set_shell_path(&app_config.kluster_shell);
     let mut settings_state = SettingsFormState::from_config(&app_config);
     let mut theme_state = ThemeTabState::new();
     let mut help_state = HelpTabState::new();
@@ -347,6 +348,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                 settings_state = SettingsFormState::from_config(&app_config);
                 crate::os::set_notifications_enabled(app_config.notifications_enabled);
                 crate::os::set_notification_icon(&app_config.notification_icon);
+                crate::kluster::shell::set_shell_path(&app_config.kluster_shell);
                 health_interval_secs.store(app_config.health_ttl_secs.max(1), Ordering::Relaxed);
                 health_probe_ms.store(app_config.health_probe_timeout_ms.max(100), Ordering::Relaxed);
                 kluster_interval_secs.store(app_config.kluster_refresh_secs.max(2), Ordering::Relaxed);

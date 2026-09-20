@@ -45,6 +45,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sshm edit`, validated as `keyword=value` on the way in, shown in the detail
   panel, and written to `~/.ssh/config` by `export`. Existing `host.json`
   files load unchanged.
+- **The container shell is configurable.** `Enter` in the Kluster tab still
+  execs `/bin/sh`, and still doesn't probe for anything nicer — the
+  bash-fallback wrapper that used to live there caused more corner cases than
+  it solved. But the path is no longer hard-coded: set `kluster_shell` in
+  `settings.toml` and every Docker / Apple / Incus / kubectl exec uses it, so a
+  distroless or busybox image is reachable without a guessing wrapper.
 - **`ForwardAgent` is now exported.** A host with `-A` enabled emits
   `ForwardAgent yes` in the exported ssh config; previously the setting was
   silently dropped.
@@ -66,6 +72,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-command left ssh waiting indefinitely and stalled the rest of the batch.
   `ServerAliveInterval` / `ServerAliveCountMax` now bound that case too; a
   command that is genuinely still running is untouched.
+- **The Kluster worker probed remotes one at a time.** Docker remotes, Incus
+  remotes and cluster apiservers are independent network round-trips, but a
+  refresh pass walked them serially, so one pass cost the *sum* of their
+  latencies — visibly slow with a handful of remotes on the default 10s
+  interval. They now run concurrently, eight at a time.
 - **Fan-out ignored some per-host connection settings.** It rebuilt the ssh
   flags itself rather than reusing the engine's builder, so it could reach a
   host differently from an interactive connect. All three call sites — the

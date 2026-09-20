@@ -5,7 +5,7 @@ use std::process::{Command, ExitStatus, Stdio};
 use anyhow::{Context, Result};
 
 use super::models::{Cluster, PodInfo};
-use super::shell::SHELL_PATH;
+use super::shell::shell_path;
 
 /// Returns true if `kubectl` is on PATH.
 pub fn cli_available() -> bool {
@@ -92,7 +92,7 @@ pub fn exec_shell(
     if let Some(c) = container {
         cmd.args(["-c", c]);
     }
-    cmd.args(["--", SHELL_PATH]);
+    cmd.args(["--", &shell_path()]);
     cmd.status()
 }
 

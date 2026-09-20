@@ -45,7 +45,7 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 - **Incus (local)** — auto-detected, lists containers and VMs
 - **Incus (remote)** — auto-imported from `incus remote list`
 - **Kubernetes / K3s** — auto-imported from every context in `~/.kube/config` and `$KUBECONFIG`
-- **One Enter to shell** into any container / pod / instance — `/bin/sh` directly, no bash dance
+- **One Enter to shell** into any container / pod / instance — `/bin/sh` directly, no bash dance (override with `kluster_shell` for images that ship it elsewhere)
 - **Rich detail view** — `i` opens a scrollable inspect panel: overview (image, status, CPU/mem, platform), networking (IPs, gateway, MAC), published ports, volumes, entrypoint/command, and a live log tail. Backed by `docker`/`container inspect`
 - **One `l` to follow logs** — `Ctrl+C` returns to the TUI cleanly (no app exit)
 - **Lifecycle control** — `s` starts/stops and `R` restarts Docker/Apple containers and Incus instances right from the list
@@ -297,6 +297,12 @@ notification_icon = "~/.config/sshm/icon.png"
 ```
 
 On **Linux** it's passed straight to `notify-send -i`. On **macOS** the default `osascript` notification *cannot* override its icon (it's always osascript's) — install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) and SSHM will use it automatically to honour the custom icon.
+
+**`kluster_shell`** — a third `settings.toml`-only key: the shell `Enter` execs into a container, pod or instance. Empty means `/bin/sh`, which every mainstream image ships. SSHM deliberately does *not* probe for a nicer shell — a bash-fallback wrapper used to live here and caused more corner cases than it solved — so point this at the one your images actually have:
+
+```toml
+kluster_shell = "/busybox/sh"
+```
 
 ### Config sync (git over SSH)
 
