@@ -278,6 +278,20 @@ pub struct SyncConfig {
     /// refuse on change).
     #[serde(default)]
     pub strict_host_key_checking: bool,
+    /// Encrypt the payload before it is committed, with `age`. Off by default
+    /// — turning it on is a decision about what your git remote may hold.
+    ///
+    /// Only what leaves the machine is affected: the local `host.json` stays
+    /// plain. Reading is content-sniffed rather than gated on this flag, so a
+    /// repository written before it was turned on still decrypts.
+    #[serde(default)]
+    pub encrypt: bool,
+    /// Path to the `age` identity used for [`Self::encrypt`]. `~` is expanded.
+    /// Its public half is the recipient, its private half decrypts — so the
+    /// same file has to exist on every machine that syncs this repository,
+    /// copied the way an SSH key is.
+    #[serde(default)]
+    pub age_identity: String,
 }
 
 fn default_sync_branch() -> String {
@@ -306,6 +320,8 @@ impl Default for SyncConfig {
             items: default_sync_items(),
             conflict: ConflictPolicy::default(),
             strict_host_key_checking: false,
+            encrypt: false,
+            age_identity: String::new(),
         }
     }
 }

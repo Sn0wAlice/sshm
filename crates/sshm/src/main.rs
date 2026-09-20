@@ -153,7 +153,13 @@ Config sync (git over SSH):"
             println!("  In Kluster: Enter shell, l logs(-f), r refresh, n add, d delete/unlink");
             println!();
             println!("Locale:    SSHM_LANG=en|fr  (default = locale, fallback en)");
-            println!("Config:    ~/.config/sshm/{{host,kluster}}.json, settings.toml, theme.toml");
+            // Resolved rather than written out: the literal path differs per
+            // OS, and printing the wrong one is how people end up editing a
+            // file sshm never reads.
+            println!(
+                "Config:    {}",
+                sshm_core::config::path::config_dir().display()
+            );
         }
         _ => {
             // The tunnel manager outlives individual `run_tui` calls so that

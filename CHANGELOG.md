@@ -66,6 +66,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a host that is gone for good doesn't respawn forever. A tunnel you stopped
   yourself stays stopped, and one whose host was deleted meanwhile is dropped
   with a notification instead of retried.
+- **Optional encryption of what sync publishes.** Turn `encrypt` on (Settings
+  tab, `sshm sync setup`, or `settings.toml`) and the payload is sealed with
+  [`age`](https://age-encryption.org) before it reaches a commit — so the git
+  remote no longer holds your hostnames, addresses, usernames, key paths and
+  notes in clear. One identity file, copied to each machine the way an SSH key
+  is; `sshm sync setup` offers to generate it. Off by default.
+
+  Three properties worth knowing. **Your local files stay unencrypted** — this
+  protects what leaves the machine, not what sits on it. **Reading is
+  content-sniffed**, so turning it on is a non-event: the next push encrypts
+  and the history written before it still reads back. And **there is no silent
+  fallback** — if `age` is missing or the identity is unusable, the run aborts
+  instead of pushing cleartext, which `sshm sync status` and the preflight both
+  report up front.
 - **The interface speaks French, not just its toasts.** i18n used to cover
   messages only — 35 call sites, all in two files — while every tab title,
   form label, dialog and shortcut hint was hard-coded English. The chrome is
@@ -130,6 +144,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-command left ssh waiting indefinitely and stalled the rest of the batch.
   `ServerAliveInterval` / `ServerAliveCountMax` now bound that case too; a
   command that is genuinely still running is untouched.
+- **The documented config path was wrong on macOS.** The README and
+  `sshm help` both said `~/.config/sshm/`, while `dirs::config_dir()` resolves
+  to `~/Library/Application Support/sshm/` there — the project's main
+  development platform. `sshm help` now prints the resolved directory, and the
+  README states the per-OS location instead of asserting one. The same
+  mismatch was a trap for the new `age_identity`: a plausible
+  `~/.config/sshm/sync-age.key` would sit in a directory sshm never opens, so
+  the suggested default is derived from the real config directory and every
+  surface — the Settings tab, `sshm sync setup`, `sshm sync status` — prints
+  the path as it resolves.
 - **CI never ran.** `push` and `pull_request` were commented out in
   `ci.yml`, leaving only manual dispatch — so the test suite and clippy only
   ran when someone clicked. Both triggers are back, and the job now also

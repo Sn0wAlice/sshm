@@ -3,7 +3,7 @@
 //! The engine lives in [`sshm_core::sync`]; this module is the argument
 //! parsing, the interactive setup wizard, and the human-readable reporting.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use inquire::{Confirm, MultiSelect, Select, Text};
 
 use crate::config::settings::{
@@ -142,6 +142,23 @@ fn status() {
         cfg.expanded_key()
             .unwrap_or_else(|| "(ssh-agent / ~/.ssh/config)".to_string())
     );
+    println!(
+        "  Encryption  : {}",
+        match (cfg.encrypt, sshm_core::sync::crypt::identity_path(&cfg)) {
+            (false, None) => format!(
+                "off — the repo holds your hosts in clear (identity would default to {})",
+                crate::tui::tabs::settings_tab::default_identity_path().display()
+            ),
+            (false, Some(p)) => format!(
+                "off — the repo holds your hosts in clear (identity set: {})",
+                p.display()
+            ),
+            (true, None) => "ON but no identity set (sync will refuse)".to_string(),
+            (true, Some(p)) if !p.exists() =>
+                format!("ON but {} is missing (sync will refuse)", p.display()),
+            (true, Some(p)) => format!("age, identity {}", p.display()),
+        }
+    );
     let when = match cfg.effective_interval() {
         Some(secs) => format!("every {} min", secs / 60),
         None => "manual (or cron)".to_string(),
@@ -263,6 +280,114 @@ fn toggle(on: bool) -> Result<()> {
 
 /// Interactive setup. Every prompt starts from the current value, so running
 /// it again to change one thing is painless.
+/// Ask whether the payload should be encrypted, and where the age identity
+/// lives. Returns `(encrypt, identity_path)`.
+///
+/// Declining is the default: it is a decision about what the git remote may
+/// hold, and the honest framing is what the repo would contain either way.
+fn pick_encryption(cur: &SyncConfig) -> Result<(bool, String)> {
+    println!();
+    println!("Without encryption the repository holds your hosts in clear:");
+    println!("  names, addresses, usernames, ports, key paths, tags and notes.");
+    println!("A private repo is still a repo — mirrors, backups, org access.");
+
+    let encrypt = Confirm::new("Encrypt the synced files?")
+        .with_default(cur.encrypt)
+        .with_help_message("Uses `age`; your local files stay unencrypted")
+        .prompt()?;
+    if !encrypt {
+        // Keep whatever path was configured: turning encryption back on later
+        // should not mean finding the identity again.
+        return Ok((false, cur.age_identity.clone()));
+    }
+
+    if !sshm_core::sync::crypt::age_available() {
+        println!();
+        println!("`age` was not found on PATH. Install it first:");
+        println!("  brew install age      # macOS");
+        println!("  apt install age       # Debian/Ubuntu");
+        println!("Encryption left off for now — re-run `sshm sync setup` after installing.");
+        return Ok((false, cur.age_identity.clone()));
+    }
+
+    // Derived from sshm's own config directory rather than a hard-coded
+    // `~/.config/sshm` — that path is right on Linux and wrong on macOS, where
+    // sshm lives under `~/Library/Application Support/sshm`. Suggesting it
+    // would send the key somewhere sshm never looks.
+    let default_path = if cur.age_identity.trim().is_empty() {
+        crate::tui::tabs::settings_tab::default_identity_path()
+            .to_string_lossy()
+            .to_string()
+    } else {
+        cur.age_identity.clone()
+    };
+    println!();
+    println!("The identity is an absolute path — shown resolved so there is no doubt");
+    println!("where it lands. It must exist on every machine that syncs this repo.");
+    let identity = Text::new("age identity file:")
+        .with_initial_value(&default_path)
+        .with_help_message("`~` is expanded; the resolved path is printed back")
+        .prompt()?;
+    let identity = identity.trim().to_string();
+    if identity.is_empty() {
+        println!("Aborted encryption: no identity path.");
+        return Ok((false, cur.age_identity.clone()));
+    }
+
+    let expanded = std::path::PathBuf::from(shellexpand::tilde(&identity).to_string());
+    if expanded.to_string_lossy() != identity {
+        println!("  resolves to {}", expanded.display());
+    }
+    if expanded.exists() {
+        println!("Using the existing identity at {}.", expanded.display());
+        return Ok((true, identity));
+    }
+
+    let generate = Confirm::new(&format!(
+        "{} doesn't exist — generate it?",
+        expanded.display()
+    ))
+    .with_default(true)
+    .with_help_message("Copy it to your other machines afterwards, like an SSH key")
+    .prompt()?;
+    if !generate {
+        println!("Encryption left off: no identity to encrypt to.");
+        return Ok((false, identity));
+    }
+    generate_identity(&expanded)?;
+    println!();
+    println!("Generated {}.", expanded.display());
+    println!("Copy it to every other machine that syncs this repo — without it,");
+    println!("they cannot read what this one pushes.");
+    Ok((true, identity))
+}
+
+/// `age-keygen -o <path>`, with the parent directory created and the file
+/// locked down to the owner.
+fn generate_identity(path: &std::path::Path) -> Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)
+            .with_context(|| format!("creating {}", parent.display()))?;
+    }
+    let out = std::process::Command::new("age-keygen")
+        .arg("-o")
+        .arg(path)
+        .output()
+        .context("running `age-keygen` — is it installed alongside `age`?")?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        anyhow::bail!("age-keygen failed: {err}");
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // It is a private key; `age-keygen` already does this, but a umask or
+        // a pre-existing file could leave it readable.
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+    }
+    Ok(())
+}
+
 fn setup() -> Result<()> {
     let mut config = load_settings();
     let cur = config.sync.clone();
@@ -303,6 +428,7 @@ fn setup() -> Result<()> {
         .prompt()?;
 
     let conflict = pick_conflict(&cur)?;
+    let (encrypt, age_identity) = pick_encryption(&cur)?;
 
     config.sync = SyncConfig {
         enabled: true,
@@ -316,6 +442,8 @@ fn setup() -> Result<()> {
         items,
         conflict,
         strict_host_key_checking: cur.strict_host_key_checking,
+        encrypt,
+        age_identity,
     };
     save(&config)?;
     println!();

@@ -64,7 +64,7 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 - **Open in a new terminal** — `o` launches the SSH session in a separate terminal window (auto-detected, or set `external_terminal`)
 - **Host-key trust** — vet fingerprints with `F`; on connect, a never-seen host offers trust-on-first-use with its fingerprint shown, and a *changed* host key is detected and offers to wipe the stale `known_hosts` entry and reconnect
 - **Auto-export** — optionally writes a clean `~/.ssh/config` on every save
-- **Config sync over git** — keep your hosts, clusters and theme in a private git repo, authenticated with an SSH key. Manual, scheduled or cron-driven; several running instances share one schedule and only one of them ever syncs
+- **Config sync over git** — keep your hosts, clusters and theme in a private git repo, authenticated with an SSH key. Manual, scheduled or cron-driven; several running instances share one schedule and only one of them ever syncs. Optionally **encrypted with `age`**, so the remote never holds your inventory in clear
 - **CLI mode** — scriptable commands for automation
 
 ## Installation
@@ -256,16 +256,29 @@ The available actions depend on what's under the cursor.
 
 ### Files
 
+Everything lives in one directory, written `<config>` below. **It is not the
+same place on every OS** — sshm uses the platform's standard config location:
+
+| OS | `<config>` |
+|----|------------|
+| Linux / BSD | `~/.config/sshm/` |
+| macOS | `~/Library/Application Support/sshm/` |
+| Windows | `%APPDATA%\sshm\` |
+
+`sshm sync status` prints the resolved paths it is actually using, which is the
+quickest way to settle any doubt.
+
 | Path | Purpose |
 |------|---------|
-| `~/.config/sshm/host.json` | Hosts, folders, tunnels, ProxyJump, per-host ssh options |
-| `~/.config/sshm/kluster.json` | Saved clusters + Incus remotes + Docker remotes |
-| `~/.config/sshm/settings.toml` | Defaults, health & kluster intervals |
-| `~/.config/sshm/theme.toml` | TUI color theme (optional) |
-| `~/.config/sshm/tunnels/<pid>.json` | Live background tunnels per running instance — used to clean up after a crash |
-| `~/.config/sshm/sync-repo/` | Working clone used by config sync — scratch space, safe to delete |
-| `~/.config/sshm/sync-state.json` | Last sync time/result, shared by every running instance |
-| `~/.config/sshm/sync.lock` | Held while a sync runs, so only one instance syncs at a time |
+| `<config>/host.json` | Hosts, folders, tunnels, ProxyJump, per-host ssh options |
+| `<config>/kluster.json` | Saved clusters + Incus remotes + Docker remotes |
+| `<config>/settings.toml` | Defaults, health & kluster intervals |
+| `<config>/theme.toml` | TUI color theme (optional) |
+| `<config>/tunnels/<pid>.json` | Live background tunnels per running instance — used to clean up after a crash |
+| `<config>/sync-repo/` | Working clone used by config sync — scratch space, safe to delete |
+| `<config>/sync-state.json` | Last sync time/result, shared by every running instance |
+| `<config>/sync.lock` | Held while a sync runs, so only one instance syncs at a time |
+| `<config>/sync-age.key` | Default location for the sync encryption identity (optional) |
 
 ### Settings
 
@@ -296,7 +309,7 @@ external_terminal = "gnome-terminal --"
 **`notification_icon`** — another `settings.toml`-only key: a path (`~` allowed) to a custom icon for desktop notifications.
 
 ```toml
-notification_icon = "~/.config/sshm/icon.png"
+notification_icon = "~/.config/sshm/icon.png"   # any path; `~` is expanded
 ```
 
 On **Linux** it's passed straight to `notify-send -i`. On **macOS** the default `osascript` notification *cannot* override its icon (it's always osascript's) — install [`terminal-notifier`](https://github.com/julienXX/terminal-notifier) (`brew install terminal-notifier`) and SSHM will use it automatically to honour the custom icon.
@@ -328,6 +341,48 @@ authenticate with a key.
 `settings.toml` is opt-in. The `[sync]` block itself **never leaves the
 machine** — it holds your key path, and syncing it would point every other
 machine at the same one (or switch sync off everywhere at once).
+
+**Encryption (optional, off by default).** Without it the repository holds your
+hosts in clear — names, addresses, usernames, ports, key paths, tags and notes.
+A private repo is still a repo: mirrors, backups, org-wide access, a compromised
+account. Turn it on from the Settings tab, from `sshm sync setup`, or by hand:
+
+```toml
+[sync]
+encrypt = true
+# An absolute path, or `~`-relative. Put it wherever you like — the default
+# sshm suggests is inside its own config directory, which is NOT the same
+# place on every OS (see "Files" above):
+#   Linux  ~/.config/sshm/sync-age.key
+#   macOS  ~/Library/Application Support/sshm/sync-age.key
+age_identity = "~/.config/sshm/sync-age.key"
+```
+
+It needs [`age`](https://age-encryption.org) on PATH (`brew install age`,
+`apt install age`). `sshm sync setup` offers to generate the identity; copy that
+one file to every machine that syncs the repo, the way you would an SSH key —
+without it they cannot read what this machine pushes.
+
+**sshm always shows you the resolved path**, because a `~` that expands
+somewhere unexpected is the easiest way to end up with a key sshm never opens.
+The Settings tab prints it under the field (green when the file is there, amber
+when it is missing and encryption is on), `sshm sync setup` echoes it back
+before generating anything, and `sshm sync status` reports it:
+
+```
+Encryption  : age, identity /home/you/.config/sshm/sync-age.key
+```
+
+Three things worth knowing:
+
+- **Your local files stay unencrypted.** This protects what leaves the machine,
+  not what sits on it. `host.json` on your own disk is unchanged.
+- **Turning it on is a non-event.** Decryption is decided by looking at the
+  blob, not at your settings, so history written before you switched it on
+  still reads back. Turning it off again is equally undramatic.
+- **It never falls back to cleartext.** If `age` is missing or the identity is
+  unusable, the run aborts. `sshm sync status` says so before you find out the
+  hard way.
 
 **How conflicts resolve.** Hosts and clusters are merged *entry by entry*
 against the last state you synced, so a host added on the laptop and another
@@ -366,6 +421,8 @@ on_exit = true
 items = ["hosts", "kluster", "theme"]   # add "settings" to sync those too
 conflict = "prefer_local"  # or "prefer_remote"
 strict_host_key_checking = false
+encrypt = false            # seal the payload with `age` before committing
+age_identity = ""          # the identity to encrypt to / decrypt with
 ```
 
 Sync shells out to your own `git`, so your `~/.ssh/config`, agent and proxy
@@ -435,6 +492,7 @@ crates/sshm-core/src/        # the engine — no rendering, no event loop
 │   └── db.rs                #   kluster.json + bootstrap from kubeconfig + incus remotes
 └── sync/                    # git-over-SSH config sync
     ├── engine.rs            #   the run: pull, merge, push
+    ├── crypt.rs             #   optional `age` encryption at the git boundary
     ├── git.rs               #   git plumbing over an SSH key
     ├── merge.rs             #   entry-by-entry three-way merge
     ├── lock.rs              #   cross-process O_EXCL lock

@@ -31,6 +31,7 @@
 //! }
 //! ```
 
+pub mod crypt;
 pub mod engine;
 pub mod git;
 pub mod lock;

@@ -112,6 +112,9 @@ pub fn handle_settings_tab(
                             app_config.sync.branch = settings_state.sync_branch.trim().to_string();
                             app_config.sync.on_start = settings_state.sync_on_start;
                             app_config.sync.on_exit = settings_state.sync_on_exit;
+                            app_config.sync.encrypt = settings_state.sync_encrypt;
+                            app_config.sync.age_identity =
+                                settings_state.sync_age_identity.trim().to_string();
                             let minutes = settings_state
                                 .sync_interval_min
                                 .trim()

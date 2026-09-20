@@ -96,6 +96,7 @@ pub fn preflight(cfg: &SyncConfig) -> Result<()> {
             bail!("ssh key {key} does not exist");
         }
     }
+    super::crypt::preflight(cfg)?;
     Ok(())
 }
 
@@ -172,10 +173,26 @@ fn attempt_sync(
         let file = item.file_name();
         let local_disk = std::fs::read_to_string(item.local_path()).ok();
         let local_repo = local_disk.as_deref().map(|t| to_repo(item, t));
-        let base = base_rev.as_deref().and_then(|rev| git.show_file(rev, file));
-        let remote = remote_commit
+        // Everything read back from the repo goes through `unseal` first: the
+        // merge below reconciles entry by entry, so it has to see structure,
+        // not a blob. A plaintext blob passes through untouched.
+        let base = match base_rev.as_deref().and_then(|rev| git.show_file(rev, file)) {
+            Some(blob) => Some(
+                super::crypt::unseal(cfg, &blob)
+                    .with_context(|| format!("decrypting {file} at the merge base"))?,
+            ),
+            None => None,
+        };
+        let remote = match remote_commit
             .as_deref()
-            .and_then(|rev| git.show_file(rev, file));
+            .and_then(|rev| git.show_file(rev, file))
+        {
+            Some(blob) => Some(
+                super::crypt::unseal(cfg, &blob)
+                    .with_context(|| format!("decrypting {file} from the remote"))?,
+            ),
+            None => None,
+        };
 
         let outcome = merge_item(
             item,
@@ -232,7 +249,11 @@ fn attempt_sync(
         let path = git.dir().join(p.item.file_name());
         match &p.merged {
             Some(text) => {
-                let mut body = text.clone();
+                // The last step before anything reaches a commit. `seal` fails
+                // rather than falling back to cleartext, and the `?` here is
+                // what makes that failure abort the run.
+                let mut body = super::crypt::seal(cfg, text)
+                    .with_context(|| format!("encrypting {}", p.item.file_name()))?;
                 if !body.ends_with('\n') {
                     body.push('\n');
                 }
@@ -302,6 +323,49 @@ fn settings_with_sync(text: &str, keep: &SyncConfig) -> String {
 
 #[cfg(test)]
 mod tests {
+    // ---- encryption is wired into the gate, not just available -------------
+
+    fn encrypting_cfg(identity: &str) -> SyncConfig {
+        SyncConfig {
+            enabled: true,
+            repo_url: "git@example.com:me/cfg.git".into(),
+            encrypt: true,
+            age_identity: identity.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn preflight_refuses_a_run_that_could_not_encrypt() {
+        // The property that matters: when the user asked for encryption and it
+        // cannot be delivered, the run stops *before* anything is written or
+        // pushed — never falling back to cleartext.
+        if !Git::is_available() {
+            eprintln!("skipping: git is not on PATH");
+            return;
+        }
+        for identity in ["", "/nonexistent/age.key"] {
+            let err = preflight(&encrypting_cfg(identity))
+                .expect_err("encryption on without a usable identity must not pass preflight");
+            let text = format!("{err:#}");
+            assert!(
+                text.contains("age") || text.contains("identity") || text.contains("encrypt"),
+                "the error should name the encryption problem, got: {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn preflight_is_unaffected_when_encryption_is_off() {
+        if !Git::is_available() {
+            eprintln!("skipping: git is not on PATH");
+            return;
+        }
+        let mut cfg = encrypting_cfg("/nonexistent/age.key");
+        cfg.encrypt = false;
+        assert!(preflight(&cfg).is_ok(), "{:?}", preflight(&cfg));
+    }
+
     use super::*;
     use crate::config::settings::SyncMode;
 

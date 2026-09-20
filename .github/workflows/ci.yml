@@ -16,6 +16,11 @@ jobs:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
 
+      # Sync encryption shells out to `age`. Installing it here is what turns
+      # the round-trip tests in `sync::crypt` from skipped into real coverage.
+      - name: Install age
+        run: sudo apt-get update && sudo apt-get install -y age
+
       # Formatting first: it fails in milliseconds and its diff is noise in a
       # review, so there is no point compiling before it is settled.
       - name: Format

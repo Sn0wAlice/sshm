@@ -26,6 +26,8 @@ pub struct SettingsFormState {
     pub sync_interval_min: String,
     pub sync_on_start: bool,
     pub sync_on_exit: bool,
+    pub sync_encrypt: bool,
+    pub sync_age_identity: String,
     pub selected_field: usize,
     pub dirty: bool,
 }
@@ -52,6 +54,11 @@ const SYNC_BRANCH_FIELD: usize = 14;
 const SYNC_INTERVAL_FIELD: usize = 15;
 const SYNC_ON_START_FIELD: usize = 16;
 const SYNC_ON_EXIT_FIELD: usize = 17;
+/// Encrypt the synced payload with `age`. Only affects what leaves the
+/// machine — the local files stay plain.
+const SYNC_ENCRYPT_FIELD: usize = 18;
+/// Path to the age identity backing [`SYNC_ENCRYPT_FIELD`].
+const SYNC_AGE_IDENTITY_FIELD: usize = 19;
 
 /// Settings grouped into labelled sections — drives the form layout.
 struct Section {
@@ -95,6 +102,8 @@ const SECTIONS: &[Section] = &[
             SYNC_INTERVAL_FIELD,
             SYNC_ON_START_FIELD,
             SYNC_ON_EXIT_FIELD,
+            SYNC_ENCRYPT_FIELD,
+            SYNC_AGE_IDENTITY_FIELD,
         ],
     },
 ];
@@ -120,6 +129,8 @@ fn field_label(i: usize) -> &'static str {
         SYNC_INTERVAL_FIELD => "Auto-sync every (min, 0 = manual)",
         SYNC_ON_START_FIELD => "Sync on start",
         SYNC_ON_EXIT_FIELD => "Sync on exit",
+        SYNC_ENCRYPT_FIELD => "Encrypt what is pushed (age)",
+        SYNC_AGE_IDENTITY_FIELD => "age identity file",
         _ => "",
     }
 }
@@ -148,13 +159,15 @@ impl SettingsFormState {
             },
             sync_on_start: config.sync.on_start,
             sync_on_exit: config.sync.on_exit,
+            sync_encrypt: config.sync.encrypt,
+            sync_age_identity: config.sync.age_identity.clone(),
             selected_field: 0,
             dirty: false,
         }
     }
 
     pub fn fields_count() -> usize {
-        18
+        20
     }
 
     pub fn next_field(&mut self) {
@@ -183,6 +196,7 @@ impl SettingsFormState {
             SYNC_KEY_FIELD => Some(&mut self.sync_ssh_key),
             SYNC_BRANCH_FIELD => Some(&mut self.sync_branch),
             SYNC_INTERVAL_FIELD => Some(&mut self.sync_interval_min),
+            SYNC_AGE_IDENTITY_FIELD => Some(&mut self.sync_age_identity),
             _ => None,
         }
     }
@@ -246,6 +260,11 @@ impl SettingsFormState {
             }
             SYNC_ON_EXIT_FIELD => {
                 self.sync_on_exit = !self.sync_on_exit;
+                self.dirty = true;
+                true
+            }
+            SYNC_ENCRYPT_FIELD => {
+                self.sync_encrypt = !self.sync_encrypt;
                 self.dirty = true;
                 true
             }
@@ -318,6 +337,7 @@ fn is_toggle(i: usize) -> bool {
             | SYNC_ENABLED_FIELD
             | SYNC_ON_START_FIELD
             | SYNC_ON_EXIT_FIELD
+            | SYNC_ENCRYPT_FIELD
     )
 }
 
@@ -336,6 +356,7 @@ fn settings_text_value(state: &SettingsFormState, i: usize) -> String {
         SYNC_KEY_FIELD => state.sync_ssh_key.clone(),
         SYNC_BRANCH_FIELD => state.sync_branch.clone(),
         SYNC_INTERVAL_FIELD => state.sync_interval_min.clone(),
+        SYNC_AGE_IDENTITY_FIELD => state.sync_age_identity.clone(),
         _ => String::new(),
     }
 }
@@ -359,6 +380,7 @@ fn field_line(state: &SettingsFormState, i: usize, theme: &Theme) -> Line<'stati
             SYNC_ENABLED_FIELD => state.sync_enabled,
             SYNC_ON_START_FIELD => state.sync_on_start,
             SYNC_ON_EXIT_FIELD => state.sync_on_exit,
+            SYNC_ENCRYPT_FIELD => state.sync_encrypt,
             _ => state.notifications_enabled,
         };
         let val = if on { "[x] on" } else { "[ ] off" };
@@ -392,6 +414,63 @@ fn field_line(state: &SettingsFormState, i: usize, theme: &Theme) -> Line<'stati
             ),
         ])
     }
+}
+
+/// An extra line rendered under a field, for values whose literal text is not
+/// the whole story.
+///
+/// The age identity is the case that needs it: the field holds whatever you
+/// typed — usually with a `~` — while what sshm actually opens is the expanded
+/// path. Those differ on macOS, where sshm's own config lives under
+/// `~/Library/Application Support/sshm` rather than `~/.config/sshm`, so a
+/// plausible-looking `~/.config/sshm/sync-age.key` can point somewhere sshm
+/// never looks. Showing the resolved path — and whether a file is actually
+/// there — turns that from a silent misconfiguration into something visible.
+fn field_note(state: &SettingsFormState, i: usize, theme: &Theme) -> Option<Line<'static>> {
+    if i != SYNC_AGE_IDENTITY_FIELD {
+        return None;
+    }
+    let raw = state.sync_age_identity.trim();
+    let (text, color) = if raw.is_empty() {
+        if state.sync_encrypt {
+            (
+                "no identity set — encryption will refuse to run".to_string(),
+                theme.warning,
+            )
+        } else {
+            (
+                format!(
+                    "default if left empty: {}",
+                    default_identity_path().display()
+                ),
+                theme.muted,
+            )
+        }
+    } else {
+        let resolved = std::path::PathBuf::from(shellexpand::tilde(raw).to_string());
+        if resolved.exists() {
+            (format!("→ {}", resolved.display()), theme.success)
+        } else {
+            (
+                format!("→ {} (missing)", resolved.display()),
+                if state.sync_encrypt {
+                    theme.warning
+                } else {
+                    theme.muted
+                },
+            )
+        }
+    };
+    Some(Line::from(Span::styled(
+        format!("   {:<32}{}", "", text),
+        Style::default().fg(color),
+    )))
+}
+
+/// Where sshm suggests putting the age identity: inside its own config
+/// directory, whatever that resolves to on this platform.
+pub fn default_identity_path() -> std::path::PathBuf {
+    crate::config::path::config_dir().join("sync-age.key")
 }
 
 pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, theme: &Theme) {
@@ -437,6 +516,9 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
                 selected_line = lines.len();
             }
             lines.push(field_line(state, fi, theme));
+            if let Some(note) = field_note(state, fi, theme) {
+                lines.push(note);
+            }
         }
     }
 
@@ -488,5 +570,124 @@ pub fn draw_settings_tab(f: &mut Frame, area: Rect, state: &SettingsFormState, t
             inner,
             &mut sb_state,
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn state() -> SettingsFormState {
+        SettingsFormState::from_config(&AppConfig::default())
+    }
+
+    #[test]
+    fn the_suggested_identity_lives_in_sshms_own_config_dir() {
+        // Not a hard-coded `~/.config/sshm`: that is right on Linux and wrong
+        // on macOS, and a key written to the wrong directory is a sync that
+        // refuses to run for a reason nobody can see.
+        let p = default_identity_path();
+        assert!(p.is_absolute(), "{}", p.display());
+        assert_eq!(p.file_name().unwrap(), "sync-age.key");
+        assert_eq!(p.parent().unwrap(), crate::config::path::config_dir());
+    }
+
+    #[test]
+    fn the_identity_row_shows_where_the_path_actually_lands() {
+        let mut s = state();
+        s.sync_age_identity = "~/some/where/id.key".into();
+        let note = field_note(
+            &s,
+            SYNC_AGE_IDENTITY_FIELD,
+            &crate::tui::theme::get_global_theme(),
+        )
+        .expect("the identity row carries a note");
+        let text: String = note.spans.iter().map(|sp| sp.content.to_string()).collect();
+        assert!(!text.contains('~'), "the tilde must be resolved: {text}");
+        assert!(text.contains("some/where/id.key"), "{text}");
+    }
+
+    #[test]
+    fn an_empty_identity_points_at_the_default() {
+        let mut s = state();
+        s.sync_age_identity = String::new();
+        s.sync_encrypt = false;
+        let note = field_note(
+            &s,
+            SYNC_AGE_IDENTITY_FIELD,
+            &crate::tui::theme::get_global_theme(),
+        )
+        .expect("note");
+        let text: String = note.spans.iter().map(|sp| sp.content.to_string()).collect();
+        assert!(
+            text.contains(&default_identity_path().display().to_string()),
+            "{text}"
+        );
+    }
+
+    #[test]
+    fn encryption_without_an_identity_is_called_out() {
+        let mut s = state();
+        s.sync_age_identity = String::new();
+        s.sync_encrypt = true;
+        let note = field_note(
+            &s,
+            SYNC_AGE_IDENTITY_FIELD,
+            &crate::tui::theme::get_global_theme(),
+        )
+        .expect("note");
+        let text: String = note.spans.iter().map(|sp| sp.content.to_string()).collect();
+        assert!(text.contains("refuse"), "{text}");
+    }
+
+    #[test]
+    fn a_missing_file_is_flagged() {
+        let mut s = state();
+        s.sync_age_identity = "/nonexistent/age.key".into();
+        let note = field_note(
+            &s,
+            SYNC_AGE_IDENTITY_FIELD,
+            &crate::tui::theme::get_global_theme(),
+        )
+        .expect("note");
+        let text: String = note.spans.iter().map(|sp| sp.content.to_string()).collect();
+        assert!(text.contains("missing"), "{text}");
+    }
+
+    #[test]
+    fn only_the_identity_row_carries_a_note() {
+        let s = state();
+        let theme = crate::tui::theme::get_global_theme();
+        for i in 0..SettingsFormState::fields_count() {
+            if i == SYNC_AGE_IDENTITY_FIELD {
+                continue;
+            }
+            assert!(field_note(&s, i, &theme).is_none(), "field {i} grew a note");
+        }
+    }
+
+    #[test]
+    fn the_encrypt_row_is_a_toggle_and_the_identity_row_is_not() {
+        assert!(is_toggle(SYNC_ENCRYPT_FIELD));
+        assert!(!is_toggle(SYNC_AGE_IDENTITY_FIELD));
+        let mut s = state();
+        s.selected_field = SYNC_AGE_IDENTITY_FIELD;
+        assert!(
+            s.active_value_mut().is_some(),
+            "the identity row is editable"
+        );
+    }
+
+    #[test]
+    fn both_sync_encryption_rows_are_reachable() {
+        for f in SECTIONS.iter().flat_map(|s| s.fields) {
+            if *f == SYNC_ENCRYPT_FIELD {
+                assert!(SECTIONS
+                    .iter()
+                    .any(|s| s.fields.contains(&SYNC_AGE_IDENTITY_FIELD)));
+                return;
+            }
+        }
+        panic!("the encrypt row is not in any section, so it can never be selected");
     }
 }
