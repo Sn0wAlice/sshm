@@ -185,6 +185,7 @@ Config sync (git over SSH):"
             println!("  ←/→  switch tabs (Hosts | Kluster | Identities | Settings | Theme | Help)");
             println!("  In Kluster: Enter shell, l logs(-f), r refresh, n add, d delete/unlink");
             println!();
+            println!("Version:   sshm version | --version | -V");
             println!("Locale:    SSHM_LANG=en|fr  (default = locale, fallback en)");
             // Resolved rather than written out: the literal path differs per
             // OS, and printing the wrong one is how people end up editing a
@@ -194,13 +195,25 @@ Config sync (git over SSH):"
                 sshm_core::config::path::config_dir().display()
             );
         }
-        _ => {
+        Some("version") | Some("--version") | Some("-V") => {
+            println!("sshm {}", env!("CARGO_PKG_VERSION"));
+        }
+        None => {
             // The tunnel manager outlives individual `run_tui` calls so that
             // background tunnels survive connecting to a host and returning.
             let mut tunnels = sshm::tui::app::tunnels::TunnelManager::new();
             loop {
                 run_tui(&mut db, &mut tunnels)
             }
+        }
+        Some(other) => {
+            // Anything unrecognised used to fall through to the TUI, so
+            // `sshm --version` and `sshm --josn` both silently opened it —
+            // the wrong answer for a typo'd flag in a script, and the same
+            // reason `sshm list` refuses an unknown flag.
+            eprintln!("unknown command: {other}");
+            eprintln!("Run `sshm help` for the list, or `sshm` for the TUI.");
+            std::process::exit(2);
         }
     }
 }

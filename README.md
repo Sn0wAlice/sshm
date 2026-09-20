@@ -179,6 +179,7 @@ sshm sync status --json                  # the same status as a JSON object
 sshm doctor [--json]                     # what's set up, what's missing, what's wrong
 sshm completions bash|zsh|fish           # print a shell completion script
 sshm help                                # full CLI reference
+sshm version                             # print the version (--version, -V)
 ```
 
 ### Diagnostics

@@ -53,6 +53,7 @@ pub const COMMANDS: &[&str] = &[
     "export",
     "load_local_conf",
     "help",
+    "version",
 ];
 
 /// Subcommands that take a saved host name as their first argument.
@@ -108,7 +109,7 @@ _sshm() {
     cmd="${COMP_WORDS[1]}"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=($(compgen -W "list connect create edit delete tag add-identity tunnel sync doctor completions export load_local_conf help" -- "$cur"))
+        COMPREPLY=($(compgen -W "list connect create edit delete tag add-identity tunnel sync doctor completions export load_local_conf help version" -- "$cur"))
         return
     fi
 
@@ -177,6 +178,7 @@ _sshm() {
         'export:Export the DB as an ssh config'
         'load_local_conf:Import hosts from ~/.ssh/config'
         'help:Show the CLI reference'
+        'version:Print the sshm version'
     )
 
     _arguments -C '1:command:->cmd' '*::arg:->args'
@@ -227,6 +229,7 @@ complete -c sshm -n __fish_use_subcommand -a completions -d 'Print a shell compl
 complete -c sshm -n __fish_use_subcommand -a export -d 'Export the DB as an ssh config'
 complete -c sshm -n __fish_use_subcommand -a load_local_conf -d 'Import hosts from ~/.ssh/config'
 complete -c sshm -n __fish_use_subcommand -a help -d 'Show the CLI reference'
+complete -c sshm -n __fish_use_subcommand -a version -d 'Print the sshm version'
 
 complete -c sshm -n '__fish_seen_subcommand_from connect c add-identity' -a '(__sshm_hosts)' -d 'saved host'
 complete -c sshm -n '__fish_seen_subcommand_from tag' -a 'add del'

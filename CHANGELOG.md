@@ -5,44 +5,6 @@ All notable changes to **sshm** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [2.1.2] - 2026-08-28
-
-### Added
-
-- **Config sync over git (`sshm sync`).** Point sshm at a private git
-  repository of your own and an SSH key, and it keeps `host.json`,
-  `kluster.json`, `theme.toml` and (opt-in) `settings.toml` in step across
-  machines. `sshm sync setup` walks through repo, key, branch, what travels,
-  the schedule and the conflict policy; `sshm sync status` shows what is
-  configured, when it last ran and who holds the lock; `sshm sync pull` /
-  `push` move data one way only. Authentication is SSH-key based — HTTPS
-  remotes are rejected up front, and sync never prompts for a passphrase
-  (a key that needs one must be in your ssh-agent).
-- **Entry-level merging.** Hosts and clusters are reconciled entry by entry
-  against the last synced state, so a host added on the laptop and another
-  added on the desktop both survive, and a host deleted on one machine stays
-  deleted. Only the same entry edited on both sides within one window counts
-  as a conflict, resolved by the configured policy (default: this machine
-  wins).
-- **Scheduling, without stepping on itself.** Sync on a timer, when sshm
-  starts, when it exits, or from cron (`sshm sync cron` prints the crontab
-  line; `--if-due` respects the interval and stays silent when idle). Several
-  running instances — two TUIs, a cron entry — share one
-  schedule and one lock through the config directory, so exactly one of them
-  syncs each round and the others skip the tick. A lock whose process died is
-  reclaimed automatically.
-- **Settings tab section.** "Config sync (git over SSH)": enable, repository
-  URL, SSH key, branch, auto-sync interval (0 = manual) and the on-start /
-  on-exit toggles. The rest (which files travel, the conflict policy) lives in
-  `settings.toml` and `sshm sync setup`.
-
-### Changed
-
-- **The TUI now picks up external changes to `settings.toml`,** not just to
-  `host.json` — a background sync that rewrites the settings no longer gets
-  overwritten by the running instance's stale copy on the next Save. Unsaved
-  edits in the Settings tab still win until you save or press Esc.
-
 ## [2.2.0] - 2026-09-20
 
 ### Added
@@ -168,6 +130,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- **`sshm --version` launched the TUI.** So did every other unrecognised
+  argument: `sshm --josn` opened the interface instead of saying anything, and
+  a typo'd flag in a script was indistinguishable from success. There is now a
+  `version` command (`sshm version`, `--version`, `-V`), and an argument sshm
+  does not know is an error on stderr with exit code 2 — the same treatment
+  `sshm list` already gave an unknown flag. Bare `sshm` still opens the TUI.
 - **Mosh broke on any ssh argument containing a space.** The ssh flags are
   passed to mosh as one `--ssh=` string that mosh splits again on whitespace,
   so an identity path like `~/.ssh/my keys/id_ed25519` arrived as two
@@ -259,6 +227,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   host differently from an interactive connect. All three call sites — the
   interactive connection, background tunnels and fan-out — now go through a
   single `build_ssh_opts`.
+
+## [2.1.2] - 2026-08-28
+
+### Added
+
+- **Config sync over git (`sshm sync`).** Point sshm at a private git
+  repository of your own and an SSH key, and it keeps `host.json`,
+  `kluster.json`, `theme.toml` and (opt-in) `settings.toml` in step across
+  machines. `sshm sync setup` walks through repo, key, branch, what travels,
+  the schedule and the conflict policy; `sshm sync status` shows what is
+  configured, when it last ran and who holds the lock; `sshm sync pull` /
+  `push` move data one way only. Authentication is SSH-key based — HTTPS
+  remotes are rejected up front, and sync never prompts for a passphrase
+  (a key that needs one must be in your ssh-agent).
+- **Entry-level merging.** Hosts and clusters are reconciled entry by entry
+  against the last synced state, so a host added on the laptop and another
+  added on the desktop both survive, and a host deleted on one machine stays
+  deleted. Only the same entry edited on both sides within one window counts
+  as a conflict, resolved by the configured policy (default: this machine
+  wins).
+- **Scheduling, without stepping on itself.** Sync on a timer, when sshm
+  starts, when it exits, or from cron (`sshm sync cron` prints the crontab
+  line; `--if-due` respects the interval and stays silent when idle). Several
+  running instances — two TUIs, a cron entry — share one
+  schedule and one lock through the config directory, so exactly one of them
+  syncs each round and the others skip the tick. A lock whose process died is
+  reclaimed automatically.
+- **Settings tab section.** "Config sync (git over SSH)": enable, repository
+  URL, SSH key, branch, auto-sync interval (0 = manual) and the on-start /
+  on-exit toggles. The rest (which files travel, the conflict policy) lives in
+  `settings.toml` and `sshm sync setup`.
+
+### Changed
+
+- **The TUI now picks up external changes to `settings.toml`,** not just to
+  `host.json` — a background sync that rewrites the settings no longer gets
+  overwritten by the running instance's stale copy on the next Save. Unsaved
+  edits in the Settings tab still win until you save or press Esc.
 
 ## [2.1.1] - 2026-08-21
 
