@@ -45,6 +45,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `sshm edit`, validated as `keyword=value` on the way in, shown in the detail
   panel, and written to `~/.ssh/config` by `export`. Existing `host.json`
   files load unchanged.
+- **`sshm tunnel`.** `list` shows every background tunnel across every running
+  sshm — reading the same per-instance record files the TUI dashboard writes —
+  and `stop <pid>` terminates one, with the same PID-reuse guard the TUI
+  applies before signalling anything. Read-and-stop only: starting a tunnel
+  from a command that exits immediately would leave an `ssh -N` nobody owns,
+  and the next TUI launch would reap it as an orphan.
+- **Auto-restart for background tunnels.** A per-tunnel opt-in (`Space` on the
+  new row in the port-forward form). A dropped tunnel is relaunched with a
+  growing backoff — 2s, 5s, 15s, then 30s — and given up on after 5 tries, so
+  a host that is gone for good doesn't respawn forever. A tunnel you stopped
+  yourself stays stopped, and one whose host was deleted meanwhile is dropped
+  with a notification instead of retried.
 - **The container shell is configurable.** `Enter` in the Kluster tab still
   execs `/bin/sh`, and still doesn't probe for anything nicer — the
   bash-fallback wrapper that used to live there caused more corner cases than
@@ -72,6 +84,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-command left ssh waiting indefinitely and stalled the rest of the batch.
   `ServerAliveInterval` / `ServerAliveCountMax` now bound that case too; a
   command that is genuinely still running is untouched.
+- **Background tunnels ignored per-host ssh settings.** `TunnelManager::start`
+  built its own ssh command rather than calling the engine's
+  `build_tunnel_argv`, which in turn meant the `ssh_options` added in this
+  release never reached a tunnel — contrary to what the entry above claims. The
+  foreground (`f`) tunnel path had a third copy, and `portforward.rs` a second
+  `build_forward_arg`. All of it now goes through the engine, and
+  `build_tunnel_argv` / `read_all_records` — public API that nothing had
+  called since the GUI was removed — are live code again.
 - **The Kluster worker probed remotes one at a time.** Docker remotes, Incus
   remotes and cluster apiservers are independent network round-trips, but a
   refresh pass walked them serially, so one pass cost the *sum* of their

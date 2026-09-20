@@ -131,6 +131,7 @@ mod tests {
             local_port: 5432,
             remote_port: 5432,
             remote_host: String::new(),
+            ..Default::default()
         };
         let argv = build_tunnel_argv(&host(), &t, &HashMap::new());
         assert_eq!(
@@ -147,6 +148,7 @@ mod tests {
             local_port: 1080,
             remote_port: 0,
             remote_host: String::new(),
+            ..Default::default()
         };
         let argv = build_tunnel_argv(&host(), &t, &HashMap::new());
         assert!(argv.contains(&"-D".to_string()));
@@ -178,6 +180,7 @@ mod ssh_option_tests {
             local_port: 5432,
             remote_port: 5432,
             remote_host: String::new(),
+            ..Default::default()
         };
         let argv = build_tunnel_argv(&host, &t, &HashMap::new());
         assert_eq!(argv[0], "ssh");
@@ -196,10 +199,69 @@ mod ssh_option_tests {
             local_port: 1080,
             remote_port: 0,
             remote_host: String::new(),
+            ..Default::default()
         };
         let argv = build_tunnel_argv(&host, &t, &HashMap::new());
         let fwd = argv.iter().position(|a| a == "-D").unwrap();
         let target = argv.iter().position(|a| a == "root@h").unwrap();
         assert!(fwd < target, "{argv:?}");
+    }
+}
+
+#[cfg(test)]
+mod record_tests {
+    use super::*;
+
+    #[test]
+    fn a_record_written_before_auto_restart_existed_still_parses() {
+        // The on-disk format is a contract between instances: an sshm that has
+        // not been restarted yet is still writing the old shape.
+        let old = r#"[{"pid":1234,"host_name":"web","host_display":"root@10.0.0.5:22",
+            "tunnel":{"label":"pg","kind":"Local","local_port":15432,"remote_port":5432,"remote_host":""},
+            "started":"2026-09-20T10:00:00Z"}]"#;
+        let list: Vec<TunnelRecord> = serde_json::from_str(old).expect("pre-2.2 record parses");
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].pid, 1234);
+        assert!(!list[0].tunnel.auto_restart, "defaults to off");
+    }
+
+    #[test]
+    fn a_record_round_trips_through_json() {
+        let r = TunnelRecord {
+            pid: 42,
+            host_name: "web".into(),
+            host_display: "root@10.0.0.5:22".into(),
+            tunnel: Tunnel {
+                label: "pg".into(),
+                kind: TunnelKind::Local,
+                local_port: 15432,
+                remote_port: 5432,
+                remote_host: "db".into(),
+                auto_restart: true,
+            },
+            started: "2026-09-20T10:00:00Z".into(),
+        };
+        let json = serde_json::to_string(&vec![r]).unwrap();
+        let back: Vec<TunnelRecord> = serde_json::from_str(&json).unwrap();
+        assert_eq!(back[0].pid, 42);
+        assert!(back[0].tunnel.auto_restart);
+        assert_eq!(back[0].tunnel.remote_host, "db");
+    }
+
+    #[test]
+    fn auto_restart_reaches_the_argv_path_unchanged() {
+        // It is a frontend policy: nothing about it belongs on the ssh command.
+        let h = Host { name: "web".into(), host: "h".into(), ..Default::default() };
+        let mut t = Tunnel {
+            label: String::new(),
+            kind: TunnelKind::Local,
+            local_port: 8080,
+            remote_port: 80,
+            remote_host: String::new(),
+            auto_restart: false,
+        };
+        let without = build_tunnel_argv(&h, &t, &HashMap::new());
+        t.auto_restart = true;
+        assert_eq!(build_tunnel_argv(&h, &t, &HashMap::new()), without);
     }
 }

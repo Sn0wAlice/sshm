@@ -18,7 +18,8 @@ Built for developers, sysadmins, pentesters, and homelab folks who live in a ter
 - **Host management** — add, edit, delete, tag, organize into nested folders
 - **Clone host** — `y` duplicates the selected host (tunnels included) and drops you straight into the editor
 - **Fuzzy search + prefix filters** — `tag:prod host:10.* user:ubuntu`, fzf-style scoring
-- **Tunnels** — saved per-host port forwards (local `-L`, remote `-R`, dynamic SOCKS `-D`); start them in the **background** and watch / stop them from the `t` dashboard
+- **Tunnels** — saved per-host port forwards (local `-L`, remote `-R`, dynamic SOCKS `-D`); start them in the **background** and watch / stop them from the `t` dashboard, or list and stop them from anywhere with `sshm tunnel`
+- **Auto-restart a dropped tunnel** — opt-in per tunnel; relaunched with a growing backoff and given up on after 5 tries, so a Wi-Fi blip doesn't cost you the forward
 - **Multi-hop ProxyJump** — `bastion1,bastion2`, each entry resolves against your saved hosts automatically
 - **Identity management** — push SSH public keys, generate new keys (`ed25519`, `ed25519-sk` FIDO2, `ecdsa`, `rsa`), load into `ssh-agent`
 - **ForwardAgent (`-A`) per host** — opt-in with a visible warning, badged in the list
@@ -166,6 +167,8 @@ sshm tag del <name> <tag1,tag2>          # remove tags
 sshm load_local_conf                     # import hosts from ~/.ssh/config
 sshm export [path]                       # export DB as ~/.ssh/config format
 sshm add-identity <name?> [--pub key]    # push pubkey to authorized_keys
+sshm tunnel [list]                       # background tunnels across every running instance
+sshm tunnel stop <pid>                   # terminate one tunnel by its ssh PID
 sshm sync                                # sync the config with your git repo
 sshm sync setup|status|pull|push|cron    # configure / inspect / one-way / crontab line
 sshm help                                # full CLI reference
@@ -202,7 +205,7 @@ sshm help                                # full CLI reference
 | `y` | Clone selected host (full copy, opens the editor) |
 | `Y` (Shift+y) | Copy the connection string (`user@host`) to the clipboard |
 | `d` | Delete selected host / folder |
-| `p` | Open port-forward menu — start a tunnel in the background (`f` runs it foreground) |
+| `p` | Open port-forward menu — start a tunnel in the background (`f` runs it foreground); `Space` on the *Restart automatically* row makes it come back if it drops |
 | `t` | Background-tunnels dashboard — `d`/`x` stop a tunnel, `o` open a local tunnel's URL |
 | `o` | Open the SSH session in a new terminal window |
 | `F` (Shift+f) | Host key — show the pinned vs. live fingerprint, then pin (trust), forget, or replace it |

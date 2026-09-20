@@ -21,6 +21,7 @@ use std::fs;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::Mutex;
+use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
 use ratatui::prelude::*;
@@ -28,8 +29,7 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 use serde::{Deserialize, Serialize};
 
 use crate::models::{Host, Tunnel, TunnelKind};
-use crate::ssh::proxy::resolve_proxy_jump;
-use crate::tui::ssh::portforward::build_forward_arg;
+use crate::tunnels::build_tunnel_argv;
 use crate::tui::theme::Theme;
 
 /// PIDs of every live background tunnel of *this* process. Used by
@@ -114,6 +114,9 @@ fn process_is_sshm(pid: u32) -> bool {
 
 /// True when `pid` is alive *and* looks like one of our `ssh -N` tunnels.
 /// This guards a SIGTERM against PID reuse hitting an unrelated process.
+///
+/// Public as [`pid_is_ssh_tunnel`] for the `sshm tunnel` CLI, which reads
+/// another instance's records and must apply the same guard.
 fn process_is_ssh_tunnel(pid: u32) -> bool {
     process_cmdline(pid)
         .map(|c| {
@@ -176,6 +179,22 @@ fn recover_orphans() -> usize {
 // Manager
 // ============================================================================
 
+/// How many times a dropped tunnel is relaunched before sshm stops trying.
+/// A tunnel whose local port is taken, or whose host is gone for good, would
+/// otherwise respawn forever.
+const MAX_RESTARTS: u32 = 5;
+
+/// Grace period before relaunch number `n` (1-based). Backs off so a host that
+/// is down for a minute is not hammered once per reap tick.
+fn restart_delay(attempt: u32) -> Duration {
+    Duration::from_secs(match attempt {
+        0 | 1 => 2,
+        2 => 5,
+        3 => 15,
+        _ => 30,
+    })
+}
+
 /// One running background tunnel.
 pub struct ActiveTunnel {
     pub host_name: String,
@@ -183,12 +202,26 @@ pub struct ActiveTunnel {
     pub host_display: String,
     pub tunnel: Tunnel,
     pub started: DateTime<Utc>,
+    /// Relaunches performed so far, for the backoff and the give-up rule.
+    /// Reset when the user starts the tunnel by hand.
+    pub restarts: u32,
     child: Child,
 }
 
 /// Registry of background tunnels. Owned by `main`, shared across `run_tui`.
+/// A dropped `auto_restart` tunnel waiting out its backoff.
+struct PendingRestart {
+    host_name: String,
+    tunnel: Tunnel,
+    /// 1-based relaunch number, carried onto the new child on success.
+    attempt: u32,
+    due: Instant,
+}
+
 pub struct TunnelManager {
     pub active: Vec<ActiveTunnel>,
+    /// Tunnels queued for relaunch by [`TunnelManager::restart_due`].
+    pending_restarts: Vec<PendingRestart>,
     /// Orphan tunnels cleaned from a previous crashed session — surfaced as a
     /// one-time toast by `run_tui`, which then resets this to 0.
     pub recovered_orphans: usize,
@@ -205,6 +238,7 @@ impl TunnelManager {
     pub fn new() -> Self {
         TunnelManager {
             active: Vec::new(),
+            pending_restarts: Vec::new(),
             recovered_orphans: recover_orphans(),
         }
     }
@@ -245,27 +279,12 @@ impl TunnelManager {
             }
         }
 
-        let mut cmd = Command::new("ssh");
-        cmd.arg("-N");
-        for a in build_forward_arg(tunnel) {
-            cmd.arg(a);
-        }
-        cmd.arg(format!("{}@{}", host.username, host.host))
-            .arg("-p")
-            .arg(host.port.to_string());
-        if let Some(id) = &host.identity_file {
-            if !id.is_empty() {
-                cmd.arg("-i").arg(id);
-            }
-        }
-        if let Some(j) = &host.proxy_jump {
-            if let Some(resolved) = resolve_proxy_jump(j, all_hosts) {
-                cmd.arg("-J").arg(resolved);
-            }
-        }
-        if host.forward_agent {
-            cmd.arg("-A");
-        }
+        // Same argv builder the engine uses, so a background tunnel reaches a
+        // host exactly the way an interactive connection does — identity,
+        // ProxyJump chain, agent forwarding and per-host `ssh_options`.
+        let argv = build_tunnel_argv(host, tunnel, all_hosts);
+        let mut cmd = Command::new(&argv[0]);
+        cmd.args(&argv[1..]);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
@@ -277,6 +296,7 @@ impl TunnelManager {
             host_display: format!("{}@{}:{}", host.username, host.host, host.port),
             tunnel: tunnel.clone(),
             started: Utc::now(),
+            restarts: 0,
             child,
         });
         self.persist();
@@ -285,22 +305,94 @@ impl TunnelManager {
 
     /// Drop tunnels whose `ssh` process has exited on its own (port clash,
     /// connection lost, remote closed it…) and desktop-notify for each.
+    ///
+    /// A tunnel marked `auto_restart` is queued for relaunch instead of being
+    /// announced as closed — see [`Self::restart_due`], which the main loop
+    /// calls with the host DB it needs to rebuild the command.
     pub fn reap(&mut self) {
         let mut closed: Vec<String> = Vec::new();
+        let mut pending: Vec<PendingRestart> = Vec::new();
         self.active.retain_mut(|t| match t.child.try_wait() {
             Ok(Some(_)) => {
                 unregister_pid(t.child.id());
-                closed.push(format!("{}  ({})", tunnel_route(&t.tunnel), t.host_name));
+                if t.tunnel.auto_restart && t.restarts < MAX_RESTARTS {
+                    pending.push(PendingRestart {
+                        host_name: t.host_name.clone(),
+                        tunnel: t.tunnel.clone(),
+                        attempt: t.restarts + 1,
+                        due: Instant::now() + restart_delay(t.restarts + 1),
+                    });
+                } else {
+                    let mut msg = format!("{}  ({})", tunnel_route(&t.tunnel), t.host_name);
+                    if t.tunnel.auto_restart {
+                        msg.push_str(&format!(" — gave up after {MAX_RESTARTS} restarts"));
+                    }
+                    closed.push(msg);
+                }
                 false
             }
             _ => true,
         });
-        if !closed.is_empty() {
+        self.pending_restarts.extend(pending);
+        if !closed.is_empty() || !self.pending_restarts.is_empty() {
             self.persist();
-            for c in &closed {
-                crate::os::notify("SSHM — tunnel closed", c);
+        }
+        for c in &closed {
+            crate::os::notify("SSHM — tunnel closed", c);
+        }
+    }
+
+    /// Relaunch every queued tunnel whose backoff has elapsed. Returns the
+    /// routes brought back up, for a toast.
+    ///
+    /// Split from [`Self::reap`] because a relaunch needs the host DB, which
+    /// the reap path (called from several places) does not carry.
+    pub fn restart_due(&mut self, all_hosts: &HashMap<String, Host>) -> Vec<String> {
+        if self.pending_restarts.is_empty() {
+            return Vec::new();
+        }
+        let now = Instant::now();
+        let (ready, waiting): (Vec<_>, Vec<_>) =
+            std::mem::take(&mut self.pending_restarts)
+                .into_iter()
+                .partition(|p| p.due <= now);
+        self.pending_restarts = waiting;
+
+        let mut revived = Vec::new();
+        for p in ready {
+            let Some(host) = all_hosts.get(&p.host_name) else {
+                // The host was deleted while the tunnel was down — nothing to
+                // reconnect to, so stop trying.
+                crate::os::notify(
+                    "SSHM — tunnel not restarted",
+                    &format!("{} ({} no longer exists)", tunnel_route(&p.tunnel), p.host_name),
+                );
+                continue;
+            };
+            match self.start(host, &p.tunnel, all_hosts) {
+                Ok(()) => {
+                    if let Some(t) = self.active.last_mut() {
+                        t.restarts = p.attempt;
+                    }
+                    revived.push(tunnel_route(&p.tunnel));
+                }
+                Err(_) if p.attempt < MAX_RESTARTS => {
+                    // Still failing (host down, port busy) — back off further.
+                    self.pending_restarts.push(PendingRestart {
+                        due: Instant::now() + restart_delay(p.attempt + 1),
+                        attempt: p.attempt + 1,
+                        ..p
+                    });
+                }
+                Err(e) => {
+                    crate::os::notify(
+                        "SSHM — tunnel not restarted",
+                        &format!("{} — {}", tunnel_route(&p.tunnel), e),
+                    );
+                }
             }
         }
+        revived
     }
 
     /// Kill and forget the tunnel at `idx`.
@@ -478,4 +570,129 @@ pub fn draw_tunnels_popup(
             .style(Style::default().fg(theme.muted)),
         chunks[1],
     );
+}
+
+/// Whether `pid` is a live `ssh -N` started by sshm. Same guard the TUI
+/// applies before signalling anything.
+pub fn pid_is_ssh_tunnel(pid: u32) -> bool {
+    process_is_ssh_tunnel(pid)
+}
+
+/// SIGTERM `pid`, but only when it still looks like one of our tunnels.
+/// Returns whether the signal was sent.
+pub fn terminate_tunnel_pid(pid: u32) -> bool {
+    if !process_is_ssh_tunnel(pid) {
+        return false;
+    }
+    // SAFETY: `kill` with SIGTERM on a PID we just verified is one of our own
+    // `ssh -N` children — the same call and the same guard as `kill_all`.
+    unsafe {
+        libc::kill(pid as i32, libc::SIGTERM);
+    }
+    true
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn tunnel(kind: TunnelKind, local: u16) -> Tunnel {
+        Tunnel {
+            label: String::new(),
+            kind,
+            local_port: local,
+            remote_port: 5432,
+            remote_host: String::new(),
+            auto_restart: false,
+        }
+    }
+
+    #[test]
+    fn the_backoff_grows_and_then_plateaus() {
+        // A host that is down for a while must not be retried once per tick,
+        // but the delay has to stop growing or the last attempt never lands.
+        let delays: Vec<u64> = (1..=6).map(|n| restart_delay(n).as_secs()).collect();
+        assert_eq!(delays, vec![2, 5, 15, 30, 30, 30]);
+        for pair in delays.windows(2) {
+            assert!(pair[1] >= pair[0], "the backoff must never shrink");
+        }
+    }
+
+    #[test]
+    fn the_first_restart_is_not_instant() {
+        // Relaunching within the same reap tick would spin on a port clash.
+        assert!(restart_delay(1) >= Duration::from_secs(1));
+        assert!(restart_delay(0) >= Duration::from_secs(1));
+    }
+
+    #[test]
+    fn the_give_up_window_is_minutes_not_hours() {
+        // How long a dropped tunnel keeps being retried before sshm stops.
+        // Pinning the total documents the behaviour instead of leaving it an
+        // emergent property of two constants that can drift apart.
+        let total: u64 = (1..=MAX_RESTARTS).map(|n| restart_delay(n).as_secs()).sum();
+        assert_eq!(total, 82, "≈1min20 of retries before giving up");
+    }
+
+    #[test]
+    fn same_route_ignores_the_label() {
+        // Two tunnels that forward the same thing are the same tunnel, even if
+        // the user named them differently — that is what blocks a relaunch.
+        let mut a = tunnel(TunnelKind::Local, 8080);
+        let mut b = a.clone();
+        a.label = "one".into();
+        b.label = "two".into();
+        assert!(same_route(&a, &b));
+        b.local_port = 8081;
+        assert!(!same_route(&a, &b));
+    }
+
+    #[test]
+    fn same_route_distinguishes_kinds_on_the_same_port() {
+        let a = tunnel(TunnelKind::Local, 8080);
+        let b = tunnel(TunnelKind::Remote, 8080);
+        assert!(!same_route(&a, &b));
+    }
+
+    #[test]
+    fn auto_restart_does_not_affect_route_identity() {
+        let a = tunnel(TunnelKind::Local, 8080);
+        let mut b = a.clone();
+        b.auto_restart = true;
+        assert!(same_route(&a, &b), "it is a policy, not part of the route");
+    }
+
+    #[test]
+    fn the_route_summary_names_what_is_forwarded() {
+        assert_eq!(tunnel_route(&tunnel(TunnelKind::Dynamic, 1080)), "SOCKS5 on :1080");
+        assert_eq!(
+            tunnel_route(&tunnel(TunnelKind::Local, 15432)),
+            ":15432 → localhost:5432"
+        );
+        let mut t = tunnel(TunnelKind::Local, 15432);
+        t.remote_host = "db.internal".into();
+        assert_eq!(tunnel_route(&t), ":15432 → db.internal:5432");
+    }
+
+    #[test]
+    fn uptime_gains_an_hours_field_only_when_needed() {
+        assert_eq!(fmt_uptime(0), "00:00");
+        assert_eq!(fmt_uptime(65), "01:05");
+        assert_eq!(fmt_uptime(3600), "01:00:00");
+        assert_eq!(fmt_uptime(3661), "01:01:01");
+    }
+
+    #[test]
+    fn a_dead_pid_is_never_signalled() {
+        // The guard against PID reuse: PID 0 and an absurd PID are not ours.
+        assert!(!pid_is_ssh_tunnel(0));
+        assert!(!terminate_tunnel_pid(0));
+        assert!(!pid_is_ssh_tunnel(u32::MAX));
+    }
+
+    #[test]
+    fn our_own_process_is_not_mistaken_for_a_tunnel() {
+        // The test binary is alive but is not an `ssh -N`.
+        assert!(!pid_is_ssh_tunnel(std::process::id()));
+    }
 }

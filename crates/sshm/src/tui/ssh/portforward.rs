@@ -13,146 +13,10 @@ use ratatui::{
     Terminal,
 };
 use crate::models::{Host, Tunnel, TunnelKind};
-use crate::ssh::proxy::resolve_proxy_jump;
+use crate::tunnels::build_tunnel_argv;
 use crate::tui::theme;
 use crate::tui::ssh::modal::centered_rect;
-
-// ============================================================================
-// Form state
-// ============================================================================
-
-struct PortForwardForm {
-    kind: TunnelKind,
-    local_port: String,
-    remote_host: String,
-    remote_port: String,
-    label: String,
-    save: bool,
-    selected_field: usize,
-    error: Option<String>,
-}
-
-impl PortForwardForm {
-    fn new() -> Self {
-        Self {
-            kind: TunnelKind::Local,
-            local_port: String::new(),
-            remote_host: String::new(),
-            remote_port: String::new(),
-            label: String::new(),
-            save: false,
-            selected_field: 0,
-            error: None,
-        }
-    }
-
-    fn from_existing(t: &Tunnel) -> Self {
-        Self {
-            kind: t.kind,
-            local_port: t.local_port.to_string(),
-            remote_host: t.remote_host.clone(),
-            remote_port: if t.kind == TunnelKind::Dynamic { String::new() } else { t.remote_port.to_string() },
-            label: t.label.clone(),
-            save: true,
-            selected_field: 0,
-            error: None,
-        }
-    }
-
-    /// Field layout depends on kind. Returns the slice of field indices currently shown.
-    /// Order:
-    ///   0: kind selector
-    ///   1: local port
-    ///   2: remote host (Local/Remote only)
-    ///   3: remote port (Local/Remote only)
-    ///   4: label
-    ///   5: save toggle
-    ///   6: start button
-    fn visible_fields(&self) -> Vec<usize> {
-        match self.kind {
-            TunnelKind::Dynamic => vec![0, 1, 4, 5, 6],
-            _ => vec![0, 1, 2, 3, 4, 5, 6],
-        }
-    }
-
-    fn next_field(&mut self) {
-        let visible = self.visible_fields();
-        let idx = visible.iter().position(|&f| f == self.selected_field).unwrap_or(0);
-        self.selected_field = visible[(idx + 1) % visible.len()];
-    }
-
-    fn prev_field(&mut self) {
-        let visible = self.visible_fields();
-        let idx = visible.iter().position(|&f| f == self.selected_field).unwrap_or(0);
-        self.selected_field = visible[(idx + visible.len() - 1) % visible.len()];
-    }
-
-    fn cycle_kind(&mut self, forward: bool) {
-        let order = [TunnelKind::Local, TunnelKind::Remote, TunnelKind::Dynamic];
-        let idx = order.iter().position(|k| *k == self.kind).unwrap_or(0);
-        let next = if forward {
-            (idx + 1) % order.len()
-        } else {
-            (idx + order.len() - 1) % order.len()
-        };
-        self.kind = order[next];
-        // If we landed on a hidden field, snap back to a visible one.
-        if !self.visible_fields().contains(&self.selected_field) {
-            self.selected_field = 0;
-        }
-    }
-
-    fn active_value_mut(&mut self) -> Option<&mut String> {
-        match self.selected_field {
-            1 => Some(&mut self.local_port),
-            2 => Some(&mut self.remote_host),
-            3 => Some(&mut self.remote_port),
-            4 => Some(&mut self.label),
-            _ => None,
-        }
-    }
-
-    fn push_char(&mut self, c: char) {
-        let is_port_field = matches!(self.selected_field, 1 | 3);
-        if is_port_field && !c.is_ascii_digit() {
-            return;
-        }
-        if let Some(field) = self.active_value_mut() {
-            field.push(c);
-        }
-    }
-
-    fn pop_char(&mut self) {
-        if let Some(field) = self.active_value_mut() {
-            field.pop();
-        }
-    }
-
-    fn validate(&self) -> Result<Tunnel, String> {
-        let lp: u16 = self.local_port.trim().parse()
-            .map_err(|_| "Local port must be a number 1-65535".to_string())?;
-        match self.kind {
-            TunnelKind::Dynamic => Ok(Tunnel {
-                label: self.label.trim().to_string(),
-                kind: TunnelKind::Dynamic,
-                local_port: lp,
-                remote_port: 0,
-                remote_host: String::new(),
-            }),
-            kind => {
-                let rp: u16 = self.remote_port.trim().parse()
-                    .map_err(|_| "Remote port must be a number 1-65535".to_string())?;
-                Ok(Tunnel {
-                    label: self.label.trim().to_string(),
-                    kind,
-                    local_port: lp,
-                    remote_port: rp,
-                    remote_host: self.remote_host.trim().to_string(),
-                })
-            }
-        }
-    }
-}
+use crate::tui::ssh::portforward_state::{field, PortForwardForm};
 
 // ============================================================================
 // Saved-tunnels picker state
@@ -320,6 +184,7 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     }
     constraints.push(Constraint::Length(1)); // label
     constraints.push(Constraint::Length(1)); // save toggle
+    constraints.push(Constraint::Length(1)); // auto-restart toggle
     constraints.push(Constraint::Length(1)); // spacer
     constraints.push(Constraint::Length(1)); // start
     constraints.push(Constraint::Length(1)); // spacer
@@ -339,7 +204,7 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     idx += 1; // spacer
 
     // Kind row
-    let kind_sel = state.selected_field == 0;
+    let kind_sel = state.selected_field == field::KIND;
     let kind_style = if kind_sel {
         Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
     } else {
@@ -349,7 +214,7 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     f.render_widget(Paragraph::new(kind_line).style(kind_style), chunks[idx]); idx += 1;
 
     // local port
-    let lp_sel = state.selected_field == 1;
+    let lp_sel = state.selected_field == field::LOCAL_PORT;
     let cursor = if lp_sel { "|" } else { "" };
     let lp_label = match state.kind {
         TunnelKind::Dynamic => "SOCKS Port",
@@ -361,7 +226,7 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     f.render_widget(Paragraph::new(lp_text).style(lp_style), chunks[idx]); idx += 1;
 
     if !dyn_mode {
-        let rh_sel = state.selected_field == 2;
+        let rh_sel = state.selected_field == field::REMOTE_HOST;
         let rh_text = format!("  Remote Host: {}{}",
             if state.remote_host.is_empty() { "localhost" } else { state.remote_host.as_str() },
             if rh_sel { "|" } else { "" }
@@ -371,29 +236,42 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
             else { Style::default().fg(theme.fg) };
         f.render_widget(Paragraph::new(rh_text).style(rh_style), chunks[idx]); idx += 1;
 
-        let rp_sel = state.selected_field == 3;
+        let rp_sel = state.selected_field == field::REMOTE_PORT;
         let rp_text = format!("  Remote Port: {}{}", state.remote_port, if rp_sel { "|" } else { "" });
         let rp_style = if rp_sel { Style::default().fg(theme.accent) } else { Style::default().fg(theme.fg) };
         f.render_widget(Paragraph::new(rp_text).style(rp_style), chunks[idx]); idx += 1;
     }
 
     // label
-    let lab_sel = state.selected_field == 4;
+    let lab_sel = state.selected_field == field::LABEL;
     let lab_text = format!("  Label (optional): {}{}", state.label, if lab_sel { "|" } else { "" });
     let lab_style = if lab_sel { Style::default().fg(theme.accent) } else { Style::default().fg(theme.fg) };
     f.render_widget(Paragraph::new(lab_text).style(lab_style), chunks[idx]); idx += 1;
 
     // save toggle
-    let save_sel = state.selected_field == 5;
+    let save_sel = state.selected_field == field::SAVE;
     let save_mark = if state.save { "[x]" } else { "[ ]" };
     let save_text = format!("  {} Save this tunnel on host (Space to toggle)", save_mark);
     let save_style = if save_sel { Style::default().fg(theme.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(theme.fg) };
     f.render_widget(Paragraph::new(save_text).style(save_style), chunks[idx]); idx += 1;
 
+    // auto-restart toggle
+    let ar_sel = state.selected_field == field::AUTO_RESTART;
+    let ar_mark = if state.auto_restart { "[x]" } else { "[ ]" };
+    let ar_text = format!("  {} Restart automatically if it drops (Space to toggle)", ar_mark);
+    let ar_style = if ar_sel {
+        Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+    } else if state.auto_restart {
+        Style::default().fg(theme.success)
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    f.render_widget(Paragraph::new(ar_text).style(ar_style), chunks[idx]); idx += 1;
+
     idx += 1; // spacer
 
     // start
-    let start_sel = state.selected_field == 6;
+    let start_sel = state.selected_field == field::START;
     let start_style = if start_sel {
         Style::default().bg(theme.accent).fg(theme.bg).add_modifier(Modifier::BOLD)
     } else {
@@ -621,26 +499,6 @@ fn draw_tunnel_screen(
 }
 
 // ============================================================================
-// SSH command builder
-// ============================================================================
-
-pub fn build_forward_arg(t: &Tunnel) -> Vec<String> {
-    match t.kind {
-        TunnelKind::Local => {
-            let rh = if t.remote_host.is_empty() { "localhost".to_string() } else { t.remote_host.clone() };
-            vec!["-L".into(), format!("{}:{}:{}", t.local_port, rh, t.remote_port)]
-        }
-        TunnelKind::Remote => {
-            let rh = if t.remote_host.is_empty() { "localhost".to_string() } else { t.remote_host.clone() };
-            vec!["-R".into(), format!("{}:{}:{}", t.local_port, rh, t.remote_port)]
-        }
-        TunnelKind::Dynamic => {
-            vec!["-D".into(), t.local_port.to_string()]
-        }
-    }
-}
-
-// ============================================================================
 // Public entry point
 // ============================================================================
 
@@ -709,19 +567,21 @@ pub fn run_port_forward(
                     KeyCode::Tab | KeyCode::Down => form.next_field(),
                     KeyCode::BackTab | KeyCode::Up => form.prev_field(),
                     KeyCode::Left => {
-                        if form.selected_field == 0 { form.cycle_kind(false); }
+                        if form.selected_field == field::KIND { form.cycle_kind(false); }
                     }
                     KeyCode::Right => {
-                        if form.selected_field == 0 { form.cycle_kind(true); }
+                        if form.selected_field == field::KIND { form.cycle_kind(true); }
                     }
-                    KeyCode::Char(' ') if form.selected_field == 5 => {
-                        form.save = !form.save;
-                    }
-                    KeyCode::Char(' ') if form.selected_field == 0 => {
-                        form.cycle_kind(true);
+                    // Space means "flip what's under the cursor": a toggle row
+                    // flips, the kind selector advances. On a text row it is a
+                    // plain character and falls through to `Char(c)` below.
+                    KeyCode::Char(' ') if form.space_is_a_control() => {
+                        if !form.toggle_selected() {
+                            form.cycle_kind(true);
+                        }
                     }
                     KeyCode::Enter => {
-                        if form.selected_field == 6 {
+                        if form.selected_field == field::START {
                             match form.validate() {
                                 Ok(t) => {
                                     if form.save {
@@ -763,24 +623,10 @@ fn run_tunnel_loop<B: Backend>(
     all_hosts: &HashMap<String, Host>,
 ) {
     // --- Phase 2: spawn SSH ---
-    let mut cmd = Command::new("ssh");
-    cmd.arg("-N");
-    for a in build_forward_arg(tunnel) { cmd.arg(a); }
-    cmd.arg(format!("{}@{}", host.username, host.host))
-        .arg("-p").arg(host.port.to_string());
-
-    if let Some(ref id) = host.identity_file {
-        if !id.is_empty() { cmd.arg("-i").arg(id); }
-    }
-    if let Some(ref j) = host.proxy_jump {
-        if let Some(resolved) = resolve_proxy_jump(j, all_hosts) {
-            cmd.arg("-J").arg(resolved);
-        }
-    }
-    if host.forward_agent {
-        cmd.arg("-A");
-    }
-
+    // Same builder as the background path and the interactive connection.
+    let argv = build_tunnel_argv(host, tunnel, all_hosts);
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
@@ -868,5 +714,89 @@ fn run_tunnel_loop<B: Backend>(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod render_tests {
+    use super::*;
+    use ratatui::backend::TestBackend;
+
+    /// Render the form and return the visible text, one string per line.
+    ///
+    /// The point is less the text than the fact that it renders at all: the
+    /// layout builds its constraint list conditionally and walks it with a
+    /// running index, so a row added on one side and not the other indexes
+    /// past the end and panics. That is exactly the mistake the auto-restart
+    /// row could have introduced.
+    fn render(state: &PortForwardForm) -> Vec<String> {
+        let host = Host { name: "web".into(), host: "10.0.0.5".into(), ..Default::default() };
+        let backend = TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        terminal
+            .draw(|f| draw_port_form(f, state, &host))
+            .expect("the form must render");
+        let buf = terminal.backend().buffer().clone();
+        (0..buf.area.height)
+            .map(|y| {
+                (0..buf.area.width)
+                    .map(|x| buf[(x, y)].symbol().to_string())
+                    .collect::<String>()
+                    .trim_end()
+                    .to_string()
+            })
+            .collect()
+    }
+
+    fn rendered_text(state: &PortForwardForm) -> String {
+        render(state).join("\n")
+    }
+
+    #[test]
+    fn a_local_forward_renders_every_row() {
+        let text = rendered_text(&PortForwardForm::new());
+        for expected in ["Local Port", "Remote Host", "Remote Port", "Label", "Save", "Restart automatically", "Start Tunnel"] {
+            assert!(text.contains(expected), "missing {expected:?} in:\n{text}");
+        }
+    }
+
+    #[test]
+    fn a_dynamic_forward_renders_without_the_remote_rows() {
+        let mut s = PortForwardForm::new();
+        s.kind = TunnelKind::Dynamic;
+        let text = rendered_text(&s);
+        assert!(!text.contains("Remote Host"), "SOCKS has no target host:\n{text}");
+        assert!(text.contains("SOCKS Port"), "the port row renames itself for SOCKS:\n{text}");
+        assert!(text.contains("Restart automatically"), "the toggle must survive the shorter layout");
+        assert!(text.contains("Start Tunnel"));
+    }
+
+    #[test]
+    fn every_cursor_position_renders_in_both_layouts() {
+        // Walks the whole field list for each kind; an off-by-one in the
+        // render's index bookkeeping shows up as a panic here.
+        for kind in [TunnelKind::Local, TunnelKind::Remote, TunnelKind::Dynamic] {
+            let mut s = PortForwardForm::new();
+            s.kind = kind;
+            for f in s.visible_fields() {
+                s.selected_field = f;
+                let _ = render(&s);
+            }
+        }
+    }
+
+    #[test]
+    fn the_auto_restart_row_shows_its_state() {
+        let mut s = PortForwardForm::new();
+        assert!(rendered_text(&s).contains("[ ] Restart automatically"));
+        s.auto_restart = true;
+        assert!(rendered_text(&s).contains("[x] Restart automatically"));
+    }
+
+    #[test]
+    fn a_validation_error_is_shown_to_the_user() {
+        let mut s = PortForwardForm::new();
+        s.error = Some("Local port must be a number 1-65535".into());
+        assert!(rendered_text(&s).contains("Local port must be a number"));
     }
 }

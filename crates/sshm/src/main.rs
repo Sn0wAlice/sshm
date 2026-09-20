@@ -75,6 +75,9 @@ fn main() {
                 }
             }
         }
+        Some("tunnel") => {
+            commands::tunnel::dispatch(&args);
+        }
         Some("sync") => {
             commands::sync::dispatch(&args[2..]);
         }
@@ -103,7 +106,11 @@ fn main() {
             println!("  sshm load_local_conf                       # import from ~/.ssh/config");
             println!("  sshm export [path]                         # export DB as ~/.ssh/config format");
             println!();
-            println!("Config sync (git over SSH):");
+            println!("Background tunnels:
+  sshm tunnel [list]                         # running tunnels, across every instance
+  sshm tunnel stop <pid>                     # terminate one tunnel
+
+Config sync (git over SSH):");
             println!("  sshm sync setup                            # configure repo + key + schedule");
             println!("  sshm sync                                  # sync now  (pull/push: one way)");
             println!("  sshm sync status                           # config, last run, lock state");

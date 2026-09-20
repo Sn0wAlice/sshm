@@ -395,8 +395,16 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
             kluster_poke.store(true, Ordering::Relaxed);
         }
 
-        // Drop background tunnels whose ssh process has exited on its own.
+        // Drop background tunnels whose ssh process has exited on its own,
+        // then bring back the ones marked auto-restart whose backoff elapsed.
         tunnels.reap();
+        let revived = tunnels.restart_due(&db.hosts);
+        if !revived.is_empty() {
+            toast = Some(Toast::success(format!(
+                "Tunnel restarted: {}",
+                revived.join(", ")
+            )));
+        }
 
         // Sync the worker's enabled flag with the current config and clear
         // any stale health data when the feature is turned off.

@@ -31,7 +31,11 @@ impl TunnelKind {
 }
 
 /// Définition d'un tunnel SSH sauvegardable.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+///
+/// `Default` existe pour la construction partielle (`Tunnel { local_port, ..Default::default() }`)
+/// et donne des ports à 0 — une valeur que la validation du formulaire rejette,
+/// donc à ne pas utiliser telle quelle comme tunnel.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Tunnel {
     /// Libellé court (ex : "Postgres prod").
     #[serde(default)]
@@ -46,6 +50,13 @@ pub struct Tunnel {
     /// Hôte distant cible (Local/Remote). Vide => `localhost` côté remote.
     #[serde(default)]
     pub remote_host: String,
+    /// Relance le tunnel en arrière-plan quand son `ssh -N` meurt (coupure
+    /// réseau, remote qui ferme). Désactivé par défaut : un tunnel qu'on a
+    /// arrêté à la main ne doit pas revenir, et un port déjà pris ne doit pas
+    /// tourner en boucle — c'est au frontend d'appliquer un backoff et de
+    /// renoncer après quelques échecs.
+    #[serde(default)]
+    pub auto_restart: bool,
 }
 
 /// Représente une entrée d'hôte SSH (schéma v2).
