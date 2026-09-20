@@ -1,3 +1,22 @@
+sshm (2.2.0) stable; urgency=medium
+
+  * NEW: raw per-host ssh options (`-o`), applied to interactive connections,
+    background tunnels and fan-out alike.
+  * NEW: `sshm tunnel list|stop` — inspect and terminate background tunnels
+    from the command line, across every running instance.
+  * NEW: opt-in auto-restart for a dropped background tunnel, with backoff.
+  * NEW: configurable container shell via `kluster_shell` in settings.toml.
+  * Fixed: mosh failed on any ssh argument containing a space.
+  * Fixed: cancelling `sshm create` / `sshm edit` panicked instead of
+    returning to the shell.
+  * Fixed: fan-out could hang on a host that answered then went silent.
+  * Fixed: background tunnels ignored per-host ssh settings.
+  * Changed: the Kluster worker probes remotes concurrently instead of one
+    at a time.
+  * Removed: the Tauri desktop GUI — sshm is a terminal tool again.
+
+ -- Sn0wAlice <snow.alice@pm.me>  Sun, 20 Sep 2026 00:00:00 +0000
+
 sshm (2.1.1) stable; urgency=medium
 
   * Fixed: dead-code warning in the desktop crate on release builds.

@@ -5,7 +5,7 @@ All notable changes to **sshm** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [2.1.2] - 2026-08-28
 
 ### Added
 
@@ -35,6 +35,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL, SSH key, branch, auto-sync interval (0 = manual) and the on-start /
   on-exit toggles. The rest (which files travel, the conflict policy) lives in
   `settings.toml` and `sshm sync setup`.
+
+### Changed
+
+- **The TUI now picks up external changes to `settings.toml`,** not just to
+  `host.json` — a background sync that rewrites the settings no longer gets
+  overwritten by the running instance's stale copy on the next Save. Unsaved
+  edits in the Settings tab still win until you save or press Esc.
+
+## [2.2.0] - 2026-09-20
 
 ### Added
 
@@ -66,6 +75,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`ForwardAgent` is now exported.** A host with `-A` enabled emits
   `ForwardAgent yes` in the exported ssh config; previously the setting was
   silently dropped.
+
+### Removed
+
+- **The desktop GUI (`sshm-desktop`).** The Tauri 2 + Svelte app and its
+  crate (`crates/sshm-gui`) are gone; sshm is a terminal tool again. The
+  engine dropped the pieces that existed only to serve it: `sshm-core`'s
+  `specta` and `pty` features (and the `portable-pty` dependency), the
+  `pty` module, and the GUI jobs in CI and the release workflow. Nothing in
+  the TUI, the CLI or the on-disk database format changes.
+- **Unused `regex` dependency.** Declared by both crates, referenced by
+  neither. (It stays in the lockfile as a transitive dependency of ratatui.)
 
 ### Fixed
 
@@ -102,24 +122,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   host differently from an interactive connect. All three call sites — the
   interactive connection, background tunnels and fan-out — now go through a
   single `build_ssh_opts`.
-
-### Removed
-
-- **The desktop GUI (`sshm-desktop`).** The Tauri 2 + Svelte app and its
-  crate (`crates/sshm-gui`) are gone; sshm is a terminal tool again. The
-  engine dropped the pieces that existed only to serve it: `sshm-core`'s
-  `specta` and `pty` features (and the `portable-pty` dependency), the
-  `pty` module, and the GUI jobs in CI and the release workflow. Nothing in
-  the TUI, the CLI or the on-disk database format changes.
-- **Unused `regex` dependency.** Declared by both crates, referenced by
-  neither. (It stays in the lockfile as a transitive dependency of ratatui.)
-
-### Changed
-
-- **The TUI now picks up external changes to `settings.toml`,** not just to
-  `host.json` — a background sync that rewrites the settings no longer gets
-  overwritten by the running instance's stale copy on the next Save. Unsaved
-  edits in the Settings tab still win until you save or press Esc.
 
 ## [2.1.1] - 2026-08-21
 
