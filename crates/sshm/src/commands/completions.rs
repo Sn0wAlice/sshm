@@ -48,6 +48,7 @@ pub const COMMANDS: &[&str] = &[
     "add-identity",
     "tunnel",
     "sync",
+    "doctor",
     "completions",
     "export",
     "load_local_conf",
@@ -107,7 +108,7 @@ _sshm() {
     cmd="${COMP_WORDS[1]}"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=($(compgen -W "list connect create edit delete tag add-identity tunnel sync completions export load_local_conf help" -- "$cur"))
+        COMPREPLY=($(compgen -W "list connect create edit delete tag add-identity tunnel sync doctor completions export load_local_conf help" -- "$cur"))
         return
     fi
 
@@ -139,6 +140,9 @@ _sshm() {
                 COMPREPLY=($(compgen -W "list stop --json" -- "$cur"))
             fi
             ;;
+        doctor)
+            COMPREPLY=($(compgen -W "--json" -- "$cur"))
+            ;;
         completions)
             COMPREPLY=($(compgen -W "bash zsh fish" -- "$cur"))
             ;;
@@ -168,6 +172,7 @@ _sshm() {
         'add-identity:Push a public key to a host'
         'tunnel:Inspect or stop background tunnels'
         'sync:Config sync over git'
+        'doctor:Report what is set up and what is missing'
         'completions:Print a shell completion script'
         'export:Export the DB as an ssh config'
         'load_local_conf:Import hosts from ~/.ssh/config'
@@ -191,6 +196,7 @@ _sshm() {
                 list) _values 'option' --filter --json --names ;;
                 sync) _values 'subcommand' setup status pull push enable disable cron help ;;
                 tunnel) _values 'subcommand' list stop --json ;;
+                doctor) _values 'option' --json ;;
                 completions) _values 'shell' bash zsh fish ;;
             esac
             ;;
@@ -216,6 +222,7 @@ complete -c sshm -n __fish_use_subcommand -a tag -d 'Add or remove tags'
 complete -c sshm -n __fish_use_subcommand -a add-identity -d 'Push a public key to a host'
 complete -c sshm -n __fish_use_subcommand -a tunnel -d 'Inspect or stop background tunnels'
 complete -c sshm -n __fish_use_subcommand -a sync -d 'Config sync over git'
+complete -c sshm -n __fish_use_subcommand -a doctor -d 'Report what is set up and what is missing'
 complete -c sshm -n __fish_use_subcommand -a completions -d 'Print a shell completion script'
 complete -c sshm -n __fish_use_subcommand -a export -d 'Export the DB as an ssh config'
 complete -c sshm -n __fish_use_subcommand -a load_local_conf -d 'Import hosts from ~/.ssh/config'
@@ -229,6 +236,7 @@ complete -c sshm -n '__fish_seen_subcommand_from list' -l names -d 'One host nam
 complete -c sshm -n '__fish_seen_subcommand_from sync' -a 'setup status pull push enable disable cron help'
 complete -c sshm -n '__fish_seen_subcommand_from tunnel' -a 'list stop'
 complete -c sshm -n '__fish_seen_subcommand_from tunnel' -l json -d 'Machine-readable output'
+complete -c sshm -n '__fish_seen_subcommand_from doctor' -l json -d 'Machine-readable output'
 complete -c sshm -n '__fish_seen_subcommand_from completions' -a 'bash zsh fish'
 "#;
 

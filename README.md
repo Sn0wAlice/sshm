@@ -175,8 +175,29 @@ sshm tunnel stop <pid>                   # terminate one tunnel by its ssh PID
 sshm sync                                # sync the config with your git repo
 sshm sync setup|status|pull|push|cron    # configure / inspect / one-way / crontab line
 sshm sync status --json                  # the same status as a JSON object
+sshm doctor [--json]                     # what's set up, what's missing, what's wrong
 sshm completions bash|zsh|fish           # print a shell completion script
 sshm help                                # full CLI reference
+```
+
+### Diagnostics
+
+```bash
+sshm doctor
+```
+
+Reports the resolved config directory and whether each file parses, which CLIs
+are on PATH (and whether Docker's and Podman's daemons actually answer), `~/.ssh`
+and key permissions, whether a sync run would succeed and whether its encryption
+is set up, and any tunnel records left behind by a crashed instance.
+
+An absent optional CLI is reported as skipped, not failed — a machine without
+`incus` is not a broken machine. The exit status is 1 only when something is
+genuinely broken, so it can gate a script:
+
+```bash
+sshm doctor >/dev/null || echo "sshm needs attention"
+sshm doctor --json | jq -r '.[] | select(.status=="fail") | "\(.name): \(.detail)"'
 ```
 
 ### Scripting and completions

@@ -114,6 +114,9 @@ fn main() {
                 }
             }
         }
+        Some("doctor") => {
+            commands::doctor::dispatch(&args);
+        }
         Some("completions") => {
             commands::completions::dispatch(&args);
         }
@@ -157,7 +160,10 @@ fn main() {
             );
             println!();
             println!(
-                "Shell completion:
+                "Diagnostics:
+  sshm doctor [--json]                       # what's set up, what's missing, what's wrong
+
+Shell completion:
   sshm completions bash|zsh|fish              # print a completion script
 
 Background tunnels:

@@ -66,6 +66,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a host that is gone for good doesn't respawn forever. A tunnel you stopped
   yourself stays stopped, and one whose host was deleted meanwhile is dropped
   with a notification instead of retried.
+- **`sshm doctor`.** One command that says what is set up and what is not:
+  the resolved config directory and whether each file parses, which CLIs are
+  on PATH (and for Docker and Podman, whether the daemon actually answers —
+  the common case is a binary with nothing behind it), `~/.ssh` and key
+  permissions, whether a sync run would succeed, whether encryption is on and
+  its identity present, the lock, and any stale tunnel records. `--json` for
+  scripts. Exit status is 1 only when something is genuinely broken: a machine
+  without `incus` is not a broken machine, so an absent optional CLI reports
+  as skipped, not failed. Anything that fails carries the command that fixes
+  it.
 - **Podman.** A fifth section in the Kluster tab, listing local Podman
   containers with the same `Enter` shell, `i` inspect, `l` logs and `s`/`R`
   lifecycle as the others. Podman mirrors Docker's command line for everything
