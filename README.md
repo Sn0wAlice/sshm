@@ -158,6 +158,8 @@ No ports opened, no TLS to set up, no `dockerd` socket exposed.
 
 ```bash
 sshm list [--filter "expr"]              # list hosts (filter: tag:foo host:1.* user:bar name:*xyz*)
+sshm list --json                         # the same hosts as a JSON array
+sshm list --names                        # one host name per line (what completions consume)
 sshm connect <name> [ssh-options...]     # connect to a host (alias: c)
 sshm create                              # interactively create a host
 sshm edit                                # edit an existing host
@@ -167,12 +169,43 @@ sshm tag del <name> <tag1,tag2>          # remove tags
 sshm load_local_conf                     # import hosts from ~/.ssh/config
 sshm export [path]                       # export DB as ~/.ssh/config format
 sshm add-identity <name?> [--pub key]    # push pubkey to authorized_keys
-sshm tunnel [list]                       # background tunnels across every running instance
+sshm tunnel [list] [--json]              # background tunnels across every running instance
 sshm tunnel stop <pid>                   # terminate one tunnel by its ssh PID
 sshm sync                                # sync the config with your git repo
 sshm sync setup|status|pull|push|cron    # configure / inspect / one-way / crontab line
+sshm sync status --json                  # the same status as a JSON object
+sshm completions bash|zsh|fish           # print a shell completion script
 sshm help                                # full CLI reference
 ```
+
+### Scripting and completions
+
+Three commands take `--json` — `list`, `sync status` and `tunnel list` — and
+all of them stay well-formed when there is nothing to report (an empty array,
+not a sentence), so a caller never has to special-case "no results":
+
+```bash
+sshm list --json | jq -r '.[] | select(.tags[]? == "prod") | .name'
+sshm sync status --json | jq -e '.problem == null'   # exit 1 when sync is broken
+sshm tunnel list --json | jq '.[] | {pid, route}'
+```
+
+`sshm list --names` prints one host name per line — no quoting to undo, no
+JSON parser needed — which is what the completion scripts consume.
+
+Install completions for your shell:
+
+```bash
+sshm completions bash > /usr/local/etc/bash_completion.d/sshm
+sshm completions zsh  > "${fpath[1]}/_sshm"
+sshm completions fish > ~/.config/fish/completions/sshm.fish
+```
+
+They complete subcommands, and — for `connect`, `add-identity` and `tag` —
+your actual saved hosts. Host names come from `sshm list --names` at
+completion time, so adding a host is enough; there is nothing to regenerate.
+
+`SSHM_VERBOSE=1` puts the "Loading DB from …" diagnostic back, on stderr.
 
 ## Keyboard shortcuts
 

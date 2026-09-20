@@ -15,8 +15,15 @@ use sshm_core::tunnels::{read_all_records, TunnelRecord};
 use crate::models::TunnelKind;
 
 pub fn dispatch(args: &[String]) {
+    let json = args.iter().any(|a| a == "--json");
     match args.get(2).map(String::as_str) {
-        None | Some("list") | Some("ls") => list(),
+        None | Some("list") | Some("ls") | Some("--json") => {
+            if json {
+                list_json()
+            } else {
+                list()
+            }
+        }
         Some("stop") => match args.get(3) {
             Some(pid) => stop(pid),
             None => {
@@ -32,7 +39,7 @@ pub fn dispatch(args: &[String]) {
 
 pub fn usage() {
     println!("Usage:");
-    println!("  sshm tunnel [list]          # running background tunnels, every instance");
+    println!("  sshm tunnel [list] [--json] # running background tunnels, every instance");
     println!("  sshm tunnel stop <pid>      # terminate one tunnel by its ssh PID");
 }
 
@@ -68,6 +75,53 @@ fn live_records() -> Vec<TunnelRecord> {
         .into_iter()
         .filter(|r| crate::tui::app::tunnels::pid_is_ssh_tunnel(r.pid))
         .collect()
+}
+
+/// `sshm tunnel list --json`. Emits the records as they are stored, plus the
+/// route string the table shows, so a caller does not have to rebuild it from
+/// `kind`/`local_port`/`remote_*`.
+fn list_json() {
+    #[derive(serde::Serialize)]
+    struct Row<'a> {
+        pid: u32,
+        host_name: &'a str,
+        host_display: &'a str,
+        route: String,
+        label: &'a str,
+        started: &'a str,
+        kind: String,
+        local_port: u16,
+        remote_host: &'a str,
+        remote_port: u16,
+        auto_restart: bool,
+    }
+    let mut records = live_records();
+    records.sort_by(|a, b| a.host_name.cmp(&b.host_name).then(a.pid.cmp(&b.pid)));
+    let rows: Vec<Row<'_>> = records
+        .iter()
+        .map(|r| Row {
+            pid: r.pid,
+            host_name: &r.host_name,
+            host_display: &r.host_display,
+            route: route(r),
+            label: r.tunnel.label.trim(),
+            started: &r.started,
+            kind: format!("{:?}", r.tunnel.kind).to_lowercase(),
+            local_port: r.tunnel.local_port,
+            remote_host: &r.tunnel.remote_host,
+            remote_port: r.tunnel.remote_port,
+            auto_restart: r.tunnel.auto_restart,
+        })
+        .collect();
+    // An empty array, not a sentence: "No background tunnels running." on
+    // stdout is exactly what a caller cannot parse.
+    match serde_json::to_string_pretty(&rows) {
+        Ok(j) => println!("{j}"),
+        Err(e) => {
+            eprintln!("could not render tunnels as JSON: {e}");
+            std::process::exit(1);
+        }
+    }
 }
 
 fn list() {

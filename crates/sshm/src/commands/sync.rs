@@ -21,7 +21,11 @@ pub fn dispatch(args: &[String]) {
         "push" => run_direction(Direction::Push),
         "setup" => setup(),
         "status" => {
-            status();
+            if args.get(1).map(String::as_str) == Some("--json") {
+                status_json();
+            } else {
+                status();
+            }
             Ok(())
         }
         "enable" => toggle(true),
@@ -55,7 +59,7 @@ pub fn usage() {
     println!("  sshm sync pull            # apply the remote locally, publish nothing");
     println!("  sshm sync push            # publish local state (local wins collisions)");
     println!("  sshm sync setup           # interactive configuration");
-    println!("  sshm sync status          # what is configured, and when it last ran");
+    println!("  sshm sync status [--json] # what is configured, and when it last ran");
     println!("  sshm sync enable|disable  # master switch");
     println!("  sshm sync cron            # print a crontab line for scheduled syncing");
     println!();
@@ -119,6 +123,113 @@ fn ago(secs: i64) -> String {
         s if s < 3600 => format!("{}m ago", s / 60),
         s if s < 86_400 => format!("{}h ago", s / 3600),
         s => format!("{}d ago", s / 86_400),
+    }
+}
+
+/// `sshm sync status --json`.
+///
+/// A flat, stable shape: a caller wants to branch on "is it healthy" without
+/// parsing prose. Durations are seconds rather than the human "4m ago", and
+/// paths are resolved — the same reasoning as everywhere else, a `~` that
+/// expands somewhere unexpected is not something a script should have to
+/// guess at.
+#[derive(serde::Serialize)]
+struct StatusJson {
+    enabled: bool,
+    configured: bool,
+    repo_url: String,
+    branch: String,
+    ssh_key: Option<String>,
+    encryption: EncryptionJson,
+    /// `None` when sync only runs manually or from cron.
+    interval_secs: Option<u64>,
+    on_start: bool,
+    on_exit: bool,
+    items: Vec<String>,
+    conflict: String,
+    working_copy: String,
+    last_success_secs_ago: Option<i64>,
+    last_attempt_secs_ago: Option<i64>,
+    last_summary: Option<String>,
+    last_error: Option<String>,
+    last_host: Option<String>,
+    lock: Option<LockJson>,
+    /// The preflight failure a run would hit right now, if any. This is the
+    /// field a health check should look at.
+    problem: Option<String>,
+}
+
+#[derive(serde::Serialize)]
+struct EncryptionJson {
+    enabled: bool,
+    /// Resolved path of the age identity, when one is configured.
+    identity: Option<String>,
+    /// False when encryption is on but the identity file is not there.
+    identity_present: bool,
+}
+
+#[derive(serde::Serialize)]
+struct LockJson {
+    pid: u32,
+    host: String,
+    what: String,
+    age_secs: i64,
+}
+
+fn status_json() {
+    let cfg = load_settings().sync;
+    let state = sync::SyncState::load();
+    let identity = sshm_core::sync::crypt::identity_path(&cfg);
+
+    let out = StatusJson {
+        enabled: cfg.enabled,
+        configured: cfg.is_configured(),
+        repo_url: cfg.repo_url.trim().to_string(),
+        branch: cfg.effective_branch(),
+        ssh_key: cfg.expanded_key(),
+        encryption: EncryptionJson {
+            enabled: cfg.encrypt,
+            identity_present: identity.as_ref().map(|p| p.exists()).unwrap_or(false),
+            identity: identity.map(|p| p.display().to_string()),
+        },
+        interval_secs: cfg.effective_interval(),
+        on_start: cfg.on_start,
+        on_exit: cfg.on_exit,
+        items: cfg
+            .effective_items()
+            .iter()
+            .map(|i| i.key().to_string())
+            .collect(),
+        conflict: match cfg.conflict {
+            ConflictPolicy::PreferLocal => "prefer_local".to_string(),
+            ConflictPolicy::PreferRemote => "prefer_remote".to_string(),
+        },
+        working_copy: sshm_core::config::path::sync_repo_dir()
+            .display()
+            .to_string(),
+        last_success_secs_ago: state.since_last_success(),
+        last_attempt_secs_ago: state.since_last_attempt(),
+        last_summary: state.last_summary.clone(),
+        last_error: state.last_error.clone(),
+        last_host: state.last_host.clone(),
+        lock: sync::SyncLock::holder().map(|i| LockJson {
+            pid: i.pid,
+            host: i.host.clone(),
+            what: i.what.clone(),
+            age_secs: i.age_secs(),
+        }),
+        problem: if cfg.is_configured() {
+            sync::preflight(&cfg).err().map(|e| format!("{e:#}"))
+        } else {
+            Some("no sync repository configured".to_string())
+        },
+    };
+    match serde_json::to_string_pretty(&out) {
+        Ok(j) => println!("{j}"),
+        Err(e) => {
+            eprintln!("could not render status as JSON: {e}");
+            std::process::exit(1);
+        }
     }
 }
 

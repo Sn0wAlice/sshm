@@ -196,7 +196,13 @@ pub fn serialize_db(db: &Database) -> Result<String, serde_json::Error> {
 /// Load the full Database (hosts + folders). Handles migration from legacy formats.
 pub fn load_db() -> Database {
     let path = config_path();
-    println!("Loading DB from {}", path.display());
+    // Deliberately not on stdout. Every CLI subcommand loads the DB first, so
+    // a line here lands ahead of whatever the command prints — which broke
+    // `sshm list | awk …` and would make `--json` output unparseable. The
+    // other diagnostics in this function already use stderr.
+    if std::env::var_os("SSHM_VERBOSE").is_some() {
+        eprintln!("Loading DB from {}", path.display());
+    }
     if let Err(e) = ensure_config_file(&path) {
         eprintln!("Cannot init config file {}: {e}", path.display());
         save_empty_database();

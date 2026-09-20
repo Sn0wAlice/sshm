@@ -66,6 +66,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a host that is gone for good doesn't respawn forever. A tunnel you stopped
   yourself stays stopped, and one whose host was deleted meanwhile is dropped
   with a notification instead of retried.
+- **Machine-readable output.** `sshm list --json` emits the matching hosts as
+  a JSON array, `sshm list --names` one name per line, `sshm sync status
+  --json` a flat status object (durations in seconds, paths resolved, and a
+  `problem` field carrying whatever the preflight would refuse), and `sshm
+  tunnel list --json` the running tunnels. All four stay well-formed and
+  silent when nothing matches — an empty array, no lines — rather than
+  printing a sentence a caller cannot parse.
+- **Shell completions.** `sshm completions bash|zsh|fish` prints a script that
+  completes subcommands and, for `connect`, `add-identity` and `tag`, your
+  actual saved host names — by calling `sshm list --names`, so it stays
+  correct as hosts change without regenerating anything.
 - **Optional encryption of what sync publishes.** Turn `encrypt` on (Settings
   tab, `sshm sync setup`, or `settings.toml`) and the payload is sealed with
   [`age`](https://age-encryption.org) before it reaches a commit — so the git
@@ -144,6 +155,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-command left ssh waiting indefinitely and stalled the rest of the batch.
   `ServerAliveInterval` / `ServerAliveCountMax` now bound that case too; a
   command that is genuinely still running is untouched.
+- **`Loading DB from …` was printed on stdout.** Every subcommand loads the
+  database first, so that line landed ahead of whatever the command printed —
+  it broke `sshm list | awk …` and would have made `--json` unparseable. It is
+  gone from the default output; set `SSHM_VERBOSE=1` to get it back, on stderr
+  where the function's other diagnostics already were.
+- **A closed pipe crashed with a Rust backtrace.** Rust ignores `SIGPIPE` at
+  startup, which turns a reader closing early into a panic from `println!` —
+  so `sshm list | head`, or a shell sourcing `sshm completions bash` through a
+  process substitution, printed `failed printing to stdout: Broken pipe` and a
+  panic trace. The default disposition is restored at startup, so sshm now
+  exits quietly like every other command-line tool.
+- **`sshm list` only saw `--filter` in first position.** The check was
+  positional, so `sshm list --json --filter tag:prod` silently ignored the
+  filter. Arguments are parsed in any order now, and an unknown flag is an
+  error rather than something to skip.
 - **The documented config path was wrong on macOS.** The README and
   `sshm help` both said `~/.config/sshm/`, while `dirs::config_dir()` resolves
   to `~/Library/Application Support/sshm/` there — the project's main

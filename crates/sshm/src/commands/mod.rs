@@ -1,3 +1,4 @@
+pub mod completions;
 pub mod connect;
 pub mod crud;
 pub mod list;

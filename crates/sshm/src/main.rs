@@ -8,7 +8,29 @@ use sshm::import::ssh_config::import_ssh_config;
 use sshm::models::Database;
 use sshm::tui::app::run_tui;
 
+/// Restore the default disposition for `SIGPIPE`.
+///
+/// Rust sets it to `SIG_IGN` at startup, which turns a closed reader into an
+/// `EPIPE` that `println!` reports by panicking — so `sshm list | head`, or a
+/// shell completion sourcing `sshm list --names`, greets the user with a Rust
+/// backtrace instead of exiting quietly. Every other command-line tool dies
+/// silently there, and so should this one.
+#[cfg(unix)]
+fn restore_sigpipe() {
+    // SAFETY: setting a signal disposition to the default, before any thread
+    // is spawned. This is the standard incantation for a CLI that writes to
+    // stdout.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn restore_sigpipe() {}
+
 fn main() {
+    restore_sigpipe();
+
     // Teach core how to restore the terminal before it hands the TTY to a child
     // process (ssh / docker exec / kubectl exec / …). No-op on the cooked
     // terminal of a plain CLI invocation, exactly as the old inline code was.
@@ -18,14 +40,13 @@ fn main() {
     let mut db: Database = load_db();
 
     match args.get(1).map(String::as_str) {
-        Some("list") => {
-            let filt = if args.get(2).map(String::as_str) == Some("--filter") {
-                args.get(3).cloned()
-            } else {
-                None
-            };
-            commands::list::list_hosts_with_filter(&db.hosts, filt);
-        }
+        Some("list") => match commands::list::parse_args(&args[2..]) {
+            Ok(opts) => commands::list::list_hosts(&db.hosts, &opts),
+            Err(e) => {
+                eprintln!("{e}");
+                std::process::exit(2);
+            }
+        },
         Some("connect") | Some("c") => {
             let name = args.get(2).cloned();
             let extras: Vec<String> = if name.is_some() {
@@ -93,6 +114,9 @@ fn main() {
                 }
             }
         }
+        Some("completions") => {
+            commands::completions::dispatch(&args);
+        }
         Some("tunnel") => {
             commands::tunnel::dispatch(&args);
         }
@@ -133,8 +157,11 @@ fn main() {
             );
             println!();
             println!(
-                "Background tunnels:
-  sshm tunnel [list]                         # running tunnels, across every instance
+                "Shell completion:
+  sshm completions bash|zsh|fish              # print a completion script
+
+Background tunnels:
+  sshm tunnel [list] [--json]                # running tunnels, across every instance
   sshm tunnel stop <pid>                     # terminate one tunnel
 
 Config sync (git over SSH):"
@@ -145,7 +172,7 @@ Config sync (git over SSH):"
             println!(
                 "  sshm sync                                  # sync now  (pull/push: one way)"
             );
-            println!("  sshm sync status                           # config, last run, lock state");
+            println!("  sshm sync status [--json]                  # config, last run, lock state");
             println!("  sshm sync --if-due                         # cron-friendly; `sshm sync cron` prints a line");
             println!();
             println!("Inside the TUI:");
