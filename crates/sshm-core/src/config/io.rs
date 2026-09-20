@@ -129,7 +129,7 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
                     forward_agent,
                     mosh,
                     notes,
-                    remote_command: None,
+                    ..Default::default()
                 });
             }
         }
@@ -268,20 +268,8 @@ mod tests {
         Host {
             name: name.to_string(),
             host: format!("{}.example", name),
-            port: 22,
             username: "u".to_string(),
-            identity_file: None,
-            proxy_jump: None,
-            tags: None,
-            folder: None,
-            last_connected_at: None,
-            use_count: 0,
-            favorite: false,
-            tunnels: vec![],
-            forward_agent: false,
-            mosh: false,
-            notes: None,
-            remote_command: None,
+            ..Default::default()
         }
     }
 

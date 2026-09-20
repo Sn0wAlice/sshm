@@ -3,35 +3,62 @@ use std::process::Command;
 use crate::models::Host;
 use crate::ssh::proxy::resolve_proxy_jump;
 
+/// The ssh option flags that describe *how* to reach `h`: port, identity,
+/// ProxyJump chain, agent forwarding, then the host's raw `ssh_options`.
+///
+/// This is the single place that turns a [`Host`] into ssh flags. Every caller
+/// that spawns ssh for a host goes through it — the interactive connection
+/// ([`build_ssh_argv`]), a background tunnel
+/// ([`crate::tunnels::build_tunnel_argv`]) and a one-shot remote command
+/// ([`build_exec_argv`]) — so a new per-host connection setting only has to be
+/// handled here to apply everywhere.
+///
+/// The target (`user@host`) is deliberately *not* included: callers place it
+/// at different positions in their argv.
+pub fn build_ssh_opts(h: &Host, all_hosts: &HashMap<String, Host>) -> Vec<String> {
+    let mut opts: Vec<String> = vec!["-p".to_string(), h.port.to_string()];
+    if let Some(id) = &h.identity_file {
+        if !id.is_empty() {
+            opts.push("-i".to_string());
+            opts.push(id.clone());
+        }
+    }
+    if let Some(j) = &h.proxy_jump {
+        if let Some(resolved) = resolve_proxy_jump(j, all_hosts) {
+            opts.push("-J".to_string());
+            opts.push(resolved);
+        }
+    }
+    if h.forward_agent {
+        opts.push("-A".to_string());
+    }
+    // Raw per-host escape hatch, last so it can override anything above.
+    for raw in &h.ssh_options {
+        let raw = raw.trim();
+        if !raw.is_empty() {
+            opts.push("-o".to_string());
+            opts.push(raw.to_string());
+        }
+    }
+    opts
+}
+
 /// Build the connection command for `h` as an argv vector — `ssh …` normally,
 /// or `mosh --ssh="ssh …" …` when `h.mosh` is set. `argv[0]` is the program.
 ///
 /// `all_hosts` resolves multi-hop `proxy_jump` entries that name saved hosts.
 pub fn build_ssh_argv(h: &Host, all_hosts: &HashMap<String, Host>) -> Vec<String> {
-    // SSH option flags shared by the `ssh` invocation and mosh's `--ssh`.
-    let mut ssh_opts: Vec<String> = vec!["-p".to_string(), h.port.to_string()];
-    if let Some(id) = &h.identity_file {
-        if !id.is_empty() {
-            ssh_opts.push("-i".to_string());
-            ssh_opts.push(id.clone());
-        }
-    }
-    if let Some(j) = &h.proxy_jump {
-        if let Some(resolved) = resolve_proxy_jump(j, all_hosts) {
-            ssh_opts.push("-J".to_string());
-            ssh_opts.push(resolved);
-        }
-    }
-    if h.forward_agent {
-        ssh_opts.push("-A".to_string());
-    }
-
+    let ssh_opts = build_ssh_opts(h, all_hosts);
     let target = format!("{}@{}", h.username, h.host);
 
     if h.mosh {
-        // mosh drives ssh internally for the handshake; pass our flags via --ssh.
+        // mosh drives ssh internally for the handshake; our flags travel as one
+        // `--ssh=` string that mosh splits on whitespace again. Anything with a
+        // space in it — an identity path, a `SetEnv=MSG=hello world` — has to be
+        // quoted here or it would arrive as two arguments.
         let inner = std::iter::once("ssh".to_string())
             .chain(ssh_opts.iter().cloned())
+            .map(|a| crate::os::shell_quote(&a))
             .collect::<Vec<_>>()
             .join(" ");
         vec!["mosh".to_string(), format!("--ssh={}", inner), target]
@@ -60,6 +87,37 @@ pub fn build_ssh_argv(h: &Host, all_hosts: &HashMap<String, Host>) -> Vec<String
         }
         argv
     }
+}
+
+/// Argv for running `command` on `h` non-interactively (fan-out, scripts):
+/// `ssh -o ConnectTimeout=… -o ServerAlive… <opts> user@host <command>`.
+///
+/// Two bounds keep one unreachable host from wedging a whole batch:
+/// `ConnectTimeout` caps the handshake, and the `ServerAlive` pair makes ssh
+/// give up after roughly `connect_timeout_secs` of silence on an established
+/// connection — the case a plain `ConnectTimeout` does not cover. A command
+/// that is genuinely still running is not interrupted.
+///
+/// Both come before the host's own `ssh_options`, so a host that sets
+/// `ServerAliveInterval` itself still wins.
+pub fn build_exec_argv(
+    h: &Host,
+    all_hosts: &HashMap<String, Host>,
+    command: &str,
+    connect_timeout_secs: u32,
+) -> Vec<String> {
+    let secs = connect_timeout_secs.max(1);
+    let mut argv = vec!["ssh".to_string()];
+    argv.push("-o".into());
+    argv.push(format!("ConnectTimeout={secs}"));
+    argv.push("-o".into());
+    argv.push(format!("ServerAliveInterval={secs}"));
+    argv.push("-o".into());
+    argv.push("ServerAliveCountMax=1".into());
+    argv.extend(build_ssh_opts(h, all_hosts));
+    argv.push(format!("{}@{}", h.username, h.host));
+    argv.push(command.to_string());
+    argv
 }
 
 /// Construit et exécute la commande de connexion en combinant Host + overrides CLI.
@@ -107,20 +165,7 @@ mod tests {
         Host {
             name: "web".to_string(),
             host: "10.0.0.5".to_string(),
-            port: 22,
-            username: "root".to_string(),
-            identity_file: None,
-            proxy_jump: None,
-            tags: None,
-            folder: None,
-            last_connected_at: None,
-            use_count: 0,
-            favorite: false,
-            tunnels: vec![],
-            forward_agent: false,
-            mosh: false,
-            notes: None,
-            remote_command: None,
+            ..Default::default()
         }
     }
 
@@ -175,5 +220,153 @@ mod tests {
         let argv = build_ssh_argv(&h, &HashMap::new());
         assert_eq!(argv[0], "mosh");
         assert!(!argv.iter().any(|a| a.starts_with("RemoteCommand=")));
+    }
+
+    // ---- build_ssh_opts: the shared flag builder -------------------------
+
+    #[test]
+    fn opts_carry_port_identity_and_agent() {
+        let mut h = mk_host();
+        h.port = 2222;
+        h.identity_file = Some("~/.ssh/id_ed25519".to_string());
+        h.forward_agent = true;
+        assert_eq!(
+            build_ssh_opts(&h, &HashMap::new()),
+            vec!["-p", "2222", "-i", "~/.ssh/id_ed25519", "-A"]
+        );
+    }
+
+    #[test]
+    fn empty_identity_is_not_emitted() {
+        let mut h = mk_host();
+        h.identity_file = Some(String::new());
+        assert_eq!(build_ssh_opts(&h, &HashMap::new()), vec!["-p", "22"]);
+    }
+
+    #[test]
+    fn ssh_options_become_dash_o_pairs() {
+        let mut h = mk_host();
+        h.ssh_options = vec![
+            "ServerAliveInterval=30".to_string(),
+            "SetEnv=FOO=bar".to_string(),
+        ];
+        assert_eq!(
+            build_ssh_opts(&h, &HashMap::new()),
+            vec!["-p", "22", "-o", "ServerAliveInterval=30", "-o", "SetEnv=FOO=bar"]
+        );
+    }
+
+    #[test]
+    fn blank_ssh_options_are_skipped() {
+        let mut h = mk_host();
+        h.ssh_options = vec!["  ".to_string(), "Compression=yes".to_string()];
+        assert_eq!(
+            build_ssh_opts(&h, &HashMap::new()),
+            vec!["-p", "22", "-o", "Compression=yes"]
+        );
+    }
+
+    #[test]
+    fn ssh_options_come_last_so_they_can_override() {
+        let mut h = mk_host();
+        h.forward_agent = true;
+        h.ssh_options = vec!["ForwardAgent=no".to_string()];
+        let opts = build_ssh_opts(&h, &HashMap::new());
+        let a_pos = opts.iter().position(|o| o == "-A").unwrap();
+        let override_pos = opts.iter().position(|o| o == "ForwardAgent=no").unwrap();
+        assert!(a_pos < override_pos, "raw options must come after the flags they override");
+    }
+
+    #[test]
+    fn interactive_argv_includes_ssh_options() {
+        let mut h = mk_host();
+        h.ssh_options = vec!["Compression=yes".to_string()];
+        let argv = build_ssh_argv(&h, &HashMap::new());
+        assert_eq!(argv, vec!["ssh", "root@10.0.0.5", "-p", "22", "-o", "Compression=yes"]);
+    }
+
+    // ---- mosh quoting ----------------------------------------------------
+
+    #[test]
+    fn mosh_quotes_an_identity_path_containing_a_space() {
+        let mut h = mk_host();
+        h.mosh = true;
+        h.identity_file = Some("/home/a/my keys/id_ed25519".to_string());
+        let argv = build_ssh_argv(&h, &HashMap::new());
+        assert_eq!(argv[0], "mosh");
+        // The path must survive as ONE argument once mosh re-splits the string.
+        assert_eq!(argv[1], "--ssh=ssh -p 22 -i '/home/a/my keys/id_ed25519'");
+        assert_eq!(argv[2], "root@10.0.0.5");
+    }
+
+    #[test]
+    fn mosh_quotes_an_ssh_option_containing_a_space() {
+        let mut h = mk_host();
+        h.mosh = true;
+        h.ssh_options = vec!["SetEnv=GREETING=hello world".to_string()];
+        let argv = build_ssh_argv(&h, &HashMap::new());
+        assert_eq!(argv[1], "--ssh=ssh -p 22 -o 'SetEnv=GREETING=hello world'");
+    }
+
+    #[test]
+    fn mosh_leaves_plain_arguments_unquoted() {
+        let mut h = mk_host();
+        h.mosh = true;
+        h.port = 2222;
+        let argv = build_ssh_argv(&h, &HashMap::new());
+        assert_eq!(argv[1], "--ssh=ssh -p 2222");
+    }
+
+    // ---- build_exec_argv: fan-out ----------------------------------------
+
+    #[test]
+    fn exec_argv_bounds_the_connection_then_runs_the_command() {
+        let h = mk_host();
+        let argv = build_exec_argv(&h, &HashMap::new(), "uptime", 10);
+        assert_eq!(
+            argv,
+            vec![
+                "ssh",
+                "-o", "ConnectTimeout=10",
+                "-o", "ServerAliveInterval=10",
+                "-o", "ServerAliveCountMax=1",
+                "-p", "22",
+                "root@10.0.0.5",
+                "uptime",
+            ]
+        );
+    }
+
+    #[test]
+    fn exec_argv_inherits_per_host_connection_settings() {
+        let mut h = mk_host();
+        h.port = 2222;
+        h.identity_file = Some("/k/id".to_string());
+        h.forward_agent = true;
+        h.ssh_options = vec!["Compression=yes".to_string()];
+        let argv = build_exec_argv(&h, &HashMap::new(), "id", 5);
+        // Everything build_ssh_opts produces has to be present — a fan-out that
+        // reached a host differently from an interactive connect would be a trap.
+        for expected in ["-p", "2222", "-i", "/k/id", "-A", "-o", "Compression=yes"] {
+            assert!(argv.iter().any(|a| a == expected), "missing {expected} in {argv:?}");
+        }
+        assert_eq!(argv.last().unwrap(), "id");
+    }
+
+    #[test]
+    fn exec_argv_never_uses_a_zero_timeout() {
+        let h = mk_host();
+        let argv = build_exec_argv(&h, &HashMap::new(), "true", 0);
+        // ConnectTimeout=0 means "no timeout" to ssh — the opposite of intent.
+        assert!(argv.iter().any(|a| a == "ConnectTimeout=1"));
+    }
+
+    #[test]
+    fn exec_argv_places_the_command_after_the_target() {
+        let h = mk_host();
+        let argv = build_exec_argv(&h, &HashMap::new(), "echo hi", 10);
+        let target = argv.iter().position(|a| a == "root@10.0.0.5").unwrap();
+        let cmd = argv.iter().position(|a| a == "echo hi").unwrap();
+        assert!(target < cmd);
     }
 }

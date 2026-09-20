@@ -8,7 +8,6 @@ use std::collections::HashMap;
 use std::process::Command;
 
 use crate::models::Host;
-use crate::ssh::proxy::resolve_proxy_jump;
 
 /// Prompt for a command, confirm it against `names`, then run it on each host
 /// over ssh in order. Returns `Some((ok, failed))` once finished, or `None`
@@ -79,28 +78,21 @@ pub fn run_fanout(
     Some((ok, failed))
 }
 
+/// Seconds allowed for the ssh handshake, and for silence on an established
+/// connection, before a host is written off. Keeps one dead machine from
+/// wedging the batch without cutting short a command that is still working.
+const FANOUT_TIMEOUT_SECS: u32 = 10;
+
 /// Run `command` on a single host over a non-interactive ssh session. stdio is
 /// inherited so output streams live. Returns the process exit code, or `None`
 /// when ssh itself could not be spawned.
+///
+/// The argv comes from `sshm_core`, so a fan-out reaches a host exactly the
+/// way an interactive connection does — same identity, same ProxyJump chain,
+/// same per-host `ssh_options`.
 fn run_one(h: &Host, all_hosts: &HashMap<String, Host>, command: &str) -> Option<i32> {
-    let mut cmd = Command::new("ssh");
-    // Fail fast on dead hosts instead of hanging the whole batch.
-    cmd.arg("-o").arg("ConnectTimeout=10");
-    cmd.arg(format!("{}@{}", h.username, h.host));
-    cmd.arg("-p").arg(h.port.to_string());
-    if let Some(id) = &h.identity_file {
-        if !id.is_empty() {
-            cmd.arg("-i").arg(id);
-        }
-    }
-    if let Some(j) = &h.proxy_jump {
-        if let Some(resolved) = resolve_proxy_jump(j, all_hosts) {
-            cmd.arg("-J").arg(resolved);
-        }
-    }
-    if h.forward_agent {
-        cmd.arg("-A");
-    }
-    cmd.arg(command);
+    let argv = sshm_core::ssh::client::build_exec_argv(h, all_hosts, command, FANOUT_TIMEOUT_SECS);
+    let mut cmd = Command::new(&argv[0]);
+    cmd.args(&argv[1..]);
     cmd.status().ok().map(|s| s.code().unwrap_or(-1))
 }

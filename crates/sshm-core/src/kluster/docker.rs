@@ -30,18 +30,7 @@ mod ssh_uri_tests {
             host: host.into(),
             port,
             username: user.into(),
-            identity_file: None,
-            proxy_jump: None,
-            tags: None,
-            folder: None,
-            last_connected_at: None,
-            use_count: 0,
-            favorite: false,
-            tunnels: vec![],
-            forward_agent: false,
-            mosh: false,
-            notes: None,
-            remote_command: None,
+            ..Default::default()
         }
     }
 

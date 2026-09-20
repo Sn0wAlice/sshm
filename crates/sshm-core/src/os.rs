@@ -37,7 +37,7 @@ fn applescript_quote(s: &str) -> String {
 }
 
 /// POSIX-shell-quote a single argument.
-fn shell_quote(s: &str) -> String {
+pub fn shell_quote(s: &str) -> String {
     if !s.is_empty() && s.chars().all(|c| c.is_alphanumeric() || "-_./@:=".contains(c)) {
         s.to_string()
     } else {

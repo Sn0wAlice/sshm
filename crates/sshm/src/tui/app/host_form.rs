@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 use crate::config::settings::load_settings;
-use crate::models::{Database, Host};
+use crate::models::{invalid_ssh_option, parse_ssh_options, Database, Host};
 use crate::tui::ssh::host_form_state::HostFormState;
 use crate::tui::ssh::modal::centered_rect;
 use crate::tui::theme;
@@ -57,6 +57,7 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
                 Constraint::Length(1), // folder
                 Constraint::Length(1), // notes
                 Constraint::Length(1), // remote command
+                Constraint::Length(1), // ssh options
                 Constraint::Length(1), // forward agent
                 Constraint::Length(1), // mosh
                 Constraint::Length(1), // actions
@@ -93,6 +94,10 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
         mk_line("Run on connect", &state.remote_command, state.selected_field == HostFormState::REMOTE_CMD_FIELD),
         chunks[9],
     );
+    f.render_widget(
+        mk_line("ssh -o options", &state.ssh_options, state.selected_field == HostFormState::SSH_OPTS_FIELD),
+        chunks[10],
+    );
 
     // Forward-agent toggle row
     let fa_selected = state.selected_field == HostFormState::FA_FIELD;
@@ -120,7 +125,7 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
         Span::styled(fa_value, fa_marker_style),
         Span::styled(fa_warning.to_string(), warning_style),
     ]));
-    f.render_widget(fa_para, chunks[10]);
+    f.render_widget(fa_para, chunks[11]);
 
     // Mosh toggle row
     let mosh_selected = state.selected_field == HostFormState::MOSH_FIELD;
@@ -142,7 +147,7 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
         Span::styled(mosh_value, mosh_marker_style),
         Span::styled(mosh_hint.to_string(), Style::default().fg(theme.muted)),
     ]));
-    f.render_widget(mosh_para, chunks[11]);
+    f.render_widget(mosh_para, chunks[12]);
 
     let save_selected = state.selected_field == HostFormState::fields_count();
     let save_style = if save_selected {
@@ -157,7 +162,7 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
         Span::styled("[ Esc = Cancel ]", Style::default().fg(theme.muted)),
     ]));
 
-    f.render_widget(actions, chunks[12]);
+    f.render_widget(actions, chunks[13]);
 
     let footer_area = Rect {
         x: inner.x,
@@ -267,6 +272,13 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
         if v.is_empty() { None } else { Some(v.to_string()) }
     };
 
+    let ssh_options = parse_ssh_options(&state.ssh_options);
+    if let Some(bad) = invalid_ssh_option(&ssh_options) {
+        return Err(format!(
+            "ssh option '{bad}' is not in keyword=value form (e.g. ServerAliveInterval=30)"
+        ));
+    }
+
     if state.is_edit {
         if let Some(orig_name) = &state.original_name {
             let (last_connected_at, use_count, favorite, tunnels) = db
@@ -292,6 +304,7 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
                 mosh: state.mosh,
                 notes: notes.clone(),
                 remote_command: remote_command.clone(),
+                ssh_options: ssh_options.clone(),
             };
             db.hosts.insert(new_host.name.clone(), new_host);
         }
@@ -313,6 +326,7 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
             mosh: state.mosh,
             notes,
             remote_command,
+            ssh_options,
         };
         db.hosts.insert(name.to_string(), host_obj);
     }

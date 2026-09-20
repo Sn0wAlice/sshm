@@ -141,24 +141,13 @@ mod tests {
         Host {
             name: name.to_string(),
             host: host.to_string(),
-            port: 22,
             username: user.to_string(),
-            identity_file: None,
-            proxy_jump: None,
             tags: if tags.is_empty() {
                 None
             } else {
                 Some(tags.iter().map(|s| s.to_string()).collect())
             },
-            folder: None,
-            last_connected_at: None,
-            use_count: 0,
-            favorite: false,
-            tunnels: vec![],
-            forward_agent: false,
-            mosh: false,
-            notes: None,
-            remote_command: None,
+            ..Default::default()
         }
     }
 

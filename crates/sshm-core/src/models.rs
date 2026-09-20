@@ -111,6 +111,42 @@ pub struct Host {
     /// `None` = shell de login normal. Ignoré en mode mosh.
     #[serde(default)]
     pub remote_command: Option<String>,
+    /// Options ssh brutes ajoutées à la ligne de commande, sans le `-o`
+    /// (ex : `ServerAliveInterval=30`, `SetEnv=FOO=bar`). Chaque entrée est
+    /// passée telle quelle en `-o <entrée>`, ce qui couvre tout ce que le
+    /// modèle n'expose pas en champ dédié.
+    ///
+    /// Elles s'appliquent partout où sshm construit une commande ssh pour cet
+    /// hôte : connexion interactive, tunnels en arrière-plan et fan-out.
+    #[serde(default)]
+    pub ssh_options: Vec<String>,
+}
+
+impl Default for Host {
+    /// Les mêmes valeurs que les `#[serde(default)]` ci-dessus, pour que
+    /// `Host { name, host, ..Default::default() }` produise exactement ce
+    /// qu'une désérialisation d'un JSON minimal produirait.
+    fn default() -> Self {
+        Host {
+            name: String::new(),
+            host: String::new(),
+            port: default_port(),
+            username: default_username(),
+            identity_file: None,
+            proxy_jump: None,
+            tags: None,
+            folder: None,
+            last_connected_at: None,
+            use_count: 0,
+            favorite: false,
+            tunnels: Vec::new(),
+            forward_agent: false,
+            mosh: false,
+            notes: None,
+            remote_command: None,
+            ssh_options: Vec::new(),
+        }
+    }
 }
 
 /// Lightweight signature (mtime + length) of the file backing a [`Database`],
@@ -203,8 +239,114 @@ fn default_port() -> u16 { 22 }
 fn default_username() -> String { "root".to_string() }
 
 /// Convertit `Option<Vec<String>>` en string d'affichage.
+/// Split the raw ssh-options form field into the list stored on a [`Host`].
+///
+/// Entries are `;`-separated — semicolon rather than comma because commas are
+/// common *inside* option values (`Ciphers=aes128-ctr,aes256-ctr`). Blank
+/// entries are dropped, and a leading `-o` is stripped: typing
+/// `-o ServerAliveInterval=30` is the natural thing to do after reading
+/// `ssh(1)`, and keeping the flag would emit `-o -o ServerAliveInterval=30`.
+pub fn parse_ssh_options(raw: &str) -> Vec<String> {
+    raw.split(';')
+        .map(|s| s.trim())
+        .map(|s| s.strip_prefix("-o").map(|r| r.trim()).unwrap_or(s))
+        .filter(|s| !s.is_empty())
+        .map(|s| s.to_string())
+        .collect()
+}
+
+/// Render a host's `ssh_options` back into the `;`-separated form field.
+pub fn ssh_options_to_string(opts: &[String]) -> String {
+    opts.join("; ")
+}
+
+/// `-o` takes `keyword=value`; a bare word makes ssh exit before it ever dials,
+/// and the failure surfaces as an unexplained failed connect. Returns the first
+/// offending entry.
+pub fn invalid_ssh_option(opts: &[String]) -> Option<&String> {
+    opts.iter().find(|o| !o.contains('='))
+}
+
 pub fn tags_to_string(tags: &Option<Vec<String>>) -> String {
     tags.as_ref()
         .filter(|v| !v.is_empty())
         .map_or_else(String::new, |v| v.join(","))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_matches_the_serde_defaults() {
+        // A minimal JSON object must deserialize to the same thing
+        // `Host::default()` builds — otherwise `..Default::default()` in a
+        // constructor would quietly disagree with a file loaded from disk.
+        let from_json: Host =
+            serde_json::from_str(r#"{"name":"a","host":"h"}"#).expect("minimal host parses");
+        let from_default = Host { name: "a".into(), host: "h".into(), ..Default::default() };
+        assert_eq!(from_json, from_default);
+        assert_eq!(from_default.port, 22);
+        assert_eq!(from_default.username, "root");
+    }
+
+    #[test]
+    fn ssh_options_round_trip_through_the_form_field() {
+        let opts = vec!["ServerAliveInterval=30".to_string(), "Compression=yes".to_string()];
+        assert_eq!(parse_ssh_options(&ssh_options_to_string(&opts)), opts);
+    }
+
+    #[test]
+    fn parse_ssh_options_splits_on_semicolons_only() {
+        // Commas belong to the value: `Ciphers=a,b` is one option, not two.
+        assert_eq!(
+            parse_ssh_options("Ciphers=aes128-ctr,aes256-ctr; Compression=yes"),
+            vec!["Ciphers=aes128-ctr,aes256-ctr", "Compression=yes"]
+        );
+    }
+
+    #[test]
+    fn parse_ssh_options_strips_a_typed_dash_o() {
+        assert_eq!(
+            parse_ssh_options("-o Compression=yes; -oBatchMode=yes"),
+            vec!["Compression=yes", "BatchMode=yes"]
+        );
+    }
+
+    #[test]
+    fn parse_ssh_options_drops_blanks_and_trims() {
+        assert_eq!(parse_ssh_options("  ; A=1 ;;  B=2  ;"), vec!["A=1", "B=2"]);
+        assert!(parse_ssh_options("   ").is_empty());
+        assert!(parse_ssh_options("").is_empty());
+    }
+
+    #[test]
+    fn invalid_ssh_option_flags_a_bare_keyword() {
+        let ok = vec!["A=1".to_string(), "B=2".to_string()];
+        assert!(invalid_ssh_option(&ok).is_none());
+
+        let bad = vec!["A=1".to_string(), "Compression".to_string()];
+        assert_eq!(invalid_ssh_option(&bad).map(String::as_str), Some("Compression"));
+    }
+
+    #[test]
+    fn ssh_options_survive_a_json_round_trip() {
+        let h = Host {
+            name: "a".into(),
+            host: "h".into(),
+            ssh_options: vec!["SetEnv=FOO=bar".into()],
+            ..Default::default()
+        };
+        let back: Host = serde_json::from_str(&serde_json::to_string(&h).unwrap()).unwrap();
+        assert_eq!(back, h);
+    }
+
+    #[test]
+    fn a_host_saved_before_ssh_options_existed_still_loads() {
+        // Schema compatibility: host.json files written by 2.1.2 have no
+        // `ssh_options` key at all.
+        let old = r#"{"name":"a","host":"h","port":22,"username":"root","mosh":false}"#;
+        let h: Host = serde_json::from_str(old).expect("pre-2.2 host parses");
+        assert!(h.ssh_options.is_empty());
+    }
 }

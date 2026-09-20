@@ -48,15 +48,7 @@ pub fn parse_ssh_config_text(
             identity_file,
             proxy_jump,
             tags: Some(vec!["ssh_config".to_string()]),
-            folder: None,
-            last_connected_at: None,
-            use_count: 0,
-            favorite: false,
-            tunnels: vec![],
-            forward_agent: false,
-            mosh: false,
-            notes: None,
-            remote_command: None,
+            ..Default::default()
         });
     }
     out
@@ -131,20 +123,8 @@ Host concrete
             Host {
                 name: "already".to_string(),
                 host: "1.1.1.1".to_string(),
-                port: 22,
                 username: "u".to_string(),
-                identity_file: None,
-                proxy_jump: None,
-                tags: None,
-                folder: None,
-                last_connected_at: None,
-                use_count: 0,
-                favorite: false,
-                tunnels: vec![],
-                forward_agent: false,
-                mosh: false,
-                notes: None,
-                remote_command: None,
+                ..Default::default()
             },
         );
         let parsed = parse_ssh_config_text(txt, &existing);

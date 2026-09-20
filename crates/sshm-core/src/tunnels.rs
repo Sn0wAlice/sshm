@@ -16,7 +16,6 @@ use std::path::PathBuf;
 use serde::{Deserialize, Serialize};
 
 use crate::models::{Host, Tunnel, TunnelKind};
-use crate::ssh::proxy::resolve_proxy_jump;
 
 /// The `ssh` port-forward flag pair for one tunnel: `-L p:h:p`, `-R p:h:p`, or
 /// `-D p`.
@@ -54,23 +53,7 @@ pub fn build_tunnel_argv(
     let mut argv = vec!["ssh".to_string(), "-N".to_string()];
     argv.extend(build_forward_arg(tunnel));
     argv.push(format!("{}@{}", host.username, host.host));
-    argv.push("-p".into());
-    argv.push(host.port.to_string());
-    if let Some(id) = &host.identity_file {
-        if !id.is_empty() {
-            argv.push("-i".into());
-            argv.push(id.clone());
-        }
-    }
-    if let Some(j) = &host.proxy_jump {
-        if let Some(resolved) = resolve_proxy_jump(j, all_hosts) {
-            argv.push("-J".into());
-            argv.push(resolved);
-        }
-    }
-    if host.forward_agent {
-        argv.push("-A".into());
-    }
+    argv.extend(crate::ssh::client::build_ssh_opts(host, all_hosts));
     argv
 }
 
@@ -136,18 +119,7 @@ mod tests {
             host: "10.0.0.5".into(),
             port: 2222,
             username: "root".into(),
-            identity_file: None,
-            proxy_jump: None,
-            tags: None,
-            folder: None,
-            last_connected_at: None,
-            use_count: 0,
-            favorite: false,
-            tunnels: vec![],
-            forward_agent: false,
-            mosh: false,
-            notes: None,
-            remote_command: None,
+            ..Default::default()
         }
     }
 
@@ -179,5 +151,55 @@ mod tests {
         let argv = build_tunnel_argv(&host(), &t, &HashMap::new());
         assert!(argv.contains(&"-D".to_string()));
         assert!(argv.contains(&"1080".to_string()));
+    }
+}
+
+#[cfg(test)]
+mod ssh_option_tests {
+    use super::*;
+
+    #[test]
+    fn a_background_tunnel_inherits_per_host_ssh_options() {
+        // Regression guard for the duplication this replaced: a tunnel used to
+        // build its own flags, so anything added to `build_ssh_opts` silently
+        // skipped it.
+        let host = Host {
+            name: "db".into(),
+            host: "10.0.0.9".into(),
+            port: 2222,
+            identity_file: Some("/k/id".into()),
+            forward_agent: true,
+            ssh_options: vec!["ServerAliveInterval=30".into()],
+            ..Default::default()
+        };
+        let t = Tunnel {
+            label: "pg".into(),
+            kind: TunnelKind::Local,
+            local_port: 5432,
+            remote_port: 5432,
+            remote_host: String::new(),
+        };
+        let argv = build_tunnel_argv(&host, &t, &HashMap::new());
+        assert_eq!(argv[0], "ssh");
+        assert_eq!(argv[1], "-N");
+        for expected in ["-p", "2222", "-i", "/k/id", "-A", "-o", "ServerAliveInterval=30"] {
+            assert!(argv.iter().any(|a| a == expected), "missing {expected} in {argv:?}");
+        }
+    }
+
+    #[test]
+    fn the_forward_flag_still_precedes_the_target() {
+        let host = Host { name: "db".into(), host: "h".into(), ..Default::default() };
+        let t = Tunnel {
+            label: String::new(),
+            kind: TunnelKind::Dynamic,
+            local_port: 1080,
+            remote_port: 0,
+            remote_host: String::new(),
+        };
+        let argv = build_tunnel_argv(&host, &t, &HashMap::new());
+        let fwd = argv.iter().position(|a| a == "-D").unwrap();
+        let target = argv.iter().position(|a| a == "root@h").unwrap();
+        assert!(fwd < target, "{argv:?}");
     }
 }

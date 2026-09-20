@@ -40,6 +40,11 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         Some(n) if !n.trim().is_empty() => format!("Notes: {}\n", n.trim()),
                         _ => String::new(),
                     };
+                    let opts_line = if h.ssh_options.is_empty() {
+                        String::new()
+                    } else {
+                        format!("ssh -o: {}\n", h.ssh_options.join("; "))
+                    };
                     let tunnels_line = if h.tunnels.is_empty() {
                         String::new()
                     } else {
@@ -53,7 +58,7 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         h.last_connected_at.as_deref(),
                     );
                     let detail = format!(
-                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n{}{}{}{}{}Last used: {}\nUses: {}\nFrecency: {:.2}\n{}",
+                        "Name: {}\nUser: {}\nHost: {}\nPort: {}\nTags: {}\nIdentityFile: {}\nProxyJump: {}\nFolder: {}\n{}{}{}{}{}{}Last used: {}\nUses: {}\nFrecency: {:.2}\n{}",
                         name_display,
                         h.username,
                         h.host,
@@ -65,6 +70,7 @@ pub fn show_detail_box(last_rows_len: usize, selected: usize, rows: &[Row], f: &
                         fa_line,
                         mosh_line,
                         run_line,
+                        opts_line,
                         tunnels_line,
                         notes_line,
                         last_used,

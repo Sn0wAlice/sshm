@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 use inquire::{Select, Text};
-use crate::models::{Host, Database, tags_to_string};
+use crate::models::{
+    invalid_ssh_option, parse_ssh_options, ssh_options_to_string, tags_to_string, Database, Host,
+};
 use crate::config::io::save_db;
 
 /// Create either a Host (in the current folder) or a Folder.
@@ -30,45 +32,77 @@ fn create_folder(db: &mut Database) {
 }
 
 pub fn create_host(hosts: &mut HashMap<String, Host>, current_folder: Option<String>) {
-    let name = Text::new("Name (alias):").prompt().unwrap();
-    let host = Text::new("Host (hostname or IP):").prompt().unwrap();
-    let port: u16 = Text::new("Port:").with_initial_value("22").prompt().unwrap().parse().unwrap_or(22);
-    let username = Text::new("Username:").with_initial_value("root").prompt().unwrap();
-    let identity_file = {
-        let v = Text::new("Identity file (optional):").with_initial_value("").prompt().unwrap();
-        if v.trim().is_empty() { None } else { Some(v) }
-    };
-    let proxy_jump = {
-        let v = Text::new("ProxyJump, e.g. bastion:22 (optional):").with_initial_value("").prompt().unwrap();
-        if v.trim().is_empty() { None } else { Some(v) }
-    };
-    let tags = {
-        let v = Text::new("Tags (comma-separated, optional):").with_initial_value("").prompt().unwrap();
-        let v = v.trim();
-        if v.is_empty() { None } else {
-            Some(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-        }
-    };
+    let Some(name) = ask("Name (alias):", "") else { return };
+    let name = name.trim().to_string();
+    if name.is_empty() {
+        eprintln!("Name cannot be empty.");
+        return;
+    }
+    if hosts.contains_key(&name) {
+        eprintln!("Alias '{}' already exists.", name);
+        return;
+    }
 
-    let folder = current_folder.clone();
-    hosts.insert(name.clone(), Host {
-        name: name.clone(),
-        host,
-        port,
-        username,
-        identity_file,
-        proxy_jump,
-        folder,
-        tags,
-        last_connected_at: None,
-        use_count: 0,
-        favorite: false,
-        tunnels: vec![],
-        forward_agent: false,
-        mosh: false,
-        notes: None,
-        remote_command: None,
-    });
+    let Some(host) = ask("Host (hostname or IP):", "") else { return };
+    let host = host.trim().to_string();
+    if host.is_empty() {
+        eprintln!("Host cannot be empty.");
+        return;
+    }
+
+    let Some(port_raw) = ask("Port:", "22") else { return };
+    let port: u16 = port_raw.trim().parse().unwrap_or(22);
+
+    let Some(username) = ask("Username:", "root") else { return };
+    let Some(identity_file) = ask("Identity file (optional):", "") else { return };
+    let Some(proxy_jump) = ask("ProxyJump, e.g. bastion:22 (optional):", "") else { return };
+    let Some(tags) = ask("Tags (comma-separated, optional):", "") else { return };
+    let Some(ssh_options_raw) = ask("ssh -o options, ;-separated (optional):", "") else { return };
+
+    let ssh_options = parse_ssh_options(&ssh_options_raw);
+    if let Some(bad) = invalid_ssh_option(&ssh_options) {
+        eprintln!("ssh option '{bad}' is not in keyword=value form (e.g. ServerAliveInterval=30).");
+        return;
+    }
+
+    hosts.insert(
+        name.clone(),
+        Host {
+            name,
+            host,
+            port,
+            username: opt(&username).unwrap_or_else(|| "root".to_string()),
+            identity_file: opt(&identity_file),
+            proxy_jump: opt(&proxy_jump),
+            folder: current_folder,
+            tags: split_tags(&tags),
+            ssh_options,
+            ..Default::default()
+        },
+    );
+}
+
+/// Prompt for one value. `None` means the user cancelled (Esc / Ctrl-C), and
+/// every caller treats that as "abandon the whole operation" — the alternative
+/// is committing a half-filled host.
+fn ask(prompt: &str, initial: &str) -> Option<String> {
+    Text::new(prompt).with_initial_value(initial).prompt().ok()
+}
+
+/// Trimmed value, or `None` when the user left the field blank.
+fn opt(v: &str) -> Option<String> {
+    let v = v.trim();
+    if v.is_empty() { None } else { Some(v.to_string()) }
+}
+
+/// Parse the comma-separated tags field.
+fn split_tags(v: &str) -> Option<Vec<String>> {
+    let v: Vec<String> = v
+        .split(',')
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty())
+        .collect();
+    if v.is_empty() { None } else { Some(v) }
 }
 
 /// Delete either a Host or a Folder (when deleting a folder, move its hosts to root).
@@ -121,30 +155,54 @@ pub fn edit_host(db: &mut Database) {
 }
 
 pub fn edit_host_by_name(hosts: &mut HashMap<String, Host>, key: &str) {
-    if let Some(host) = hosts.get_mut(key) {
-        host.host = Text::new("New Host:").with_initial_value(&host.host).prompt().unwrap();
-        host.port = Text::new("New Port:").with_initial_value(&host.port.to_string()).prompt().unwrap().parse().unwrap_or(22);
-        host.username = Text::new("New Username:").with_initial_value(&host.username).prompt().unwrap();
+    let Some(host) = hosts.get(key) else { return };
 
-        let id_init = host.identity_file.clone().unwrap_or_default();
-        let pj_init = host.proxy_jump.clone().unwrap_or_default();
-        let tags_init = tags_to_string(&host.tags);
-        let folder_init = host.folder.clone().unwrap_or_default();
+    // Gather every answer before touching the host: cancelling at the last
+    // prompt must leave the entry exactly as it was, not half-edited.
+    let Some(new_host) = ask("New Host:", &host.host) else { return };
+    let Some(port_raw) = ask("New Port:", &host.port.to_string()) else { return };
+    let Some(username) = ask("New Username:", &host.username) else { return };
+    let Some(id) = ask(
+        "Identity file (optional):",
+        &host.identity_file.clone().unwrap_or_default(),
+    ) else { return };
+    let Some(pj) = ask(
+        "ProxyJump (optional):",
+        &host.proxy_jump.clone().unwrap_or_default(),
+    ) else { return };
+    let Some(folder) = ask(
+        "Folder (empty = All):",
+        &host.folder.clone().unwrap_or_default(),
+    ) else { return };
+    let Some(tags) = ask(
+        "Tags (comma-separated, optional):",
+        &tags_to_string(&host.tags),
+    ) else { return };
+    let Some(ssh_options_raw) = ask(
+        "ssh -o options, ;-separated (optional):",
+        &ssh_options_to_string(&host.ssh_options),
+    ) else { return };
 
-        let id = Text::new("Identity file (optional):").with_initial_value(&id_init).prompt().unwrap();
-        host.identity_file = if id.trim().is_empty() { None } else { Some(id) };
-
-        let pj = Text::new("ProxyJump (optional):").with_initial_value(&pj_init).prompt().unwrap();
-        host.proxy_jump = if pj.trim().is_empty() { None } else { Some(pj) };
-
-        let folder = Text::new("Folder (empty = All):").with_initial_value(&folder_init).prompt().unwrap();
-        host.folder = if folder.trim().is_empty() { None } else { Some(folder) };
-
-        let tags = Text::new("Tags (comma-separated, optional):").with_initial_value(&tags_init).prompt().unwrap();
-        host.tags = if tags.trim().is_empty() { None } else {
-            Some(tags.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect())
-        };
+    let new_host_value = new_host.trim().to_string();
+    if new_host_value.is_empty() {
+        eprintln!("Host cannot be empty — nothing changed.");
+        return;
     }
+    let ssh_options = parse_ssh_options(&ssh_options_raw);
+    if let Some(bad) = invalid_ssh_option(&ssh_options) {
+        eprintln!("ssh option '{bad}' is not in keyword=value form — nothing changed.");
+        return;
+    }
+
+    let Some(host) = hosts.get_mut(key) else { return };
+    host.host = new_host_value;
+    host.port = port_raw.trim().parse().unwrap_or(22);
+    host.username = opt(&username).unwrap_or_else(|| "root".to_string());
+    host.identity_file = opt(&id);
+    host.proxy_jump = opt(&pj);
+    host.folder = opt(&folder);
+    host.tags = split_tags(&tags);
+    host.ssh_options = ssh_options;
 }
 
 pub fn rename_host(hosts: &mut HashMap<String, Host>, old: &str) {

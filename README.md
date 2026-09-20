@@ -24,6 +24,7 @@ Built for developers, sysadmins, pentesters, and homelab folks who live in a ter
 - **ForwardAgent (`-A`) per host** — opt-in with a visible warning, badged in the list
 - **Mosh per host** — opt-in toggle; connects via `mosh` instead of `ssh`, forwarding port / identity / ProxyJump automatically
 - **Run-on-connect** — a per-host command run at login (`RemoteCommand` + `-t`), then you land in a normal shell; start it with `exec ` to take over the session yourself
+- **Raw ssh options per host** — a `;`-separated list of `-o` settings (`ServerAliveInterval=30`, `SetEnv=FOO=bar`, `Ciphers=…`) for everything the dedicated fields don't cover. They apply to the interactive connection, background tunnels and fan-out alike, and are written out by `export`
 - **Copy connection string** — `Y` copies `user@host` to the clipboard (`pbcopy` / `wl-copy` / `xclip` / `xsel`)
 - **Per-host notes** — free-text reminder shown in the detail panel
 - **Hardware key detection** — `[HW]` badge for `*-sk` keys
@@ -254,7 +255,7 @@ The available actions depend on what's under the cursor.
 
 | Path | Purpose |
 |------|---------|
-| `~/.config/sshm/host.json` | Hosts, folders, tunnels, ProxyJump |
+| `~/.config/sshm/host.json` | Hosts, folders, tunnels, ProxyJump, per-host ssh options |
 | `~/.config/sshm/kluster.json` | Saved clusters + Incus remotes + Docker remotes |
 | `~/.config/sshm/settings.toml` | Defaults, health & kluster intervals |
 | `~/.config/sshm/theme.toml` | TUI color theme (optional) |

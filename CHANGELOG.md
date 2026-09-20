@@ -36,6 +36,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on-exit toggles. The rest (which files travel, the conflict policy) lives in
   `settings.toml` and `sshm sync setup`.
 
+### Added
+
+- **Raw ssh options per host.** A new `ssh_options` list on a host carries
+  anything the dedicated fields don't model — `ServerAliveInterval=30`,
+  `SetEnv=FOO=bar`, `Ciphers=…` — as `-o` flags. Editable from the host form
+  (`;`-separated, so commas inside a value survive) and from `sshm create` /
+  `sshm edit`, validated as `keyword=value` on the way in, shown in the detail
+  panel, and written to `~/.ssh/config` by `export`. Existing `host.json`
+  files load unchanged.
+- **`ForwardAgent` is now exported.** A host with `-A` enabled emits
+  `ForwardAgent yes` in the exported ssh config; previously the setting was
+  silently dropped.
+
+### Fixed
+
+- **Mosh broke on any ssh argument containing a space.** The ssh flags are
+  passed to mosh as one `--ssh=` string that mosh splits again on whitespace,
+  so an identity path like `~/.ssh/my keys/id_ed25519` arrived as two
+  arguments and the connection failed. Each flag is now shell-quoted.
+- **Cancelling `sshm create` or `sshm edit` panicked.** Every prompt was
+  `unwrap()`ed, so Esc or Ctrl-C aborted the process with a Rust panic instead
+  of returning to the shell. Cancelling now abandons the operation cleanly, and
+  `sshm edit` gathers every answer before writing, so a late cancel leaves the
+  host exactly as it was. `create` also refuses an empty name, an empty host
+  and an alias that already exists instead of silently overwriting.
+- **Fan-out could hang on a host that answered and then went quiet.** The
+  handshake was bounded by `ConnectTimeout`, but a connection that dropped
+  mid-command left ssh waiting indefinitely and stalled the rest of the batch.
+  `ServerAliveInterval` / `ServerAliveCountMax` now bound that case too; a
+  command that is genuinely still running is untouched.
+- **Fan-out ignored some per-host connection settings.** It rebuilt the ssh
+  flags itself rather than reusing the engine's builder, so it could reach a
+  host differently from an interactive connect. All three call sites — the
+  interactive connection, background tunnels and fan-out — now go through a
+  single `build_ssh_opts`.
+
 ### Removed
 
 - **The desktop GUI (`sshm-desktop`).** The Tauri 2 + Svelte app and its
