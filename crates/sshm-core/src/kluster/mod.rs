@@ -4,15 +4,19 @@
 //!   logs from containers running on the host's daemon.
 //! - [`apple`] wraps Apple's macOS `container` CLI (same operations).
 //! - [`kube`] wraps `kubectl` for the same operations across saved clusters.
-//! - [`shell`] holds the `bash`-or-`sh` fallback string used by both.
+//! - [`engine`] holds the command construction shared by [`docker`] and [`podman`],
+//!   which speak the same CLI.
+//! - [`shell`] holds the shell path used to exec into a container.
 //! - [`db`] persists the user's saved cluster definitions in `kluster.json`.
 
 pub mod apple;
 pub mod db;
 pub mod docker;
+pub mod engine;
 pub mod incus;
 pub mod kube;
 pub mod models;
+pub mod podman;
 pub mod shell;
 
 pub use models::{

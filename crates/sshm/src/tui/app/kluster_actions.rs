@@ -80,6 +80,7 @@ pub fn handle_kluster_open_shell<B: Backend>(
     let res = match target {
         KlusterTarget::Docker(c) => crate::kluster::docker::exec_shell(&c.id, None),
         KlusterTarget::Apple(c) => crate::kluster::apple::exec_shell(&c.id),
+        KlusterTarget::Podman(c) => crate::kluster::podman::exec_shell(&c.id),
         KlusterTarget::DockerRemote {
             container,
             host_uri,
@@ -122,6 +123,7 @@ pub fn handle_kluster_open_logs<B: Backend>(
     let res = match target {
         KlusterTarget::Docker(c) => crate::kluster::docker::logs(&c.id, tail, follow, None),
         KlusterTarget::Apple(c) => crate::kluster::apple::logs(&c.id, tail, follow),
+        KlusterTarget::Podman(c) => crate::kluster::podman::logs(&c.id, tail, follow),
         KlusterTarget::DockerRemote {
             container,
             host_uri,
@@ -164,6 +166,7 @@ pub fn build_kluster_detail(
             host_uri,
         } => crate::kluster::docker::inspect_detail(&container.id, Some(host_uri)),
         KlusterTarget::Apple(c) => crate::kluster::apple::inspect_detail(&c.id),
+        KlusterTarget::Podman(c) => crate::kluster::podman::inspect_detail(&c.id),
         KlusterTarget::Incus { instance, remote } => {
             let mut ov = DetailSection::new("Overview");
             ov.push("Name", &instance.name);
@@ -221,6 +224,10 @@ pub fn handle_kluster_lifecycle(
         KlusterTarget::Apple(c) => (
             c.name.clone(),
             crate::kluster::apple::lifecycle(&c.id, action),
+        ),
+        KlusterTarget::Podman(c) => (
+            c.name.clone(),
+            crate::kluster::podman::lifecycle(&c.id, action),
         ),
         KlusterTarget::DockerRemote {
             container,

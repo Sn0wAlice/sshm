@@ -108,6 +108,36 @@ const SECTIONS: &[Section] = &[
     },
 ];
 
+/// Field indices in the order they are *drawn*, with the Save button last.
+///
+/// Navigation has to walk this rather than counting from the current index:
+/// the two disagree. `PAUSE_HEALTH_FIELD` is 10 but is drawn sixth, inside the
+/// Health section, so `selected_field + 1` from it landed on 11 — the sync
+/// toggle — skipping the five rows actually drawn in between, Notifications
+/// among them. Deriving the order from [`SECTIONS`] means a row added anywhere
+/// is reachable without a second list to keep in step.
+fn nav_order() -> Vec<usize> {
+    let mut order: Vec<usize> = SECTIONS
+        .iter()
+        .flat_map(|s| s.fields.iter().copied())
+        .collect();
+    order.push(SettingsFormState::fields_count()); // the Save button
+    order
+}
+
+/// The field `delta` steps away from `current` in drawing order, wrapping.
+fn step(current: usize, delta: isize) -> usize {
+    let order = nav_order();
+    let Some(pos) = order.iter().position(|&f| f == current) else {
+        // Not in any section — can only happen if a field was added to the
+        // count but not to a section. Start over rather than get stuck.
+        return order.first().copied().unwrap_or(0);
+    };
+    let len = order.len() as isize;
+    let next = ((pos as isize + delta) % len + len) % len;
+    order[next as usize]
+}
+
 /// Human label for a field index.
 fn field_label(i: usize) -> &'static str {
     match i {
@@ -171,15 +201,11 @@ impl SettingsFormState {
     }
 
     pub fn next_field(&mut self) {
-        self.selected_field = (self.selected_field + 1) % (Self::fields_count() + 1);
+        self.selected_field = step(self.selected_field, 1);
     }
 
     pub fn prev_field(&mut self) {
-        if self.selected_field == 0 {
-            self.selected_field = Self::fields_count();
-        } else {
-            self.selected_field -= 1;
-        }
+        self.selected_field = step(self.selected_field, -1);
     }
 
     pub fn active_value_mut(&mut self) -> Option<&mut String> {
@@ -272,8 +298,22 @@ impl SettingsFormState {
         }
     }
 
+    /// True when the cursor is on a row that consumes ordinary keystrokes —
+    /// i.e. a text field. The main loop uses this to decide whether a key is
+    /// the tab's or the application's.
+    ///
+    /// Positional, deliberately, and *not* gated on `dirty`. With the old rule
+    /// a pristine form left the global shortcuts live while you typed: `h`
+    /// opened the help popup, `t` the tunnels dashboard, `q` quit sshm
+    /// outright, and `←`/`→` jumped to another tab — so typing `hugo` into a
+    /// username was impossible until you had already changed something else,
+    /// after which the very same keys behaved. The Theme tab hit this and was
+    /// fixed the same way; this is that fix, applied here too.
+    ///
+    /// Toggle rows and the Save button are not editing: there, the global keys
+    /// are what you want, and Space or Enter flips the toggle.
     pub fn is_editing_field(&self) -> bool {
-        self.dirty && self.selected_field < Self::fields_count()
+        self.selected_field < Self::fields_count() && !is_toggle(self.selected_field)
     }
 }
 
@@ -689,5 +729,304 @@ mod tests {
             }
         }
         panic!("the encrypt row is not in any section, so it can never be selected");
+    }
+
+    // ---- which keys belong to the tab, and which to the application -------
+
+    #[test]
+    fn a_text_field_swallows_the_global_shortcuts() {
+        // The bug this guards: on a pristine form the global handler stayed
+        // live, so `h` opened help, `t` the tunnels popup and `q` quit sshm
+        // while you were trying to type a username.
+        let mut s = state();
+        for i in 0..SettingsFormState::fields_count() {
+            if is_toggle(i) {
+                continue;
+            }
+            s.selected_field = i;
+            assert!(
+                s.is_editing_field(),
+                "field {i} ({}) must capture keystrokes",
+                field_label(i)
+            );
+        }
+    }
+
+    #[test]
+    fn it_does_not_depend_on_whether_the_form_was_touched() {
+        // The old rule was `dirty && …`, which made the same key do two
+        // different things depending on history.
+        let mut s = state();
+        s.selected_field = 1; // Default Username, a text field
+        assert!(!s.dirty);
+        assert!(
+            s.is_editing_field(),
+            "a pristine form must still capture keys"
+        );
+        s.push_char('x');
+        assert!(s.dirty);
+        assert!(s.is_editing_field(), "and still capture them afterwards");
+    }
+
+    #[test]
+    fn toggle_rows_leave_the_global_keys_alone() {
+        // On a checkbox there is nothing to type, so `q`, `h`, `t` and the
+        // arrows should behave as they do everywhere else.
+        let mut s = state();
+        for i in 0..SettingsFormState::fields_count() {
+            if !is_toggle(i) {
+                continue;
+            }
+            s.selected_field = i;
+            assert!(!s.is_editing_field(), "field {i} is a toggle, not an input");
+        }
+    }
+
+    #[test]
+    fn the_save_button_is_not_an_input() {
+        let mut s = state();
+        s.selected_field = SettingsFormState::fields_count();
+        assert!(!s.is_editing_field());
+    }
+
+    #[test]
+    fn every_toggle_flips_including_notifications() {
+        let mut s = state();
+        for i in 0..SettingsFormState::fields_count() {
+            if !is_toggle(i) {
+                continue;
+            }
+            s.selected_field = i;
+            let before = toggle_value(&s, i);
+            assert!(s.toggle_bool(), "field {i} reported itself as not a toggle");
+            assert_ne!(
+                toggle_value(&s, i),
+                before,
+                "field {i} ({}) did not flip",
+                field_label(i)
+            );
+        }
+    }
+
+    #[test]
+    fn space_and_enter_both_flip_a_toggle() {
+        for key in [KeyCode::Char(' '), KeyCode::Enter] {
+            let mut s = state();
+            s.selected_field = NOTIFY_FIELD;
+            let before = s.notifications_enabled;
+            handle_settings_event(key, &mut s);
+            assert_ne!(s.notifications_enabled, before, "{key:?} did not flip it");
+        }
+    }
+
+    #[test]
+    fn a_non_toggle_row_ignores_space_as_a_control() {
+        // Space in a text field is a character, not a command.
+        let mut s = state();
+        s.selected_field = 1;
+        s.default_username = String::new();
+        handle_settings_event(KeyCode::Char(' '), &mut s);
+        assert_eq!(s.default_username, " ");
+    }
+
+    /// Current value of a toggle row.
+    fn toggle_value(st: &SettingsFormState, i: usize) -> bool {
+        match i {
+            AUTO_HEALTH_FIELD => st.auto_health_check,
+            PAUSE_HEALTH_FIELD => st.pause_health_on_session,
+            NOTIFY_FIELD => st.notifications_enabled,
+            SYNC_ENABLED_FIELD => st.sync_enabled,
+            SYNC_ON_START_FIELD => st.sync_on_start,
+            SYNC_ON_EXIT_FIELD => st.sync_on_exit,
+            SYNC_ENCRYPT_FIELD => st.sync_encrypt,
+            other => panic!("field {other} is marked a toggle but has no value here"),
+        }
+    }
+
+    // ---- the tables that have to stay in step ----------------------------
+    //
+    // The form is described by five separate lists — SECTIONS, field_label,
+    // is_toggle, toggle_bool, active_value_mut/settings_text_value — indexed by
+    // the same integers. Nothing in the type system ties them together, so a
+    // row added to one and forgotten in another is silently wrong on screen.
+    // These pin every pairing.
+
+    fn all_fields() -> Vec<usize> {
+        (0..SettingsFormState::fields_count()).collect()
+    }
+
+    fn section_fields() -> Vec<usize> {
+        SECTIONS
+            .iter()
+            .flat_map(|s| s.fields.iter().copied())
+            .collect()
+    }
+
+    #[test]
+    fn every_field_is_drawn_exactly_once() {
+        let mut drawn = section_fields();
+        drawn.sort();
+        assert_eq!(
+            drawn,
+            all_fields(),
+            "a field missing from SECTIONS is invisible and unreachable; a duplicate is drawn twice"
+        );
+    }
+
+    #[test]
+    fn fields_count_matches_what_is_drawn() {
+        assert_eq!(
+            SettingsFormState::fields_count(),
+            section_fields().len(),
+            "fields_count() is what the Save button's index is derived from"
+        );
+    }
+
+    #[test]
+    fn every_field_has_a_label() {
+        for i in all_fields() {
+            assert!(
+                !field_label(i).is_empty(),
+                "field {i} renders as a blank row"
+            );
+        }
+    }
+
+    #[test]
+    fn a_field_is_either_a_toggle_or_a_text_input() {
+        let mut s = state();
+        for i in all_fields() {
+            s.selected_field = i;
+            let editable = s.active_value_mut().is_some();
+            assert_ne!(
+                is_toggle(i),
+                editable,
+                "field {i} ({}) is both or neither",
+                field_label(i)
+            );
+        }
+    }
+
+    #[test]
+    fn every_text_field_renders_the_value_it_edits() {
+        // `active_value_mut` is what typing writes into; `settings_text_value`
+        // is what the row shows. A field in one and not the other looks frozen.
+        let mut s = state();
+        for i in all_fields() {
+            s.selected_field = i;
+            if s.active_value_mut().is_none() {
+                continue;
+            }
+            *s.active_value_mut().unwrap() = format!("probe-{i}");
+            assert_eq!(
+                settings_text_value(&s, i),
+                format!("probe-{i}"),
+                "field {i} ({}) does not render what it stores",
+                field_label(i)
+            );
+        }
+    }
+
+    // ---- navigation follows the screen, not the numbering ----------------
+
+    #[test]
+    fn navigation_visits_every_row_once_per_cycle() {
+        let mut s = state();
+        s.selected_field = 0;
+        let mut seen = vec![0usize];
+        for _ in 0..SettingsFormState::fields_count() {
+            s.next_field();
+            seen.push(s.selected_field);
+        }
+        assert_eq!(
+            s.selected_field,
+            SettingsFormState::fields_count(),
+            "Save comes last"
+        );
+        s.next_field();
+        assert_eq!(s.selected_field, 0, "and wraps to the top");
+
+        let mut sorted = seen.clone();
+        sorted.sort();
+        sorted.dedup();
+        assert_eq!(
+            sorted.len(),
+            seen.len(),
+            "a row was visited twice: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn navigation_follows_the_order_rows_are_drawn() {
+        // The bug: `selected_field + 1` walked the numbering, while the form
+        // is drawn in SECTIONS order. `PAUSE_HEALTH_FIELD` is 10 but sixth on
+        // screen, so ↓ from it jumped to 11 and skipped five visible rows.
+        let mut s = state();
+        s.selected_field = 0;
+        let mut walked = vec![0usize];
+        for _ in 0..SettingsFormState::fields_count() - 1 {
+            s.next_field();
+            walked.push(s.selected_field);
+        }
+        assert_eq!(walked, section_fields(), "↓ does not follow the screen");
+    }
+
+    #[test]
+    fn down_from_pause_reaches_notifications_not_the_sync_toggle() {
+        // The exact path the bug was reported on.
+        let mut s = state();
+        s.selected_field = PAUSE_HEALTH_FIELD;
+        let mut hops = 0;
+        loop {
+            s.next_field();
+            hops += 1;
+            if s.selected_field == NOTIFY_FIELD || hops > 20 {
+                break;
+            }
+            assert_ne!(
+                s.selected_field, SYNC_ENABLED_FIELD,
+                "↓ reached the sync toggle before Notifications — Notifications was skipped"
+            );
+        }
+        assert_eq!(
+            s.selected_field, NOTIFY_FIELD,
+            "Notifications is unreachable going down"
+        );
+    }
+
+    #[test]
+    fn up_and_down_are_inverses_from_every_row() {
+        let mut s = state();
+        for start in 0..=SettingsFormState::fields_count() {
+            s.selected_field = start;
+            s.next_field();
+            s.prev_field();
+            assert_eq!(
+                s.selected_field, start,
+                "↓ then ↑ did not return to {start}"
+            );
+            s.prev_field();
+            s.next_field();
+            assert_eq!(
+                s.selected_field, start,
+                "↑ then ↓ did not return to {start}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_row_is_reachable_going_up_too() {
+        let mut s = state();
+        s.selected_field = 0;
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..=SettingsFormState::fields_count() {
+            seen.insert(s.selected_field);
+            s.prev_field();
+        }
+        assert_eq!(
+            seen.len(),
+            SettingsFormState::fields_count() + 1,
+            "↑ cannot reach every row"
+        );
     }
 }

@@ -21,6 +21,7 @@ fn header_key(row: &KlusterRow) -> Option<String> {
     match row {
         KlusterRow::DockerHeader { .. } => Some("docker".into()),
         KlusterRow::AppleHeader { .. } => Some("apple".into()),
+        KlusterRow::PodmanHeader { .. } => Some("podman".into()),
         KlusterRow::DockerRemoteHeader { remote_idx, .. } => {
             Some(format!("docker_remote_{}", remote_idx))
         }
@@ -39,6 +40,7 @@ fn is_header(row: &KlusterRow) -> bool {
         row,
         KlusterRow::DockerHeader { .. }
             | KlusterRow::AppleHeader { .. }
+            | KlusterRow::PodmanHeader { .. }
             | KlusterRow::DockerRemoteHeader { .. }
             | KlusterRow::IncusLocalHeader { .. }
             | KlusterRow::IncusRemoteHeader { .. }
@@ -73,6 +75,13 @@ pub enum KlusterRow {
         available: bool,
     },
     AppleContainer(usize),
+    /// Podman, local daemon. Podman speaks Docker's CLI, so it is the same
+    /// snapshot type — only the binary behind it differs.
+    PodmanHeader {
+        count: usize,
+        available: bool,
+    },
+    PodmanContainer(usize),
     /// One header per saved Docker remote (over SSH). `remote_idx` indexes
     /// `db.docker_remotes`, `reachable` is the last status reported by the
     /// worker.
@@ -117,6 +126,8 @@ pub struct KlusterTabState {
     pub docker_containers: Vec<ContainerInfo>,
     pub apple_available: bool,
     pub apple_containers: Vec<ContainerInfo>,
+    pub podman_available: bool,
+    pub podman_containers: Vec<ContainerInfo>,
     /// Indexed by `db.clusters[i].name`. `None` = not refreshed yet.
     pub cluster_pods: Vec<Option<Vec<PodInfo>>>,
     pub incus_local_available: bool,
@@ -174,6 +185,8 @@ impl KlusterTabState {
             docker_containers: Vec::new(),
             apple_available: false,
             apple_containers: Vec::new(),
+            podman_available: false,
+            podman_containers: Vec::new(),
             cluster_pods,
             incus_local_available: false,
             incus_local_instances: Vec::new(),
@@ -222,6 +235,21 @@ impl KlusterTabState {
             if !apple_collapsed {
                 for i in 0..self.apple_containers.len() {
                     rows.push(KlusterRow::AppleContainer(i));
+                }
+            }
+        }
+        // Podman, same rule as Apple: only shown when it is actually there, so
+        // the far more common "no podman" machine sees nothing at all rather
+        // than a permanent "(unavailable)" line.
+        if self.podman_available {
+            let podman_collapsed = !filtering && self.collapsed.contains("podman");
+            rows.push(KlusterRow::PodmanHeader {
+                count: self.podman_containers.len(),
+                available: true,
+            });
+            if !podman_collapsed {
+                for i in 0..self.podman_containers.len() {
+                    rows.push(KlusterRow::PodmanContainer(i));
                 }
             }
         }
@@ -353,6 +381,10 @@ impl KlusterTabState {
                 .apple_containers
                 .get(*i)
                 .map(|c| format!("{} {}", c.name, c.image)),
+            KlusterRow::PodmanContainer(i) => self
+                .podman_containers
+                .get(*i)
+                .map(|c| format!("{} {}", c.name, c.image)),
             KlusterRow::DockerRemoteContainer {
                 remote_idx,
                 container_idx,
@@ -441,6 +473,9 @@ impl KlusterTabState {
             KlusterRow::AppleContainer(i) => {
                 self.apple_containers.get(*i).map(KlusterTarget::Apple)
             }
+            KlusterRow::PodmanContainer(i) => {
+                self.podman_containers.get(*i).map(KlusterTarget::Podman)
+            }
             KlusterRow::DockerRemoteContainer {
                 remote_idx,
                 container_idx,
@@ -514,6 +549,8 @@ pub enum KlusterTarget<'a> {
     Docker(&'a ContainerInfo),
     /// Container on Apple's macOS `container` runtime.
     Apple(&'a ContainerInfo),
+    /// Container on a local Podman engine.
+    Podman(&'a ContainerInfo),
     /// Container running on a remote Docker daemon reached via SSH.
     /// `host_uri` is the `ssh://user@host:port` value to set as `DOCKER_HOST`.
     DockerRemote {
@@ -561,6 +598,7 @@ fn lifecycle_running(state: &KlusterTabState) -> Option<bool> {
     match state.current_target()? {
         KlusterTarget::Docker(c) => Some(c.running),
         KlusterTarget::Apple(c) => Some(c.running),
+        KlusterTarget::Podman(c) => Some(c.running),
         KlusterTarget::DockerRemote { container, .. } => Some(container.running),
         KlusterTarget::Incus { instance, .. } => Some(instance.running),
         KlusterTarget::Pod { .. } => None,
@@ -615,6 +653,7 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
         row,
         Some(KlusterRow::DockerContainer(_))
             | Some(KlusterRow::AppleContainer(_))
+            | Some(KlusterRow::PodmanContainer(_))
             | Some(KlusterRow::DockerRemoteContainer { .. })
             | Some(KlusterRow::ClusterPod { .. })
             | Some(KlusterRow::IncusLocalInstance(_))
@@ -624,6 +663,7 @@ pub fn handle_kluster_event(key: KeyCode, state: &mut KlusterTabState) -> Kluste
         row,
         Some(KlusterRow::DockerHeader { .. })
             | Some(KlusterRow::AppleHeader { .. })
+            | Some(KlusterRow::PodmanHeader { .. })
             | Some(KlusterRow::DockerRemoteHeader { .. })
             | Some(KlusterRow::IncusLocalHeader { .. })
             | Some(KlusterRow::IncusRemoteHeader { .. })
@@ -784,6 +824,33 @@ fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> L
         }
         KlusterRow::AppleContainer(i) => {
             let c = &state.apple_containers[*i];
+            render_docker_container(c, theme)
+        }
+        KlusterRow::PodmanHeader { count, available } => {
+            let glyph = if state.collapsed.contains("podman") {
+                "▸"
+            } else {
+                "▾"
+            };
+            let label = if *available {
+                format!("{} Podman (local) ({})", glyph, count)
+            } else {
+                format!("{} Podman (local) (unavailable)", glyph)
+            };
+            let style = if *available {
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+                    .fg(theme.muted)
+                    .add_modifier(Modifier::BOLD)
+            };
+            ListItem::new(Line::from(Span::styled(label, style)))
+        }
+        KlusterRow::PodmanContainer(i) => {
+            // Podman's `ps` output is Docker's, so the row renders identically.
+            let c = &state.podman_containers[*i];
             render_docker_container(c, theme)
         }
         KlusterRow::DockerRemoteHeader {
@@ -1457,5 +1524,177 @@ mod tests {
             s.selected = i;
             assert!(matches!(press(&mut s, 'r'), KlusterAction::Refresh));
         }
+    }
+}
+
+#[cfg(test)]
+mod podman_tests {
+    use super::*;
+
+    fn with_podman(running: bool) -> KlusterTabState {
+        let mut s = KlusterTabState::from_db(KlusterDb::default());
+        s.podman_available = true;
+        s.podman_containers = vec![ContainerInfo {
+            id: "pod1".into(),
+            name: "api".into(),
+            image: "alpine".into(),
+            status: if running {
+                "Up".into()
+            } else {
+                "Exited (0)".into()
+            },
+            running,
+        }];
+        s.collapsed.clear();
+        s.rebuild_rows();
+        s
+    }
+
+    #[test]
+    fn the_section_is_hidden_when_podman_is_absent() {
+        // Most machines have no podman; they must see nothing at all, not an
+        // "(unavailable)" line — the same rule the Apple runtime follows.
+        let s = KlusterTabState::from_db(KlusterDb::default());
+        assert!(!s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::PodmanHeader { .. })));
+    }
+
+    #[test]
+    fn the_section_appears_with_its_containers_when_podman_is_there() {
+        let s = with_podman(true);
+        assert!(s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::PodmanHeader { count: 1, .. })));
+        assert!(s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::PodmanContainer(0))));
+    }
+
+    #[test]
+    fn a_podman_container_resolves_to_its_own_target() {
+        // Not `KlusterTarget::Docker`: the action layer picks the binary from
+        // the variant, so a mix-up would run `docker` against a podman id.
+        let mut s = with_podman(true);
+        s.selected = s
+            .flat_rows
+            .iter()
+            .position(|r| matches!(r, KlusterRow::PodmanContainer(_)))
+            .unwrap();
+        match s.current_target() {
+            Some(KlusterTarget::Podman(c)) => assert_eq!(c.name, "api"),
+            other => panic!("expected a podman target, got {:?}", other.is_some()),
+        }
+    }
+
+    #[test]
+    fn lifecycle_and_item_keys_work_on_a_podman_container() {
+        let mut s = with_podman(true);
+        s.selected = s
+            .flat_rows
+            .iter()
+            .position(|r| matches!(r, KlusterRow::PodmanContainer(_)))
+            .unwrap();
+        assert!(matches!(
+            handle_kluster_event(KeyCode::Char('s'), &mut s),
+            KlusterAction::Lifecycle(LifecycleAction::Stop)
+        ));
+        assert!(matches!(
+            handle_kluster_event(KeyCode::Enter, &mut s),
+            KlusterAction::OpenShell
+        ));
+        assert!(matches!(
+            handle_kluster_event(KeyCode::Char('i'), &mut s),
+            KlusterAction::OpenDetail
+        ));
+        assert!(matches!(
+            handle_kluster_event(KeyCode::Char('l'), &mut s),
+            KlusterAction::OpenLogsFollow
+        ));
+    }
+
+    #[test]
+    fn a_stopped_podman_container_starts_instead_of_stopping() {
+        let mut s = with_podman(false);
+        s.selected = s
+            .flat_rows
+            .iter()
+            .position(|r| matches!(r, KlusterRow::PodmanContainer(_)))
+            .unwrap();
+        assert!(matches!(
+            handle_kluster_event(KeyCode::Char('s'), &mut s),
+            KlusterAction::Lifecycle(LifecycleAction::Start)
+        ));
+    }
+
+    #[test]
+    fn the_podman_header_folds_like_any_other() {
+        let mut s = with_podman(true);
+        s.selected = s
+            .flat_rows
+            .iter()
+            .position(|r| matches!(r, KlusterRow::PodmanHeader { .. }))
+            .unwrap();
+        s.toggle_collapsed_at_selected();
+        assert!(!s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::PodmanContainer(_))));
+        assert!(s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::PodmanHeader { .. })));
+    }
+
+    #[test]
+    fn podman_containers_are_filterable() {
+        let mut s = with_podman(true);
+        s.filter = "api".into();
+        s.rebuild_rows();
+        assert!(s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::PodmanContainer(_))));
+        s.filter = "zzz".into();
+        s.rebuild_rows();
+        assert!(!s
+            .flat_rows
+            .iter()
+            .any(|r| matches!(r, KlusterRow::PodmanContainer(_))));
+    }
+
+    #[test]
+    fn docker_and_podman_sections_coexist_without_confusion() {
+        // Both present, same container name: each row must resolve to its own
+        // engine's snapshot.
+        let mut s = with_podman(true);
+        s.docker_available = true;
+        s.docker_containers = vec![ContainerInfo {
+            id: "dock1".into(),
+            name: "api".into(),
+            image: "alpine".into(),
+            status: "Up".into(),
+            running: true,
+        }];
+        s.rebuild_rows();
+
+        let d = s
+            .flat_rows
+            .iter()
+            .position(|r| matches!(r, KlusterRow::DockerContainer(_)))
+            .unwrap();
+        s.selected = d;
+        assert!(matches!(s.current_target(), Some(KlusterTarget::Docker(c)) if c.id == "dock1"));
+
+        let p = s
+            .flat_rows
+            .iter()
+            .position(|r| matches!(r, KlusterRow::PodmanContainer(_)))
+            .unwrap();
+        s.selected = p;
+        assert!(matches!(s.current_target(), Some(KlusterTarget::Podman(c)) if c.id == "pod1"));
     }
 }

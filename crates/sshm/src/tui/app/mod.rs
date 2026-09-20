@@ -459,6 +459,14 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                     kluster_state.apple_available = available;
                     kluster_state.apple_containers = containers;
                 }
+                KlusterUpdate::Podman {
+                    available,
+                    containers,
+                } => {
+                    kluster_state.podman_available = available;
+                    kluster_state.podman_containers = containers;
+                    kluster_dirty = true;
+                }
                 KlusterUpdate::Docker {
                     available,
                     containers,
@@ -688,6 +696,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                             }
                             Some(KlusterRow::DockerHeader { .. })
                             | Some(KlusterRow::AppleHeader { .. })
+                            | Some(KlusterRow::PodmanHeader { .. })
                             | Some(KlusterRow::IncusLocalHeader { .. })
                             | Some(KlusterRow::IncusRemoteHeader { .. }) => {
                                 HelpContext::KlusterHeaderRuntime
@@ -711,6 +720,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                             }
                             Some(KlusterRow::DockerContainer(_))
                             | Some(KlusterRow::AppleContainer(_))
+                            | Some(KlusterRow::PodmanContainer(_))
                             | Some(KlusterRow::DockerRemoteContainer { .. })
                             | Some(KlusterRow::IncusLocalInstance(_))
                             | Some(KlusterRow::IncusRemoteInstance { .. }) => {

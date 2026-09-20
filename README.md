@@ -43,6 +43,7 @@ A dedicated tab between **Hosts** and **Identities** to manage containers and po
 - **Docker (local)** — auto-detected if `docker` is on PATH and the daemon is up
 - **Docker (remote)** — pick any saved SSH host, sshm sets `DOCKER_HOST=ssh://...` and tunnels everything natively. No port to open, no TLS, no socket setup
 - **Apple `container` (macOS)** — Apple's native container runtime (macOS 26+, Apple silicon) auto-detected when the `container` CLI and its system service are up. Lists / shells / logs / start-stop, same as Docker
+- **Podman (local)** — auto-detected when `podman info` answers, rootless included. Same list / shell / logs / inspect / start-stop as Docker, because podman speaks the same CLI. Remotes are not wired yet
 - **Incus (local)** — auto-detected, lists containers and VMs
 - **Incus (remote)** — auto-imported from `incus remote list`
 - **Kubernetes / K3s** — auto-imported from every context in `~/.kube/config` and `$KUBECONFIG`
@@ -517,7 +518,9 @@ crates/sshm-core/src/        # the engine — no rendering, no event loop
 ├── ssh/                     # client, keys, agent, known_hosts, proxy
 ├── import/                  # ~/.ssh/config parser
 ├── kluster/                 # Docker / Incus / Apple container / kubectl wrappers
+│   ├── engine.rs           #   command construction shared by docker + podman
 │   ├── docker.rs            #   docker ps / exec / logs (local + DOCKER_HOST=ssh://)
+│   ├── podman.rs            #   the same, against `podman` (local only)
 │   ├── incus.rs             #   incus list / exec / logs (local + remotes)
 │   ├── apple.rs             #   Apple `container` runtime (macOS 26+)
 │   ├── kube.rs              #   kubectl get/exec/logs/delete pod

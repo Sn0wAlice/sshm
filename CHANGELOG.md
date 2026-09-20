@@ -66,6 +66,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   a host that is gone for good doesn't respawn forever. A tunnel you stopped
   yourself stays stopped, and one whose host was deleted meanwhile is dropped
   with a notification instead of retried.
+- **Podman.** A fifth section in the Kluster tab, listing local Podman
+  containers with the same `Enter` shell, `i` inspect, `l` logs and `s`/`R`
+  lifecycle as the others. Podman mirrors Docker's command line for everything
+  sshm uses, so this is one binary swapped rather than a second backend: the
+  command construction moved into a shared `kluster::engine`, and the output
+  parsers are Docker's, reused as-is. The section only appears when `podman
+  info` answers, so a machine without it sees nothing rather than a permanent
+  "(unavailable)" line. Local only for now — podman's remotes need a
+  `podman system connection`, not just an environment variable.
 - **Machine-readable output.** `sshm list --json` emits the matching hosts as
   a JSON array, `sshm list --names` one name per line, `sshm sync status
   --json` a flat status object (durations in seconds, paths resolved, and a
@@ -155,6 +164,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   mid-command left ssh waiting indefinitely and stalled the rest of the batch.
   `ServerAliveInterval` / `ServerAliveCountMax` now bound that case too; a
   command that is genuinely still running is untouched.
+- **Settings: `↓` skipped five rows, Notifications among them.** Navigation
+  counted from the current index while the form is drawn in section order, and
+  the two disagree: `PAUSE_HEALTH_FIELD` is index 10 but is drawn sixth, so `↓`
+  from "Pause During SSH Session" landed on "Sync config with a git repo" —
+  jumping over Health TTL, Probe timeout, the two Kluster rows and
+  Notifications, which could not be reached at all. Navigation now walks the
+  order the rows are drawn in, derived from the section list rather than kept
+  as a second list to forget.
+- **Settings: the global shortcuts stayed live while you typed.** On a Settings
+  form you had not yet modified, `←`/`→` jumped to another tab, `h` opened the
+  help popup, `t` the tunnels dashboard and `q` quit sshm outright — so typing
+  a username containing an `h` or a `q` was impossible, and the toggles felt
+  like they moved on their own. Once you had changed anything the same keys
+  behaved, which is what made it look random. The check is now positional (is
+  the cursor on a text field?) rather than gated on whether the form was
+  touched — the same fix the Theme tab already carried for the same bug.
 - **`Loading DB from …` was printed on stdout.** Every subcommand loads the
   database first, so that line landed ahead of whatever the command printed —
   it broke `sshm list | awk …` and would have made `--json` unparseable. It is

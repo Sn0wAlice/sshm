@@ -39,6 +39,11 @@ pub enum KlusterUpdate {
         available: bool,
         containers: Vec<ContainerInfo>,
     },
+    /// Result for a local Podman engine.
+    Podman {
+        available: bool,
+        containers: Vec<ContainerInfo>,
+    },
     /// Result for a remote Docker daemon (keyed by Host alias).
     DockerRemote {
         host_alias: String,
@@ -175,6 +180,21 @@ pub fn spawn_kluster_worker(
                 let _ = result_tx.send(KlusterUpdate::Apple {
                     available: apple_avail,
                     containers: apple_containers,
+                });
+
+                // Podman — local only, like Apple's runtime. Probed every pass
+                // because a rootless podman comes and goes with the user's
+                // session rather than living as a system daemon.
+                crate::kluster::podman::invalidate_cache();
+                let podman_avail = crate::kluster::podman::available();
+                let podman_containers = if podman_avail {
+                    crate::kluster::podman::list_containers().unwrap_or_default()
+                } else {
+                    Vec::new()
+                };
+                let _ = result_tx.send(KlusterUpdate::Podman {
+                    available: podman_avail,
+                    containers: podman_containers,
                 });
 
                 // Snapshot the worker targets once per cycle (avoid holding the
