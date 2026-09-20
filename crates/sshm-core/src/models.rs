@@ -50,6 +50,14 @@ pub struct Tunnel {
     /// Hôte distant cible (Local/Remote). Vide => `localhost` côté remote.
     #[serde(default)]
     pub remote_host: String,
+    /// Démarre le tunnel en arrière-plan dès qu'on se connecte à l'hôte, sans
+    /// avoir à passer par le menu `p`. Désactivé par défaut.
+    ///
+    /// Ne concerne que le TUI : une connexion lancée par `sshm connect` rend
+    /// la main quand la session se termine, et le tunnel qu'elle aurait
+    /// démarré n'aurait plus de propriétaire vivant.
+    #[serde(default)]
+    pub auto_start: bool,
     /// Relance le tunnel en arrière-plan quand son `ssh -N` meurt (coupure
     /// réseau, remote qui ferme). Désactivé par défaut : un tunnel qu'on a
     /// arrêté à la main ne doit pas revenir, et un port déjà pris ne doit pas

@@ -1162,6 +1162,20 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                                 stdout(),
                                                                 LeaveAlternateScreen
                                                             );
+                                                            // Bring up this host's auto-start
+                                                            // tunnels first, so they are already
+                                                            // listening when the session opens.
+                                                            let auto = tunnels
+                                                                .start_auto(&host_clone, &db.hosts);
+                                                            if !auto.is_empty() {
+                                                                println!(
+                                                                    "{}",
+                                                                    t!(
+                                                                        "toast.auto_tunnels_started",
+                                                                        "routes" => auto.join(", ")
+                                                                    )
+                                                                );
+                                                            }
                                                             crate::ssh::client::launch_ssh_with_recovery(&host_clone, &db.hosts, None);
                                                             let _ = enable_raw_mode();
                                                             let _ = execute!(
@@ -1949,6 +1963,20 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                                 stdout(),
                                                                 LeaveAlternateScreen
                                                             );
+                                                            // Bring up this host's auto-start
+                                                            // tunnels first, so they are already
+                                                            // listening when the session opens.
+                                                            let auto = tunnels
+                                                                .start_auto(&host_clone, &db.hosts);
+                                                            if !auto.is_empty() {
+                                                                println!(
+                                                                    "{}",
+                                                                    t!(
+                                                                        "toast.auto_tunnels_started",
+                                                                        "routes" => auto.join(", ")
+                                                                    )
+                                                                );
+                                                            }
                                                             crate::ssh::client::launch_ssh_with_recovery(&host_clone, &db.hosts, None);
                                                             let _ = enable_raw_mode();
                                                             let _ = execute!(

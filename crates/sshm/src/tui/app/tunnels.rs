@@ -341,6 +341,23 @@ impl TunnelManager {
         }
     }
 
+    /// Start every `auto_start` tunnel saved on `host` that is not already up.
+    ///
+    /// Returns the routes actually started, for a toast. A tunnel that is
+    /// already running — or whose local port is taken by one — is skipped in
+    /// silence: reconnecting to a host you are already tunnelled into is the
+    /// normal case, not an error worth interrupting the connection for.
+    pub fn start_auto(&mut self, host: &Host, all_hosts: &HashMap<String, Host>) -> Vec<String> {
+        let wanted: Vec<Tunnel> = auto_start_tunnels(host).into_iter().cloned().collect();
+        let mut started = Vec::new();
+        for t in wanted {
+            if self.start(host, &t, all_hosts).is_ok() {
+                started.push(tunnel_route(&t));
+            }
+        }
+        started
+    }
+
     /// Relaunch every queued tunnel whose backoff has elapsed. Returns the
     /// routes brought back up, for a toast.
     ///
@@ -451,6 +468,14 @@ impl TunnelManager {
 // ============================================================================
 // Dashboard popup
 // ============================================================================
+
+/// The tunnels saved on `host` that are marked to come up on connect.
+///
+/// Split out so the selection can be checked without spawning anything: the
+/// rest of `start_auto` is process handling.
+pub fn auto_start_tunnels(host: &Host) -> Vec<&Tunnel> {
+    host.tunnels.iter().filter(|t| t.auto_start).collect()
+}
 
 /// True when two tunnels forward the same thing (label aside) — used to spot
 /// an exact relaunch. For `Dynamic`, `remote_host`/`remote_port` are unused
@@ -617,6 +642,7 @@ mod tests {
             local_port: local,
             remote_port: 5432,
             remote_host: String::new(),
+            auto_start: false,
             auto_restart: false,
         }
     }
@@ -711,5 +737,94 @@ mod tests {
     fn our_own_process_is_not_mistaken_for_a_tunnel() {
         // The test binary is alive but is not an `ssh -N`.
         assert!(!pid_is_ssh_tunnel(std::process::id()));
+    }
+}
+
+#[cfg(test)]
+mod auto_start_tests {
+    use super::*;
+
+    fn tun(label: &str, port: u16, auto: bool) -> Tunnel {
+        Tunnel {
+            label: label.into(),
+            kind: TunnelKind::Local,
+            local_port: port,
+            remote_port: 5432,
+            remote_host: String::new(),
+            auto_start: auto,
+            auto_restart: false,
+        }
+    }
+
+    fn host_with(tunnels: Vec<Tunnel>) -> Host {
+        Host {
+            name: "db".into(),
+            host: "10.0.0.9".into(),
+            tunnels,
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn only_the_marked_tunnels_come_up() {
+        let h = host_with(vec![
+            tun("pg", 5432, true),
+            tun("redis", 6379, false),
+            tun("metrics", 9090, true),
+        ]);
+        let picked: Vec<&str> = auto_start_tunnels(&h)
+            .iter()
+            .map(|t| t.label.as_str())
+            .collect();
+        assert_eq!(picked, vec!["pg", "metrics"]);
+    }
+
+    #[test]
+    fn a_host_with_no_marked_tunnel_starts_nothing() {
+        assert!(auto_start_tunnels(&host_with(vec![tun("pg", 5432, false)])).is_empty());
+        assert!(auto_start_tunnels(&host_with(vec![])).is_empty());
+    }
+
+    #[test]
+    fn auto_start_and_auto_restart_are_independent() {
+        // Two different questions: "bring it up when I connect" and "bring it
+        // back if it drops". A tunnel can want either, both or neither.
+        let mut t = tun("pg", 5432, true);
+        t.auto_restart = false;
+        let h = host_with(vec![t]);
+        assert_eq!(auto_start_tunnels(&h).len(), 1);
+
+        let mut t = tun("pg", 5432, false);
+        t.auto_restart = true;
+        let h = host_with(vec![t]);
+        assert!(
+            auto_start_tunnels(&h).is_empty(),
+            "auto_restart alone must not start anything on connect"
+        );
+    }
+
+    #[test]
+    fn neither_flag_changes_what_the_tunnel_forwards() {
+        // They are policy, not route: two tunnels differing only in their
+        // flags are the same forward, and `start` must still refuse the
+        // duplicate.
+        let plain = tun("pg", 5432, false);
+        let mut flagged = plain.clone();
+        flagged.auto_start = true;
+        flagged.auto_restart = true;
+        assert!(same_route(&plain, &flagged));
+        assert_eq!(
+            build_tunnel_argv(&host_with(vec![]), &plain, &HashMap::new()),
+            build_tunnel_argv(&host_with(vec![]), &flagged, &HashMap::new()),
+            "the flags must not reach the ssh command line"
+        );
+    }
+
+    #[test]
+    fn a_host_saved_before_auto_start_existed_still_loads() {
+        let old = r#"{"label":"pg","kind":"Local","local_port":5432,"remote_port":5432,"remote_host":""}"#;
+        let t: Tunnel = serde_json::from_str(old).expect("pre-2.2 tunnel parses");
+        assert!(!t.auto_start);
+        assert!(!t.auto_restart);
     }
 }

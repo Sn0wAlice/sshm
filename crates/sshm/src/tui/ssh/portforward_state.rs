@@ -18,9 +18,11 @@ pub mod field {
     pub const LABEL: usize = 4;
     /// "Save on the host" toggle.
     pub const SAVE: usize = 5;
+    /// "Start automatically when you connect to this host" toggle.
+    pub const AUTO_START: usize = 6;
     /// "Restart automatically if it drops" toggle.
-    pub const AUTO_RESTART: usize = 6;
-    pub const START: usize = 7;
+    pub const AUTO_RESTART: usize = 7;
+    pub const START: usize = 8;
 }
 
 pub struct PortForwardForm {
@@ -30,6 +32,7 @@ pub struct PortForwardForm {
     pub remote_port: String,
     pub label: String,
     pub save: bool,
+    pub auto_start: bool,
     pub auto_restart: bool,
     pub selected_field: usize,
     pub error: Option<String>,
@@ -44,6 +47,7 @@ impl PortForwardForm {
             remote_port: String::new(),
             label: String::new(),
             save: false,
+            auto_start: false,
             auto_restart: false,
             selected_field: field::KIND,
             error: None,
@@ -62,6 +66,7 @@ impl PortForwardForm {
             },
             label: t.label.clone(),
             save: true,
+            auto_start: t.auto_start,
             auto_restart: t.auto_restart,
             selected_field: field::KIND,
             error: None,
@@ -77,6 +82,7 @@ impl PortForwardForm {
                 field::LOCAL_PORT,
                 field::LABEL,
                 field::SAVE,
+                field::AUTO_START,
                 field::AUTO_RESTART,
                 field::START,
             ],
@@ -87,6 +93,7 @@ impl PortForwardForm {
                 field::REMOTE_PORT,
                 field::LABEL,
                 field::SAVE,
+                field::AUTO_START,
                 field::AUTO_RESTART,
                 field::START,
             ],
@@ -132,7 +139,7 @@ impl PortForwardForm {
     pub fn space_is_a_control(&self) -> bool {
         matches!(
             self.selected_field,
-            field::KIND | field::SAVE | field::AUTO_RESTART
+            field::KIND | field::SAVE | field::AUTO_START | field::AUTO_RESTART
         )
     }
 
@@ -142,6 +149,10 @@ impl PortForwardForm {
         match self.selected_field {
             field::SAVE => {
                 self.save = !self.save;
+                true
+            }
+            field::AUTO_START => {
+                self.auto_start = !self.auto_start;
                 true
             }
             field::AUTO_RESTART => {
@@ -196,6 +207,7 @@ impl PortForwardForm {
                 local_port: lp,
                 remote_port: 0,
                 remote_host: String::new(),
+                auto_start: self.auto_start,
                 auto_restart: self.auto_restart,
             }),
             kind => {
@@ -213,6 +225,7 @@ impl PortForwardForm {
                     local_port: lp,
                     remote_port: rp,
                     remote_host: self.remote_host.trim().to_string(),
+                    auto_start: self.auto_start,
                     auto_restart: self.auto_restart,
                 })
             }
@@ -452,6 +465,7 @@ mod tests {
             local_port: 15432,
             remote_port: 5432,
             remote_host: "db.internal".into(),
+            auto_start: false,
             auto_restart: true,
         };
         let f = PortForwardForm::from_existing(&t);
@@ -471,6 +485,7 @@ mod tests {
             local_port: 1080,
             remote_port: 0,
             remote_host: String::new(),
+            auto_start: false,
             auto_restart: false,
         };
         let f = PortForwardForm::from_existing(&t);
@@ -479,5 +494,64 @@ mod tests {
             "a 0 would render as a bogus '0' in the field"
         );
         assert_eq!(f.validate().unwrap(), t);
+    }
+
+    #[test]
+    fn the_auto_start_choice_reaches_the_tunnel() {
+        let mut f = filled();
+        assert!(!f.validate().unwrap().auto_start, "off by default");
+        f.auto_start = true;
+        assert!(f.validate().unwrap().auto_start);
+    }
+
+    #[test]
+    fn the_three_toggles_are_independent() {
+        let mut f = form();
+        for (field, get) in [
+            (field::SAVE, 0),
+            (field::AUTO_START, 1),
+            (field::AUTO_RESTART, 2),
+        ] {
+            f.selected_field = field;
+            assert!(f.toggle_selected());
+            let state = [f.save, f.auto_start, f.auto_restart];
+            assert!(
+                state[get],
+                "flipping field {field} did not set its own flag"
+            );
+        }
+        assert_eq!([f.save, f.auto_start, f.auto_restart], [true, true, true]);
+    }
+
+    #[test]
+    fn space_controls_the_new_toggle_too() {
+        let mut f = form();
+        f.selected_field = field::AUTO_START;
+        assert!(f.space_is_a_control());
+    }
+
+    #[test]
+    fn editing_a_tunnel_loads_both_automation_flags() {
+        let t = Tunnel {
+            label: "pg".into(),
+            kind: TunnelKind::Local,
+            local_port: 15432,
+            remote_port: 5432,
+            remote_host: "db".into(),
+            auto_start: true,
+            auto_restart: true,
+        };
+        let f = PortForwardForm::from_existing(&t);
+        assert!(f.auto_start && f.auto_restart);
+        assert_eq!(f.validate().unwrap(), t, "round-trips unchanged");
+    }
+
+    #[test]
+    fn the_field_indices_stay_consecutive() {
+        // A row inserted in the middle shifts everything after it; the render
+        // walks the same indices, so a gap here is a misdrawn form.
+        assert_eq!(field::AUTO_START, field::SAVE + 1);
+        assert_eq!(field::AUTO_RESTART, field::AUTO_START + 1);
+        assert_eq!(field::START, field::AUTO_RESTART + 1);
     }
 }

@@ -197,6 +197,7 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
     }
     constraints.push(Constraint::Length(1)); // label
     constraints.push(Constraint::Length(1)); // save toggle
+    constraints.push(Constraint::Length(1)); // auto-start toggle
     constraints.push(Constraint::Length(1)); // auto-restart toggle
     constraints.push(Constraint::Length(1)); // spacer
     constraints.push(Constraint::Length(1)); // start
@@ -316,6 +317,22 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
         Style::default().fg(theme.fg)
     };
     f.render_widget(Paragraph::new(save_text).style(save_style), chunks[idx]);
+    idx += 1;
+
+    // auto-start toggle
+    let as_sel = state.selected_field == field::AUTO_START;
+    let as_mark = if state.auto_start { "[x]" } else { "[ ]" };
+    let as_text = format!("  {} {}", as_mark, crate::t!("form.tunnel.auto_start"));
+    let as_style = if as_sel {
+        Style::default()
+            .fg(theme.accent)
+            .add_modifier(Modifier::BOLD)
+    } else if state.auto_start {
+        Style::default().fg(theme.success)
+    } else {
+        Style::default().fg(theme.fg)
+    };
+    f.render_widget(Paragraph::new(as_text).style(as_style), chunks[idx]);
     idx += 1;
 
     // auto-restart toggle
@@ -930,6 +947,15 @@ mod render_tests {
                 let _ = render(&s);
             }
         }
+    }
+
+    #[test]
+    fn the_auto_start_row_shows_its_state() {
+        let mut s = PortForwardForm::new();
+        let label = crate::t!("form.tunnel.auto_start");
+        assert!(rendered_text(&s).contains(&format!("[ ] {label}")));
+        s.auto_start = true;
+        assert!(rendered_text(&s).contains(&format!("[x] {label}")));
     }
 
     #[test]

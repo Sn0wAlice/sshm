@@ -60,6 +60,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   applies before signalling anything. Read-and-stop only: starting a tunnel
   from a command that exits immediately would leave an `ssh -N` nobody owns,
   and the next TUI launch would reap it as an orphan.
+- **Tunnels that come up when you connect.** A per-tunnel opt-in (`Space` on
+  the new *Start automatically when you connect* row): connecting to the host
+  from the TUI brings its marked tunnels up in the background first, so they
+  are already listening when the session opens. A tunnel already running — or
+  one whose local port is taken — is skipped silently, since reconnecting to a
+  host you are already tunnelled into is the normal case, not an error.
+  Together with auto-restart this covers "my Postgres tunnel should just be
+  there". TUI only: a tunnel started by `sshm connect` would outlive the
+  command that owns it.
 - **Auto-restart for background tunnels.** A per-tunnel opt-in (`Space` on the
   new row in the port-forward form). A dropped tunnel is relaunched with a
   growing backoff — 2s, 5s, 15s, then 30s — and given up on after 5 tries, so

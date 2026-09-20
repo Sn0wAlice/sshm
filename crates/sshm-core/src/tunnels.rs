@@ -263,6 +263,7 @@ mod record_tests {
                 local_port: 15432,
                 remote_port: 5432,
                 remote_host: "db".into(),
+                auto_start: false,
                 auto_restart: true,
             },
             started: "2026-09-20T10:00:00Z".into(),
@@ -288,6 +289,7 @@ mod record_tests {
             local_port: 8080,
             remote_port: 80,
             remote_host: String::new(),
+            auto_start: false,
             auto_restart: false,
         };
         let without = build_tunnel_argv(&h, &t, &HashMap::new());
