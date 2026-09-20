@@ -99,7 +99,7 @@ pub fn apply_filter<'a>(pattern: &str, items: &'a [&'a Host]) -> Vec<&'a Host> {
         .filter_map(|h| fuzzy_score(&matcher, h, pattern).map(|s| (h, s)))
         .collect();
 
-    scored.sort_by(|a, b| b.1.cmp(&a.1));
+    scored.sort_by_key(|a| std::cmp::Reverse(a.1));
     scored.into_iter().map(|(h, _)| h).collect()
 }
 

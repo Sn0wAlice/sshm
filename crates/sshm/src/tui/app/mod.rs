@@ -148,8 +148,8 @@ use kluster_actions::{
 };
 
 pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
-    // Concurrent-safe live reload: another sshm instance (or the desktop GUI, or
-    // a text editor) may rewrite `host.json` under us. Sync once on entry — this
+    // Concurrent-safe live reload: another sshm instance (or a text editor)
+    // may rewrite `host.json` under us. Sync once on entry — this
     // catches any change that happened while we were away in an ssh session —
     // then watch the config dir so we can hot-reload the host list in place.
     let _ = db.reload_if_changed();

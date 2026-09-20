@@ -27,7 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Scheduling, without stepping on itself.** Sync on a timer, when sshm
   starts, when it exits, or from cron (`sshm sync cron` prints the crontab
   line; `--if-due` respects the interval and stays silent when idle). Several
-  running instances — two TUIs, the desktop app, a cron entry — share one
+  running instances — two TUIs, a cron entry — share one
   schedule and one lock through the config directory, so exactly one of them
   syncs each round and the others skip the tick. A lock whose process died is
   reclaimed automatically.
@@ -35,6 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   URL, SSH key, branch, auto-sync interval (0 = manual) and the on-start /
   on-exit toggles. The rest (which files travel, the conflict policy) lives in
   `settings.toml` and `sshm sync setup`.
+
+### Removed
+
+- **The desktop GUI (`sshm-desktop`).** The Tauri 2 + Svelte app and its
+  crate (`crates/sshm-gui`) are gone; sshm is a terminal tool again. The
+  engine dropped the pieces that existed only to serve it: `sshm-core`'s
+  `specta` and `pty` features (and the `portable-pty` dependency), the
+  `pty` module, and the GUI jobs in CI and the release workflow. Nothing in
+  the TUI, the CLI or the on-disk database format changes.
+- **Unused `regex` dependency.** Declared by both crates, referenced by
+  neither. (It stays in the lockfile as a transitive dependency of ratatui.)
 
 ### Changed
 

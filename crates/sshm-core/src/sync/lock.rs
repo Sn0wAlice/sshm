@@ -1,7 +1,7 @@
 //! Cross-process lock so that only one sshm ever syncs at a time.
 //!
-//! Several sshm processes can be up at once — two TUIs, the desktop GUI, a
-//! `sshm sync` typed by hand, a cron entry firing on the minute — and they all
+//! Several sshm processes can be up at once — two TUIs, a `sshm sync` typed
+//! by hand, a cron entry firing on the minute — and they all
 //! share `~/.config/sshm`. A sync run rewrites those files *and* pushes to a
 //! remote, so two concurrent runs would race each other's working tree and
 //! produce pointless conflicting commits.

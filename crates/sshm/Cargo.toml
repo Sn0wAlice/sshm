@@ -27,7 +27,6 @@ dirs.workspace = true
 chrono.workspace = true
 anyhow.workspace = true
 shellexpand.workspace = true
-regex.workspace = true
 toml.workspace = true
 libc.workspace = true
 fuzzy-matcher.workspace = true

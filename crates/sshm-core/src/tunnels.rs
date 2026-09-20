@@ -93,7 +93,6 @@ pub fn state_file_for(sshm_pid: u32) -> PathBuf {
 /// and writes, so a dashboard in one instance can list another's tunnels.
 /// `started` is an RFC3339 timestamp (the TUI serializes a `DateTime<Utc>` to
 /// the exact same string, so the two interoperate).
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TunnelRecord {
     /// PID of the `ssh -N` process.

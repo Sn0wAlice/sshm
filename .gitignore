@@ -25,3 +25,6 @@ target/
 
 /target
 /docs
+
+# macOS
+.DS_Store

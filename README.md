@@ -115,42 +115,14 @@ sudo cp target/release/sshm /usr/local/bin/
 
 The Kluster tab degrades gracefully — sections show `(unavailable)` when the corresponding CLI / daemon isn't reachable.
 
-### Desktop GUI (Tauri 2)
+### Workspace layout
 
 The repo is a Cargo workspace:
 
 ```
 crates/sshm-core   # frontend-agnostic engine (models, config IO, ssh/kluster, filter, i18n)
-crates/sshm        # the TUI + CLI (binary `sshm`) — unchanged
-crates/sshm-gui    # the desktop app (binary `sshm-desktop`), Svelte + Tauri 2
+crates/sshm        # the TUI + CLI (binary `sshm`)
 ```
-
-The GUI shares the exact same on-disk database (`~/.config/sshm/*`), so a host added
-in the terminal shows up in the app live, and vice-versa. It's a *launcher*: ssh
-sessions open in your external terminal (never embedded), and it never reads or
-writes private-key contents — only paths, exactly like the TUI.
-
-```bash
-# One-time: install the frontend toolchain
-cd crates/sshm-gui
-npm install
-
-# Dev (hot-reload UI + Rust)
-npm run tauri dev        # alias: gui:dev
-
-# Production bundle (.app / .dmg / .deb / AppImage)
-npm run tauri build      # alias: gui:build
-```
-
-Requirements: Node 18+ and the Tauri prerequisites for your OS
-(macOS: Xcode CLT; Linux: `libwebkit2gtk-4.1-dev`, `libgtk-3-dev`, `librsvg2-dev`).
-Typed IPC (`tauri-specta`) derives the TypeScript types from the Rust structs, so the
-frontend and backend never drift — the generated `crates/sshm-gui/src/lib/bindings.ts`
-is refreshed on every `tauri dev`, or headlessly with
-`cargo test -p sshm-desktop export_bindings`.
-
-`cargo build --release` at the workspace root builds only the TUI (`target/release/sshm`);
-the desktop app is built explicitly (`-p sshm-desktop` or via the Tauri CLI).
 
 ## Usage
 
@@ -364,7 +336,7 @@ directly.
 | On start / on exit | Settings tab toggles |
 | From cron | `sshm sync cron` prints the line, `--if-due` respects the interval |
 
-**Several instances at once are fine.** Two TUIs, the desktop app and a cron
+**Several instances at once are fine.** Two TUIs and a cron
 entry all share one lock and one schedule through the config directory: exactly
 one of them syncs each round, the others skip that tick instead of piling up
 behind it. A crashed instance never wedges the lock — it's reclaimed once its
@@ -419,36 +391,57 @@ Falls back to the value of `LC_ALL` / `LANG` if `SSHM_LANG` is unset. Unknown lo
 
 ## Architecture
 
+Two crates: a frontend-agnostic engine, and the terminal frontend on top of it.
+Hard rule — no terminal-UI dependency (ratatui / crossterm / inquire) may appear
+in `sshm-core`'s dependency tree.
+
 ```
-src/
-├── main.rs               # CLI dispatch
-├── lib.rs                # crate root
-├── models.rs             # Host, Tunnel, Database
-├── history.rs            # frecency, sort modes
-├── i18n.rs               # localization
-├── locales/              # en.toml, fr.toml
-├── filter/               # fuzzy + prefix-token matcher
-├── config/               # io, path, settings, export
-├── ssh/                  # client, keys, agent, known_hosts, proxy
-├── import/               # ~/.ssh/config parser
-├── kluster/              # Docker / Incus / kubectl wrappers
-│   ├── docker.rs         #   docker ps / exec / logs (local + DOCKER_HOST=ssh://)
-│   ├── incus.rs          #   incus list / exec / logs (local + remotes)
-│   ├── kube.rs           #   kubectl get/exec/logs/delete pod
-│   ├── shell.rs          #   /bin/sh constant
-│   └── db.rs             #   kluster.json + bootstrap from kubeconfig + incus remotes
-├── tui/
-│   ├── app/              # main loop + worker submodules
-│   │   ├── health_worker.rs
-│   │   ├── kluster_worker.rs
-│   │   ├── kluster_actions.rs
-│   │   ├── cluster_form.rs
-│   │   ├── host_form.rs
-│   │   └── key_flows.rs
-│   ├── tabs/             # one file per tab
-│   ├── ssh/              # host detail box, modals, toast, port forward
-│   └── theme.rs
-└── commands/             # CLI subcommands
+crates/sshm-core/src/        # the engine — no rendering, no event loop
+├── models.rs                # Host, Folder, Database
+├── tunnels.rs               # Tunnel model + on-disk registry
+├── history.rs               # frecency, sort modes
+├── i18n.rs                  # localization
+├── locales/                 # en.toml, fr.toml
+├── os.rs                    # OS integration (notifications, external terminal)
+├── tty.rs                   # terminal handover hook (set by the frontend)
+├── watch.rs                 # debounced config-dir change detection
+├── filter/                  # fuzzy + prefix-token matcher
+├── config/                  # io, path, settings, export
+├── ssh/                     # client, keys, agent, known_hosts, proxy
+├── import/                  # ~/.ssh/config parser
+├── kluster/                 # Docker / Incus / Apple container / kubectl wrappers
+│   ├── docker.rs            #   docker ps / exec / logs (local + DOCKER_HOST=ssh://)
+│   ├── incus.rs             #   incus list / exec / logs (local + remotes)
+│   ├── apple.rs             #   Apple `container` runtime (macOS 26+)
+│   ├── kube.rs              #   kubectl get/exec/logs/delete pod
+│   ├── shell.rs             #   /bin/sh constant
+│   └── db.rs                #   kluster.json + bootstrap from kubeconfig + incus remotes
+└── sync/                    # git-over-SSH config sync
+    ├── engine.rs            #   the run: pull, merge, push
+    ├── git.rs               #   git plumbing over an SSH key
+    ├── merge.rs             #   entry-by-entry three-way merge
+    ├── lock.rs              #   cross-process O_EXCL lock
+    └── state.rs             #   last-run timestamp, last error
+
+crates/sshm/src/             # the TUI + CLI (binary `sshm`)
+├── main.rs                  # CLI dispatch
+├── lib.rs                   # crate root
+├── commands/                # CLI subcommands (list, crud, tags, connect, sync)
+├── ssh/                     # connect flow + add-identity wizard
+└── tui/
+    ├── app/                 # main loop + worker submodules
+    │   ├── health_worker.rs
+    │   ├── kluster_worker.rs
+    │   ├── sync_worker.rs
+    │   ├── kluster_actions.rs
+    │   ├── cluster_form.rs
+    │   ├── host_form.rs
+    │   ├── tunnels.rs
+    │   ├── fanout.rs
+    │   └── key_flows.rs
+    ├── tabs/                # one file per tab
+    ├── ssh/                 # host detail box, modals, toast, port forward
+    └── theme.rs
 ```
 
 ## Contributing
@@ -457,7 +450,7 @@ PRs welcome — especially for:
 - Terminal UX polish
 - New runtime backends (LXD, Podman, ...)
 - Platform support (Windows is currently best-effort)
-- More translations (just drop a `src/locales/<code>.toml`)
+- More translations (just drop a `crates/sshm-core/src/locales/<code>.toml`)
 
 Run `cargo test` before sending a PR — the suite covers parsers (filter, kubeconfig, ssh_config, JSON migrations) and a handful of pure logic units (frecency, ssh banner, ProxyJump resolver, etc.).
 

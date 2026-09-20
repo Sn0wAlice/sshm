@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     
 jobs:
-  # Engine + TUI: unit tests and clippy (the default workspace members).
+  # Engine + TUI: unit tests and clippy.
   rust:
     runs-on: ubuntu-latest
     steps:
@@ -17,48 +17,6 @@ jobs:
           components: clippy
       - uses: Swatinem/rust-cache@v2
       - name: Test (core + TUI)
-        run: cargo test --workspace --exclude sshm-desktop
+        run: cargo test --workspace
       - name: Clippy (core + TUI)
-        run: cargo clippy -p sshm-core -p sshm --all-targets -- -D warnings
-
-  # Desktop GUI: type-check the frontend and cargo-check the Tauri crate on
-  # both Linux and macOS. (The spec's minimum bar for the GUI.)
-  gui:
-    strategy:
-      fail-fast: false
-      matrix:
-        os: [ubuntu-latest, macos-latest]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Tauri Linux deps
-        if: matrix.os == 'ubuntu-latest'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            librsvg2-dev \
-            libayatana-appindicator3-dev \
-            patchelf
-
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: ". -> target"
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Frontend install + type-check
-        working-directory: crates/sshm-gui
-        run: |
-          npm ci
-          npm run check
-
-      - name: Generate IPC bindings + cargo check
-        run: |
-          cargo test -p sshm-desktop export_bindings
-          cargo check -p sshm-desktop
+        run: cargo clippy --workspace --all-targets -- -D warnings

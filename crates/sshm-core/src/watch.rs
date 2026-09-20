@@ -1,12 +1,12 @@
 //! Change detection for the sshm config directory.
 //!
-//! Both frontends (the TUI and the desktop GUI) can run against the same
-//! `~/.config/sshm/` files at once. This module watches that directory with the
-//! `notify` crate and, after debouncing the inevitable event bursts (editors —
-//! and our own atomic write-temp-then-rename — each fire several raw events),
-//! forwards one [`DbChanged`] per touched file over a plain `std::sync::mpsc`
-//! channel. No async runtime is required, so it stays usable from either
-//! frontend (poll it from an event loop, or block on the receiver in a thread).
+//! Several sshm instances can run against the same `~/.config/sshm/` files at
+//! once. This module watches that directory with the `notify` crate and, after
+//! debouncing the inevitable event bursts (editors — and our own atomic
+//! write-temp-then-rename — each fire several raw events), forwards one
+//! [`DbChanged`] per touched file over a plain `std::sync::mpsc` channel. No
+//! async runtime is required, so a frontend can poll it from an event loop or
+//! block on the receiver in a thread.
 
 use std::collections::HashSet;
 use std::path::Path;

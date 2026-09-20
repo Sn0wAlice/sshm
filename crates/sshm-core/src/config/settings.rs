@@ -3,7 +3,6 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppConfig {
     #[serde(default = "default_port")]
@@ -129,7 +128,6 @@ pub fn save_settings(config: &AppConfig) {
 // -----------------------------------------------------------------------------
 
 /// Which shared config file a sync run carries.
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SyncItem {
@@ -187,7 +185,6 @@ impl SyncItem {
 }
 
 /// What to do when the same file changed on both sides since the last sync.
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ConflictPolicy {
@@ -200,7 +197,6 @@ pub enum ConflictPolicy {
 }
 
 /// When an sshm process syncs on its own.
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum SyncMode {
@@ -217,7 +213,6 @@ pub enum SyncMode {
 /// Auth is SSH-key based: `repo_url` is an SSH remote (`git@host:owner/repo.git`)
 /// and `ssh_key` the private key handed to git through `GIT_SSH_COMMAND`. No
 /// credentials are ever written to the repo.
-#[cfg_attr(feature = "specta", derive(specta::Type))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncConfig {
     /// Master switch. Off = every automatic trigger is skipped and an explicit

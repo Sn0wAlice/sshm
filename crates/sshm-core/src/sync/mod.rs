@@ -9,8 +9,8 @@
 //!
 //! Three properties this module is built around:
 //!
-//! * **One syncer at a time.** Several sshm processes (two TUIs, the GUI, a
-//!   cron entry) share the same config dir. [`lock::SyncLock`] is an atomic
+//! * **One syncer at a time.** Several sshm processes (two TUIs, a cron
+//!   entry) share the same config dir. [`lock::SyncLock`] is an atomic
 //!   `O_EXCL` file lock; whoever wins runs, everybody else skips this tick
 //!   instead of queueing up behind it.
 //! * **One schedule, not N.** The last-run timestamp lives in a shared state

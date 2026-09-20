@@ -2,7 +2,7 @@
 //!
 //! Wakes up on a slow tick and asks the engine whether a sync is due. The
 //! schedule and the "only one syncer" rule both live in `sshm_core::sync`, so
-//! running several TUIs (plus the GUI, plus a cron entry) still produces one
+//! running several TUIs (plus a cron entry) still produces one
 //! sync per interval, by whichever instance happens to get there first.
 //!
 //! Results come back over an `mpsc` channel as a ready-to-show toast message.
