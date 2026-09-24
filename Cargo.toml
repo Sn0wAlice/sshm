@@ -3,7 +3,7 @@ members = ["crates/sshm-core", "crates/sshm"]
 resolver = "2"
 
 [workspace.package]
-version = "2.2.0"
+version = "2.2.1"
 edition = "2021"
 authors = ["Sn0wAlice"]
 license = "Apache-2.0"
@@ -34,3 +34,9 @@ openssl = { version = "0.10", features = ["vendored"] }
 
 # Internal
 sshm-core = { path = "crates/sshm-core" }
+
+[profile.release]
+# Smaller, slightly faster binary; costs a longer release build only.
+lto = true
+codegen-units = 1
+strip = true

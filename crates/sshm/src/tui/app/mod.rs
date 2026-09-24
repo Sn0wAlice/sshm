@@ -539,6 +539,10 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
 
                 // Tab bar
                 draw_tab_bar(f, vchunks[0], active_tab.index(), &theme);
+                // Hosts tab: whether the selected row is a folder (Some(true)) or
+                // a host (Some(false)) — captured from the rows built for the
+                // list so the help bar doesn't rebuild them.
+                let mut selected_is_folder: Option<bool> = None;
 
                 match active_tab {
                     ActiveTab::Hosts => {
@@ -590,6 +594,8 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                             }
                             list_state.select(Some(selected));
                         }
+                        selected_is_folder =
+                            rows.get(selected).map(|r| matches!(r, Row::Folder { .. }));
 
                         // ----- Render list -----
                         let list_items: Vec<ListItem> = crate::tui::ssh::listitems::get_item_list(
@@ -678,11 +684,9 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                         } else if last_rows_len == 0 {
                             HelpContext::Empty
                         } else {
-                            let rows =
-                                rows_for(view_mode, db, &items, &filtered, &filter, &collapsed);
-                            match rows.get(selected) {
-                                Some(Row::Folder { .. }) => HelpContext::FolderNav,
-                                Some(Row::Host(_)) => HelpContext::HostNav,
+                            match selected_is_folder {
+                                Some(true) => HelpContext::FolderNav,
+                                Some(false) => HelpContext::HostNav,
                                 None => HelpContext::Empty,
                             }
                         }

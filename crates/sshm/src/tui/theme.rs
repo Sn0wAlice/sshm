@@ -164,7 +164,30 @@ fn theme_path() -> PathBuf {
     crate::config::path::config_dir().join("theme.toml")
 }
 
+/// Cached [`load_from_disk`]: the draw loop calls this every frame, so only
+/// re-read + re-parse `theme.toml` when its mtime/size change (a Theme tab
+/// save, or an external rewrite such as a config sync).
 pub fn load() -> Theme {
+    use std::sync::Mutex;
+    use std::time::SystemTime;
+    type Key = Option<(SystemTime, u64)>;
+    static CACHE: Mutex<Option<(Key, Theme)>> = Mutex::new(None);
+
+    let key: Key = fs::metadata(theme_path())
+        .ok()
+        .and_then(|m| Some((m.modified().ok()?, m.len())));
+    let mut cache = CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some((k, t)) = cache.as_ref() {
+        if *k == key {
+            return t.clone();
+        }
+    }
+    let theme = load_from_disk();
+    *cache = Some((key, theme.clone()));
+    theme
+}
+
+fn load_from_disk() -> Theme {
     let path = theme_path();
 
     if let Ok(content) = fs::read_to_string(&path) {
