@@ -1,3 +1,9 @@
+sshm (2.2.2) stable; urgency=medium
+
+  * NEW: .rpm packages for Linux amd64 and arm64 in releases.
+
+ -- Sn0wAlice <snow.alice@pm.me>  Wed, 30 Sep 2026 12:00:00 +0200
+
 sshm (2.2.0) stable; urgency=medium
 
   * NEW: raw per-host ssh options (`-o`), applied to interactive connections,

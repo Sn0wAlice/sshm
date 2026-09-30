@@ -89,6 +89,13 @@ jobs:
             ${{ matrix.deb_arch }} \
             "$VERSION"
 
+      - name: Build .rpm package
+        if: runner.os == 'Linux'
+        run: |
+          cargo install cargo-generate-rpm --locked
+          cargo generate-rpm -p crates/sshm --target ${{ matrix.target }}
+          cp target/${{ matrix.target }}/generate-rpm/*.rpm .
+
       - name: Upload tar.gz artifact
         uses: actions/upload-artifact@v4
         with:
@@ -101,6 +108,13 @@ jobs:
         with:
           name: ${{ matrix.name }}-deb
           path: sshm_*.deb
+
+      - name: Upload .rpm artifact
+        if: runner.os == 'Linux'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}-rpm
+          path: sshm-*.rpm
 
   release:
     needs: [build]
@@ -185,3 +199,5 @@ jobs:
             artifacts/sshm-linux-arm64/*.tar.gz
             artifacts/sshm-linux-amd64-deb/*.deb
             artifacts/sshm-linux-arm64-deb/*.deb
+            artifacts/sshm-linux-amd64-rpm/*.rpm
+            artifacts/sshm-linux-arm64-rpm/*.rpm

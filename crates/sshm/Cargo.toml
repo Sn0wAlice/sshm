@@ -40,3 +40,9 @@ openssl = { workspace = true, optional = true }
 
 [features]
 vendored-openssl = ["openssl"]
+
+# `cargo generate-rpm -p crates/sshm --target <triple>` (release CI).
+[package.metadata.generate-rpm]
+assets = [
+  { source = "target/release/sshm", dest = "/usr/bin/sshm", mode = "755" },
+]
