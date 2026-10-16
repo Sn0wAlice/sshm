@@ -14,8 +14,9 @@ pub fn create(db: &mut Database, current_folder: Option<String>) {
 
     match choice {
         "Host" => {
-            create_host(&mut db.hosts, current_folder);
-            save_db(db);
+            let mut staged = db.hosts.clone();
+            create_host(&mut staged, current_folder);
+            commit_hosts(db, staged);
         }
         "Folder" => create_folder(db),
         _ => {}
@@ -28,7 +29,7 @@ fn create_folder(db: &mut Database) {
         Err(_) => return,
     };
     let name = name.trim();
-    if name.is_empty() {
+    if name.is_empty() || !refresh(db) {
         return;
     }
     if !db.folders.iter().any(|f| f.eq_ignore_ascii_case(name)) {
@@ -146,8 +147,9 @@ pub fn delete(db: &mut Database) {
 
     match choice {
         "Host" => {
-            delete_host(&mut db.hosts);
-            save_db(db);
+            let mut staged = db.hosts.clone();
+            delete_host(&mut staged);
+            commit_hosts(db, staged);
         }
         "Folder" => delete_folder(db),
         _ => {}
@@ -174,6 +176,9 @@ fn delete_folder(db: &mut Database) {
     let mut choices = db.folders.clone();
     choices.sort();
     if let Ok(choice) = Select::new("Choose folder to delete:", choices).prompt() {
+        if !refresh(db) {
+            return;
+        }
         // Migrate folder's hosts to root
         let mut moved = 0usize;
         for h in db.hosts.values_mut() {
@@ -196,9 +201,90 @@ pub fn edit_host(db: &mut Database) {
     let mut choices: Vec<String> = db.hosts.keys().cloned().collect();
     choices.sort();
     if let Ok(choice) = Select::new("Choose host to edit:", choices).prompt() {
-        edit_host_by_name(&mut db.hosts, &choice);
+        let mut staged = db.hosts.clone();
+        edit_host_by_name(&mut staged, &choice);
+        commit_hosts(db, staged);
+    }
+}
+
+/// Pick up whatever another sshm (TUI, sync) wrote while a prompt was open,
+/// so the save that follows doesn't overwrite it. `false` (after explaining)
+/// when host.json can't be read right now — saving then would clobber it.
+fn refresh(db: &mut Database) -> bool {
+    match db.reload_if_changed() {
+        Ok(_) => true,
+        Err(e) => {
+            eprintln!("Not saved: {e:#}");
+            false
+        }
+    }
+}
+
+/// Apply the host edits made on `staged` (a copy taken before the prompts) on
+/// top of a fresh reload, then save. Only the entries the user actually
+/// touched are written, so concurrent changes to other hosts survive.
+fn commit_hosts(db: &mut Database, staged: HashMap<String, Host>) {
+    let before = db.hosts.clone();
+    let changes = host_changes(&before, &staged);
+    if changes.is_empty() || !refresh(db) {
+        return;
+    }
+    if apply_host_changes(&before, &mut db.hosts, changes) {
         save_db(db);
     }
+}
+
+/// Apply `changes` onto the freshly reloaded `hosts`. `false` = abort, save nothing.
+fn apply_host_changes(
+    before: &HashMap<String, Host>,
+    hosts: &mut HashMap<String, Host>,
+    changes: Vec<(String, Option<Host>)>,
+) -> bool {
+    for (key, new) in changes {
+        // A brand-new alias that appeared on disk meanwhile: don't clobber it.
+        if !before.contains_key(&key) && hosts.contains_key(&key) {
+            eprintln!("Alias '{key}' was just created elsewhere — nothing changed.");
+            return false;
+        }
+        match new {
+            Some(mut h) => {
+                if before.contains_key(&key) {
+                    // Edited an existing host: don't resurrect it if it was
+                    // deleted meanwhile, and keep the history recorded since.
+                    let Some(cur) = hosts.get(&key) else {
+                        eprintln!("Host '{key}' was deleted elsewhere — edit skipped.");
+                        continue;
+                    };
+                    h.last_connected_at = cur.last_connected_at.clone();
+                    h.use_count = cur.use_count;
+                }
+                hosts.insert(key, h);
+            }
+            None => {
+                hosts.remove(&key);
+            }
+        }
+    }
+    true
+}
+
+/// Entries added/changed (`Some`) or removed (`None`) going from `before` to `after`.
+fn host_changes(
+    before: &HashMap<String, Host>,
+    after: &HashMap<String, Host>,
+) -> Vec<(String, Option<Host>)> {
+    let mut out: Vec<(String, Option<Host>)> = after
+        .iter()
+        .filter(|(k, v)| before.get(*k) != Some(*v))
+        .map(|(k, v)| (k.clone(), Some(v.clone())))
+        .collect();
+    out.extend(
+        before
+            .keys()
+            .filter(|k| !after.contains_key(*k))
+            .map(|k| (k.clone(), None)),
+    );
+    out
 }
 
 pub fn edit_host_by_name(hosts: &mut HashMap<String, Host>, key: &str) {
@@ -316,7 +402,7 @@ pub fn rename_folder(db: &mut Database) {
         Err(_) => return,
     };
 
-    if new.is_empty() || new == old {
+    if new.is_empty() || new == old || !refresh(db) {
         return;
     }
 
@@ -343,4 +429,48 @@ pub fn rename_folder(db: &mut Database) {
 
     save_db(db);
     println!("Folder '{}' renamed to '{}'", old, new);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn h(addr: &str) -> Host {
+        Host {
+            name: "x".into(),
+            host: addr.into(),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn host_changes_reports_only_what_the_user_touched() {
+        let before: HashMap<String, Host> = [("a".into(), h("1")), ("b".into(), h("2"))]
+            .into_iter()
+            .collect();
+        let mut after = before.clone();
+        after.remove("a");
+        after.insert("c".into(), h("3"));
+        let mut changes = host_changes(&before, &after);
+        changes.sort_by(|x, y| x.0.cmp(&y.0));
+        assert_eq!(changes.len(), 2);
+        assert_eq!(changes[0], ("a".into(), None));
+        assert_eq!(changes[1].0, "c");
+    }
+
+    #[test]
+    fn an_edit_keeps_fresh_history_and_skips_hosts_deleted_meanwhile() {
+        let before: HashMap<String, Host> = [("a".into(), h("1")), ("b".into(), h("2"))]
+            .into_iter()
+            .collect();
+        // On disk meanwhile: `a` was connected to, `b` deleted.
+        let mut hosts = before.clone();
+        hosts.get_mut("a").unwrap().use_count = 5;
+        hosts.remove("b");
+        let changes = vec![("a".into(), Some(h("9"))), ("b".into(), Some(h("8")))];
+        assert!(apply_host_changes(&before, &mut hosts, changes));
+        assert_eq!(hosts["a"].host, "9");
+        assert_eq!(hosts["a"].use_count, 5);
+        assert!(!hosts.contains_key("b"));
+    }
 }

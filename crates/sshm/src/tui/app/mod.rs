@@ -122,6 +122,63 @@ fn save_and_export(db: &Database, app_config: &AppConfig) {
     }
 }
 
+/// Re-read host.json before a mutation. `false` (with an error toast) when it
+/// can't be read — the caller must then skip its change *and* its save, or it
+/// would overwrite the file with a stale copy.
+fn reload_or_toast(db: &mut Database, toast: &mut Option<Toast>) -> bool {
+    match db.reload_if_changed() {
+        Ok(_) => true,
+        Err(e) => {
+            *toast = Some(Toast::error(format!(
+                "Not saved — could not re-read hosts: {e:#}"
+            )));
+            false
+        }
+    }
+}
+
+/// Name of the host on row `selected`, if that row is a host.
+fn selected_host_name(rows: &[Row], selected: usize) -> Option<String> {
+    match rows.get(selected) {
+        Some(Row::Host(h)) => Some(h.name.clone()),
+        _ => None,
+    }
+}
+
+/// Row index of host `name`, so a selection survives rows being rebuilt.
+fn host_row_index(rows: &[Row], name: &str) -> Option<usize> {
+    rows.iter()
+        .position(|r| matches!(r, Row::Host(h) if h.name == name))
+}
+
+/// Leave the TUI, connect to `host` in the foreground, and come back.
+///
+/// The host's auto-start tunnels come up only once the destination is valid
+/// and its key is trusted (their `BatchMode` ssh can't answer a TOFU prompt).
+/// `Err` when ssh was never launched — the caller toasts it and must not bump
+/// the connection history.
+fn run_ssh_session(
+    host: &Host,
+    all_hosts: &HashMap<String, Host>,
+    tunnels: &mut TunnelManager,
+) -> Result<(), String> {
+    let _ = disable_raw_mode();
+    let _ = execute!(stdout(), LeaveAlternateScreen);
+    let res = crate::ssh::client::launch_ssh_with_recovery(host, all_hosts, None, || {
+        let auto = tunnels.start_auto(host, all_hosts);
+        if !auto.is_empty() {
+            println!(
+                "{}",
+                t!("toast.auto_tunnels_started", "routes" => auto.join(", "))
+            );
+        }
+    });
+    let _ = enable_raw_mode();
+    let _ = execute!(stdout(), EnterAlternateScreen);
+    clear_console();
+    res
+}
+
 // Health worker → see `health_worker` submodule.
 // Interactive key generation / known_hosts flows → see `key_flows` submodule.
 
@@ -141,7 +198,42 @@ pub mod cluster_form;
 pub mod kluster_actions;
 use kluster_actions::sync_kluster_targets;
 
+/// Restore the terminal and stop background tunnels if the UI thread panics,
+/// then hand over to the previous hook so the message still prints — on the
+/// normal screen, where it can be read. Installed once per process.
+fn install_panic_hook() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            // Worker-thread panics don't take the UI down; leave it alone.
+            if std::thread::current().name() == Some("main") {
+                let _ = disable_raw_mode();
+                let _ = execute!(stdout(), LeaveAlternateScreen, crossterm::cursor::Show);
+                tunnels::kill_all();
+            }
+            previous(info);
+        }));
+    });
+}
+
+/// Toast text for a manual (`c`) reachability check.
+fn check_toast(name: &str, status: &HostStatus) -> Toast {
+    match status {
+        HostStatus::Reachable {
+            latency_ms,
+            ssh_banner: Some(b),
+        } => Toast::success(format!("{} reachable ✓ ({} ms, {})", name, latency_ms, b)),
+        HostStatus::Reachable { latency_ms, .. } => Toast::success(format!(
+            "{} reachable ✓ ({} ms, no SSH banner)",
+            name, latency_ms
+        )),
+        HostStatus::Unreachable => Toast::error(format!("{} is unreachable ✗", name)),
+    }
+}
+
 pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
+    install_panic_hook();
     // Concurrent-safe live reload: another sshm instance (or a text editor)
     // may rewrite `host.json` under us. Sync once on entry — this
     // catches any change that happened while we were away in an ssh session —
@@ -227,7 +319,9 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     let mut settings_state = SettingsFormState::from_config(&app_config);
     let mut theme_state = ThemeTabState::new();
     let mut help_state = HelpTabState::new();
-    let mut identities_state = IdentitiesTabState::new();
+    // Scanned on first visit to the tab, not before the first frame.
+    let mut identities_state = IdentitiesTabState::empty();
+    let mut identities_loaded = false;
 
     // Toast notification
     let mut toast: Option<Toast> = None;
@@ -246,6 +340,13 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     let health_interval_secs = Arc::new(AtomicU64::new(app_config.health_ttl_secs.max(1)));
     let health_probe_ms = Arc::new(AtomicU64::new(app_config.health_probe_timeout_ms.max(100)));
     let _health_guard = WorkerGuard(Arc::clone(&health_stop));
+    // Manual `c` checks probe off the UI thread and report through the same
+    // channel; `manual_check` names the hosts whose result gets a toast.
+    let check_tx = health_tx.clone();
+    let mut manual_check: std::collections::HashSet<String> = Default::default();
+    // Set wherever the DB is reloaded or mutated; the health worker's target
+    // list is rebuilt only then, not every tick or keystroke.
+    let mut health_targets_stale = false;
     spawn_health_worker(
         Arc::clone(&health_targets),
         Arc::clone(&health_stop),
@@ -298,8 +399,12 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     // still add up to a single sync per interval.
     let sync_cfg: SharedSyncConfig = Arc::new(Mutex::new(app_config.sync.clone()));
     let (sync_tx, sync_rx) = mpsc::channel::<SyncMsg>();
-    // "Sync on start" is just a forced first run.
-    let sync_poke = Arc::new(AtomicBool::new(app_config.sync.on_start));
+    // "Sync on start" is just a forced first run — once per process, not once
+    // per `run_tui` (main re-enters it after every ssh session).
+    static SYNC_ON_START_FIRED: AtomicBool = AtomicBool::new(false);
+    let sync_on_start =
+        app_config.sync.on_start && !SYNC_ON_START_FIRED.swap(true, Ordering::Relaxed);
+    let sync_poke = Arc::new(AtomicBool::new(sync_on_start));
     spawn_sync_worker(
         Arc::clone(&sync_cfg),
         Arc::clone(&health_stop), // share the stop flag — same lifetime
@@ -312,10 +417,19 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
     let backend = CrosstermBackend::new(stdout());
     let mut terminal = Terminal::new(backend).unwrap();
 
+    // Redraw only when something happened (input, a worker message, a reload,
+    // a toast expiring) — rebuilding every row of a large host list 6×/s for
+    // an idle screen is pure waste. The heartbeat keeps time-derived text
+    // (relative "last used", tunnel uptimes) from going stale.
+    const HEARTBEAT: Duration = Duration::from_secs(1);
+    let mut needs_redraw = true;
+    let mut last_draw = std::time::Instant::now();
+
     loop {
         // Expire toast
         if toast.as_ref().is_some_and(|t| t.is_expired()) {
             toast = None;
+            needs_redraw = true;
         }
 
         // --- Live reload: pick up external changes to host.json ---
@@ -335,24 +449,22 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
 
         // Adopt externally-changed settings, unless the user is in the middle
         // of editing them — their unsaved edits win until they save or Esc.
-        if pending_settings_reload {
+        if pending_settings_reload && !settings_state.dirty {
             pending_settings_reload = false;
-            if !settings_state.dirty {
-                app_config = load_settings();
-                settings_state = SettingsFormState::from_config(&app_config);
-                crate::os::set_notifications_enabled(app_config.notifications_enabled);
-                crate::os::set_notification_icon(&app_config.notification_icon);
-                crate::kluster::shell::set_shell_path(&app_config.kluster_shell);
-                health_interval_secs.store(app_config.health_ttl_secs.max(1), Ordering::Relaxed);
-                health_probe_ms.store(
-                    app_config.health_probe_timeout_ms.max(100),
-                    Ordering::Relaxed,
-                );
-                kluster_interval_secs
-                    .store(app_config.kluster_refresh_secs.max(2), Ordering::Relaxed);
-                if let Ok(mut shared) = sync_cfg.lock() {
-                    *shared = app_config.sync.clone();
-                }
+            needs_redraw = true;
+            app_config = load_settings();
+            settings_state = SettingsFormState::from_config(&app_config);
+            crate::os::set_notifications_enabled(app_config.notifications_enabled);
+            crate::os::set_notification_icon(&app_config.notification_icon);
+            crate::kluster::shell::set_shell_path(&app_config.kluster_shell);
+            health_interval_secs.store(app_config.health_ttl_secs.max(1), Ordering::Relaxed);
+            health_probe_ms.store(
+                app_config.health_probe_timeout_ms.max(100),
+                Ordering::Relaxed,
+            );
+            kluster_interval_secs.store(app_config.kluster_refresh_secs.max(2), Ordering::Relaxed);
+            if let Ok(mut shared) = sync_cfg.lock() {
+                *shared = app_config.sync.clone();
             }
         }
         // Defer the actual reload while an overlay modal is open (delete confirm,
@@ -366,20 +478,43 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
             || kluster_detail.is_some();
         if pending_reload && !overlay_open {
             pending_reload = false;
-            let changed = db.reload_if_changed().unwrap_or(false);
+            needs_redraw = true;
+            health_targets_stale = true;
+            // Follow the selected host by name: rows shift when hosts are
+            // added or removed elsewhere, and Enter / `d` must not land on a
+            // different host than the one the user is looking at.
+            let keep = selected_host_name(
+                &rows_for(view_mode, db, &items, &filtered, &filter, &collapsed),
+                selected,
+            );
+            let changed = match db.reload_if_changed() {
+                Ok(c) => c,
+                Err(e) => {
+                    toast = Some(Toast::error(format!("Could not reload hosts: {e:#}")));
+                    false
+                }
+            };
             items = db.hosts.values().collect();
             sort_items(&mut items, sort_mode);
             filtered = apply_filter(&filter, &items);
-            if filtered.is_empty() {
-                selected = 0;
-                list_state.select(None);
-            } else {
-                selected = selected.min(filtered.len() - 1);
-                list_state.select(Some(selected));
+            // Otherwise the draw clamps `selected` to the new row count.
+            if let Some(i) = keep.and_then(|n| {
+                host_row_index(
+                    &rows_for(view_mode, db, &items, &filtered, &filter, &collapsed),
+                    &n,
+                )
+            }) {
+                selected = i;
             }
             if changed {
                 toast = Some(Toast::success(t!("toast.hosts_reloaded")));
             }
+        }
+
+        // Same idea for the Identities tab's `~/.ssh` scan.
+        if !identities_loaded && matches!(active_tab, ActiveTab::Identities) {
+            identities_loaded = true;
+            identities_state.refresh();
         }
 
         // Lazily start the Kluster discovery worker the first time the user
@@ -395,9 +530,12 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
 
         // Drop background tunnels whose ssh process has exited on its own,
         // then bring back the ones marked auto-restart whose backoff elapsed.
-        tunnels.reap();
+        if tunnels.reap() {
+            needs_redraw = true;
+        }
         let revived = tunnels.restart_due(&db.hosts);
         if !revived.is_empty() {
+            needs_redraw = true;
             toast = Some(Toast::success(format!(
                 "Tunnel restarted: {}",
                 revived.join(", ")
@@ -413,33 +551,39 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                 host_status.clear();
             }
         }
-        if auto_enabled {
-            // Drain pending health-check results from the background worker.
-            while let Ok((name, status)) = health_rx.try_recv() {
-                // Desktop-notify on a reachable<->unreachable transition. The
-                // first probe (no prior entry) is silent — only real changes.
-                if let Some(prev) = host_status.get(&name) {
-                    let was = matches!(prev, HostStatus::Reachable { .. });
-                    let now = matches!(status, HostStatus::Reachable { .. });
-                    if was && !now {
-                        crate::os::notify("SSHM — host unreachable", &name);
-                    } else if !was && now {
-                        crate::os::notify("SSHM — host back online", &name);
-                    }
-                }
-                host_status.insert(name, status);
+        // Drain health-check results. With auto-check off, only the answer to
+        // a manual `c` check is kept; anything else predates the switch-off.
+        while let Ok((name, status)) = health_rx.try_recv() {
+            if manual_check.remove(&name) {
+                toast = Some(check_toast(&name, &status));
+            } else if !auto_enabled {
+                continue;
             }
-            // Keep the worker's target list in sync with the current DB.
+            needs_redraw = true;
+            // Desktop-notify on a reachable<->unreachable transition. The
+            // first probe (no prior entry) is silent — only real changes.
+            if let Some(prev) = host_status.get(&name).filter(|_| auto_enabled) {
+                let was = matches!(prev, HostStatus::Reachable { .. });
+                let now = matches!(status, HostStatus::Reachable { .. });
+                if was && !now {
+                    crate::os::notify("SSHM — host unreachable", &name);
+                } else if !was && now {
+                    crate::os::notify("SSHM — host back online", &name);
+                }
+            }
+            host_status.insert(name, status);
+        }
+        // Keep the worker's target list in sync with the current DB.
+        if auto_enabled && health_targets_stale {
+            health_targets_stale = false;
             sync_health_targets(&health_targets, db);
-        } else {
-            // Discard any results produced before the user disabled the feature.
-            while health_rx.try_recv().is_ok() {}
         }
 
         // Surface the background config sync. The rewritten files are picked
         // up by the config watcher like any other external change, so there is
         // nothing to reload here — only something to say.
         while let Ok(msg) = sync_rx.try_recv() {
+            needs_redraw = true;
             toast = Some(match msg {
                 SyncMsg::Changed(text) | SyncMsg::Quiet(text) => {
                     Toast::success(t!("toast.sync_done", "summary" => text))
@@ -458,6 +602,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                 } => {
                     kluster_state.apple_available = available;
                     kluster_state.apple_containers = containers;
+                    kluster_dirty = true;
                 }
                 KlusterUpdate::Podman {
                     available,
@@ -518,272 +663,305 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
             }
         }
         if kluster_dirty {
+            needs_redraw = true;
             kluster_state.bootstrapped = true;
             kluster_state.rebuild_rows();
         }
         // --- Draw ---
-        terminal
-            .draw(|f| {
-                let size = f.area();
-                let theme = theme::load();
+        if needs_redraw || last_draw.elapsed() >= HEARTBEAT {
+            needs_redraw = false;
+            last_draw = std::time::Instant::now();
+            terminal
+                .draw(|f| {
+                    let size = f.area();
+                    let theme = theme::load();
 
-                // Top-level layout: tab bar + content + help
-                let vchunks = Layout::default()
-                    .direction(Direction::Vertical)
-                    .constraints([
-                        Constraint::Length(1),
-                        Constraint::Min(0),
-                        Constraint::Length(1),
-                    ])
-                    .split(size);
+                    // Top-level layout: tab bar + content + help
+                    let vchunks = Layout::default()
+                        .direction(Direction::Vertical)
+                        .constraints([
+                            Constraint::Length(1),
+                            Constraint::Min(0),
+                            Constraint::Length(1),
+                        ])
+                        .split(size);
 
-                // Tab bar
-                draw_tab_bar(f, vchunks[0], active_tab.index(), &theme);
-                // Hosts tab: whether the selected row is a folder (Some(true)) or
-                // a host (Some(false)) — captured from the rows built for the
-                // list so the help bar doesn't rebuild them.
-                let mut selected_is_folder: Option<bool> = None;
+                    // Tab bar
+                    draw_tab_bar(f, vchunks[0], active_tab.index(), &theme);
+                    // Hosts tab: whether the selected row is a folder (Some(true)) or
+                    // a host (Some(false)) — captured from the rows built for the
+                    // list so the help bar doesn't rebuild them.
+                    let mut selected_is_folder: Option<bool> = None;
 
-                match active_tab {
-                    ActiveTab::Hosts => {
-                        let hchunks = Layout::default()
-                            .direction(Direction::Horizontal)
-                            .constraints([Constraint::Percentage(65), Constraint::Percentage(35)])
-                            .split(vchunks[1]);
+                    match active_tab {
+                        ActiveTab::Hosts => {
+                            let hchunks = Layout::default()
+                                .direction(Direction::Horizontal)
+                                .constraints([
+                                    Constraint::Percentage(65),
+                                    Constraint::Percentage(35),
+                                ])
+                                .split(vchunks[1]);
 
-                        // Left pane: filter bar + list
-                        let left_chunks = Layout::default()
-                            .direction(Direction::Vertical)
-                            .constraints([Constraint::Length(3), Constraint::Min(0)])
-                            .split(hchunks[0]);
+                            // Left pane: filter bar + list
+                            let left_chunks = Layout::default()
+                                .direction(Direction::Vertical)
+                                .constraints([Constraint::Length(3), Constraint::Min(0)])
+                                .split(hchunks[0]);
 
-                        let list_area = left_chunks[1];
-                        let vh = list_area.height.saturating_sub(2) as usize;
-                        viewport_h = vh.max(1);
+                            let list_area = left_chunks[1];
+                            let vh = list_area.height.saturating_sub(2) as usize;
+                            viewport_h = vh.max(1);
 
-                        // ----- Filter bar -----
-                        let filter_label = if input_mode {
-                            format!("{}|", filter)
-                        } else if filter.is_empty() {
-                            "(press '/' to start)".to_string()
-                        } else {
-                            filter.clone()
-                        };
-                        let filter_para = Paragraph::new(Line::from(vec![
-                            Span::styled("Filter ", Style::default().add_modifier(Modifier::BOLD)),
-                            Span::raw(filter_label),
-                        ]))
-                        .block(
-                            Block::default()
-                                .title("Filter")
-                                .borders(Borders::ALL)
-                                .border_style(Style::default().fg(theme.accent))
-                                .style(Style::default().bg(theme.bg).fg(theme.fg)),
-                        );
-                        f.render_widget(filter_para, left_chunks[0]);
-
-                        // ----- Build rows (folders + hosts) -----
-                        let rows = rows_for(view_mode, db, &items, &filtered, &filter, &collapsed);
-
-                        last_rows_len = rows.len();
-                        if last_rows_len == 0 {
-                            list_state.select(None);
-                        } else {
-                            if selected >= last_rows_len {
-                                selected = last_rows_len - 1;
-                            }
-                            list_state.select(Some(selected));
-                        }
-                        selected_is_folder =
-                            rows.get(selected).map(|r| matches!(r, Row::Folder { .. }));
-
-                        // ----- Render list -----
-                        let list_items: Vec<ListItem> = crate::tui::ssh::listitems::get_item_list(
-                            &rows,
-                            &host_status,
-                            &selection,
-                            &theme,
-                        );
-
-                        let list_title = "Hosts (↑/↓ / filter)".to_string();
-                        let list = List::new(list_items)
+                            // ----- Filter bar -----
+                            let filter_label = if input_mode {
+                                format!("{}|", filter)
+                            } else if filter.is_empty() {
+                                "(press '/' to start)".to_string()
+                            } else {
+                                filter.clone()
+                            };
+                            let filter_para = Paragraph::new(Line::from(vec![
+                                Span::styled(
+                                    "Filter ",
+                                    Style::default().add_modifier(Modifier::BOLD),
+                                ),
+                                Span::raw(filter_label),
+                            ]))
                             .block(
                                 Block::default()
-                                    .title(list_title)
+                                    .title("Filter")
                                     .borders(Borders::ALL)
                                     .border_style(Style::default().fg(theme.accent))
                                     .style(Style::default().bg(theme.bg).fg(theme.fg)),
-                            )
-                            .highlight_symbol("➜ ")
-                            .highlight_style(
-                                Style::default()
-                                    .bg(theme.accent)
-                                    .fg(theme.bg)
-                                    .add_modifier(Modifier::BOLD),
+                            );
+                            f.render_widget(filter_para, left_chunks[0]);
+
+                            // ----- Build rows (folders + hosts) -----
+                            let rows =
+                                rows_for(view_mode, db, &items, &filtered, &filter, &collapsed);
+
+                            last_rows_len = rows.len();
+                            if last_rows_len == 0 {
+                                list_state.select(None);
+                            } else {
+                                if selected >= last_rows_len {
+                                    selected = last_rows_len - 1;
+                                }
+                                list_state.select(Some(selected));
+                            }
+                            selected_is_folder =
+                                rows.get(selected).map(|r| matches!(r, Row::Folder { .. }));
+
+                            // ----- Render list -----
+                            // Only the visible window becomes ListItems (a
+                            // large host list would otherwise be styled in
+                            // full every frame). The offset follows the same
+                            // keep-selection-visible rule as `List` itself.
+                            let mut offset = list_state
+                                .offset()
+                                .min(last_rows_len.saturating_sub(viewport_h));
+                            if selected < offset {
+                                offset = selected;
+                            } else if selected >= offset + viewport_h {
+                                offset = selected + 1 - viewport_h;
+                            }
+                            let end = (offset + viewport_h).min(last_rows_len);
+                            let list_items: Vec<ListItem> =
+                                crate::tui::ssh::listitems::get_item_list(
+                                    &rows[offset.min(end)..end],
+                                    &host_status,
+                                    &selection,
+                                    &theme,
+                                );
+
+                            let list_title = "Hosts (↑/↓ / filter)".to_string();
+                            let list = List::new(list_items)
+                                .block(
+                                    Block::default()
+                                        .title(list_title)
+                                        .borders(Borders::ALL)
+                                        .border_style(Style::default().fg(theme.accent))
+                                        .style(Style::default().bg(theme.bg).fg(theme.fg)),
+                                )
+                                .highlight_symbol("➜ ")
+                                .highlight_style(
+                                    Style::default()
+                                        .bg(theme.accent)
+                                        .fg(theme.bg)
+                                        .add_modifier(Modifier::BOLD),
+                                );
+
+                            let mut window_state = ListState::default()
+                                .with_selected(list_state.selected().map(|s| s - offset));
+                            f.render_stateful_widget(list, list_area, &mut window_state);
+                            *list_state.offset_mut() = offset;
+
+                            let mut sb_state =
+                                ScrollbarState::new(last_rows_len.max(1)).position(selected);
+                            let sb = Scrollbar::default()
+                                .orientation(ScrollbarOrientation::VerticalRight);
+                            f.render_stateful_widget(sb, list_area, &mut sb_state);
+
+                            // ----- Details (Host or Folder) -----
+                            crate::tui::ssh::detailbox::show_detail_box(
+                                last_rows_len,
+                                selected,
+                                &rows,
+                                f,
+                                &hchunks,
+                                &theme,
+                                db,
+                                &host_status,
                             );
 
-                        f.render_stateful_widget(list, list_area, &mut list_state);
+                            // ----- Delete confirmation modal -----
+                            crate::tui::ssh::deletebox::show_delete_box(
+                                &delete_mode,
+                                delete_button_index,
+                                f,
+                                size,
+                                &theme,
+                            );
+                        }
+                        ActiveTab::Kluster => {
+                            kluster_tab::draw_kluster_tab(f, vchunks[1], &kluster_state, &theme);
+                        }
+                        ActiveTab::Identities => {
+                            identities_tab::draw_identities_tab(
+                                f,
+                                vchunks[1],
+                                &identities_state,
+                                &theme,
+                            );
+                        }
+                        ActiveTab::Settings => {
+                            settings_tab::draw_settings_tab(f, vchunks[1], &settings_state, &theme);
+                        }
+                        ActiveTab::Theme => {
+                            theme_tab::draw_theme_tab(f, vchunks[1], &theme_state, &theme);
+                        }
+                        ActiveTab::Help => {
+                            help_tab::draw_help_tab(f, vchunks[1], &help_state, &theme);
+                        }
+                    }
 
-                        let mut sb_state = ScrollbarState::new(last_rows_len.max(1))
-                            .position(selected.saturating_sub(viewport_h / 2));
-                        let sb =
-                            Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
-                        f.render_stateful_widget(sb, list_area, &mut sb_state);
-
-                        // ----- Details (Host or Folder) -----
-                        crate::tui::ssh::detailbox::show_detail_box(
-                            last_rows_len,
-                            selected,
-                            &rows,
-                            f,
-                            &hchunks,
-                            &theme,
-                            db,
-                            &host_status,
-                        );
-
-                        // ----- Delete confirmation modal -----
-                        crate::tui::ssh::deletebox::show_delete_box(
-                            &delete_mode,
-                            delete_button_index,
-                            f,
-                            size,
-                            &theme,
-                        );
-                    }
-                    ActiveTab::Kluster => {
-                        kluster_tab::draw_kluster_tab(f, vchunks[1], &kluster_state, &theme);
-                    }
-                    ActiveTab::Identities => {
-                        identities_tab::draw_identities_tab(
-                            f,
-                            vchunks[1],
-                            &identities_state,
-                            &theme,
-                        );
-                    }
-                    ActiveTab::Settings => {
-                        settings_tab::draw_settings_tab(f, vchunks[1], &settings_state, &theme);
-                    }
-                    ActiveTab::Theme => {
-                        theme_tab::draw_theme_tab(f, vchunks[1], &theme_state, &theme);
-                    }
-                    ActiveTab::Help => {
-                        help_tab::draw_help_tab(f, vchunks[1], &help_state, &theme);
-                    }
-                }
-
-                // Contextual help bar (unified for all tabs)
-                use crate::tui::ssh::helpbox::HelpContext;
-                let help_ctx = match active_tab {
-                    ActiveTab::Hosts => {
-                        if !matches!(delete_mode, DeleteMode::None) {
-                            HelpContext::DeleteModal
-                        } else if input_mode {
-                            HelpContext::FilterMode
-                        } else if last_rows_len == 0 {
-                            HelpContext::Empty
-                        } else {
-                            match selected_is_folder {
-                                Some(true) => HelpContext::FolderNav,
-                                Some(false) => HelpContext::HostNav,
+                    // Contextual help bar (unified for all tabs)
+                    use crate::tui::ssh::helpbox::HelpContext;
+                    let help_ctx = match active_tab {
+                        ActiveTab::Hosts => {
+                            if !matches!(delete_mode, DeleteMode::None) {
+                                HelpContext::DeleteModal
+                            } else if input_mode {
+                                HelpContext::FilterMode
+                            } else if last_rows_len == 0 {
+                                HelpContext::Empty
+                            } else {
+                                match selected_is_folder {
+                                    Some(true) => HelpContext::FolderNav,
+                                    Some(false) => HelpContext::HostNav,
+                                    None => HelpContext::Empty,
+                                }
+                            }
+                        }
+                        ActiveTab::Kluster if kluster_state.input_mode => HelpContext::FilterMode,
+                        ActiveTab::Kluster => {
+                            use crate::tui::tabs::kluster_tab::{KlusterRow, KlusterTarget};
+                            match kluster_state.flat_rows.get(kluster_state.selected) {
+                                Some(KlusterRow::ClusterHeader { .. }) => {
+                                    HelpContext::KlusterHeaderCluster
+                                }
+                                Some(KlusterRow::DockerHeader { .. })
+                                | Some(KlusterRow::AppleHeader { .. })
+                                | Some(KlusterRow::PodmanHeader { .. })
+                                | Some(KlusterRow::IncusLocalHeader { .. })
+                                | Some(KlusterRow::IncusRemoteHeader { .. }) => {
+                                    HelpContext::KlusterHeaderRuntime
+                                }
+                                Some(KlusterRow::DockerRemoteHeader { .. }) => {
+                                    HelpContext::KlusterHeaderDockerRemote
+                                }
+                                Some(KlusterRow::ClusterPod { .. }) => {
+                                    let terminal = match kluster_state.current_target() {
+                                        Some(KlusterTarget::Pod { pod, .. }) => {
+                                            pod.phase.eq_ignore_ascii_case("Succeeded")
+                                                || pod.phase.eq_ignore_ascii_case("Failed")
+                                        }
+                                        _ => false,
+                                    };
+                                    if terminal {
+                                        HelpContext::KlusterTerminalPod
+                                    } else {
+                                        HelpContext::KlusterItem
+                                    }
+                                }
+                                Some(KlusterRow::DockerContainer(_))
+                                | Some(KlusterRow::AppleContainer(_))
+                                | Some(KlusterRow::PodmanContainer(_))
+                                | Some(KlusterRow::DockerRemoteContainer { .. })
+                                | Some(KlusterRow::IncusLocalInstance(_))
+                                | Some(KlusterRow::IncusRemoteInstance { .. }) => {
+                                    HelpContext::KlusterItem
+                                }
                                 None => HelpContext::Empty,
                             }
                         }
-                    }
-                    ActiveTab::Kluster if kluster_state.input_mode => HelpContext::FilterMode,
-                    ActiveTab::Kluster => {
-                        use crate::tui::tabs::kluster_tab::{KlusterRow, KlusterTarget};
-                        match kluster_state.flat_rows.get(kluster_state.selected) {
-                            Some(KlusterRow::ClusterHeader { .. }) => {
-                                HelpContext::KlusterHeaderCluster
-                            }
-                            Some(KlusterRow::DockerHeader { .. })
-                            | Some(KlusterRow::AppleHeader { .. })
-                            | Some(KlusterRow::PodmanHeader { .. })
-                            | Some(KlusterRow::IncusLocalHeader { .. })
-                            | Some(KlusterRow::IncusRemoteHeader { .. }) => {
-                                HelpContext::KlusterHeaderRuntime
-                            }
-                            Some(KlusterRow::DockerRemoteHeader { .. }) => {
-                                HelpContext::KlusterHeaderDockerRemote
-                            }
-                            Some(KlusterRow::ClusterPod { .. }) => {
-                                let terminal = match kluster_state.current_target() {
-                                    Some(KlusterTarget::Pod { pod, .. }) => {
-                                        pod.phase.eq_ignore_ascii_case("Succeeded")
-                                            || pod.phase.eq_ignore_ascii_case("Failed")
-                                    }
-                                    _ => false,
-                                };
-                                if terminal {
-                                    HelpContext::KlusterTerminalPod
-                                } else {
-                                    HelpContext::KlusterItem
-                                }
-                            }
-                            Some(KlusterRow::DockerContainer(_))
-                            | Some(KlusterRow::AppleContainer(_))
-                            | Some(KlusterRow::PodmanContainer(_))
-                            | Some(KlusterRow::DockerRemoteContainer { .. })
-                            | Some(KlusterRow::IncusLocalInstance(_))
-                            | Some(KlusterRow::IncusRemoteInstance { .. }) => {
-                                HelpContext::KlusterItem
-                            }
-                            None => HelpContext::Empty,
+                        ActiveTab::Identities if identities_state.input_mode => {
+                            HelpContext::FilterMode
+                        }
+                        ActiveTab::Identities => HelpContext::IdentitiesTab,
+                        ActiveTab::Settings => HelpContext::SettingsTab,
+                        ActiveTab::Theme => HelpContext::ThemeTab,
+                        ActiveTab::Help => HelpContext::HelpTab,
+                    };
+                    f.render_widget(
+                        crate::tui::ssh::helpbox::get_contextual_help(
+                            help_ctx,
+                            &theme,
+                            vchunks[2].width,
+                        ),
+                        vchunks[2],
+                    );
+
+                    // Toast overlay (rendered last, on top of everything)
+                    if let Some(ref t) = toast {
+                        if !t.is_expired() {
+                            crate::tui::ssh::toast::render_toast(f, size, t, &theme);
                         }
                     }
-                    ActiveTab::Identities if identities_state.input_mode => HelpContext::FilterMode,
-                    ActiveTab::Identities => HelpContext::IdentitiesTab,
-                    ActiveTab::Settings => HelpContext::SettingsTab,
-                    ActiveTab::Theme => HelpContext::ThemeTab,
-                    ActiveTab::Help => HelpContext::HelpTab,
-                };
-                f.render_widget(
-                    crate::tui::ssh::helpbox::get_contextual_help(
-                        help_ctx,
-                        &theme,
-                        vchunks[2].width,
-                    ),
-                    vchunks[2],
-                );
 
-                // Toast overlay (rendered last, on top of everything)
-                if let Some(ref t) = toast {
-                    if !t.is_expired() {
-                        crate::tui::ssh::toast::render_toast(f, size, t, &theme);
+                    // Kluster detail overlay — rich inspect view for one item.
+                    if let Some(ref detail) = kluster_detail {
+                        crate::tui::tabs::kluster_detail::draw_kluster_detail(
+                            f,
+                            detail,
+                            &mut kluster_detail_scroll,
+                            &theme,
+                        );
                     }
-                }
 
-                // Kluster detail overlay — rich inspect view for one item.
-                if let Some(ref detail) = kluster_detail {
-                    crate::tui::tabs::kluster_detail::draw_kluster_detail(
-                        f,
-                        detail,
-                        &mut kluster_detail_scroll,
-                        &theme,
-                    );
-                }
+                    // Help popup overlay — full shortcut list, above everything.
+                    if help_popup {
+                        crate::tui::ssh::helpbox::draw_help_popup(f, help_ctx, &theme);
+                    }
 
-                // Help popup overlay — full shortcut list, above everything.
-                if help_popup {
-                    crate::tui::ssh::helpbox::draw_help_popup(f, help_ctx, &theme);
-                }
-
-                // Background-tunnels dashboard overlay.
-                if tunnels_popup {
-                    crate::tui::app::tunnels::draw_tunnels_popup(
-                        f,
-                        tunnels,
-                        tunnels_popup_sel,
-                        &theme,
-                    );
-                }
-            })
-            .ok();
+                    // Background-tunnels dashboard overlay.
+                    if tunnels_popup {
+                        crate::tui::app::tunnels::draw_tunnels_popup(
+                            f,
+                            tunnels,
+                            tunnels_popup_sel,
+                            &theme,
+                        );
+                    }
+                })
+                .ok();
+        }
 
         // --- Events ---
         if event::poll(Duration::from_millis(150)).unwrap_or(false) {
+            // Any event (key, resize, …) may change what's on screen.
+            needs_redraw = true;
             if let Ok(Event::Key(k)) = event::read() {
                 if k.kind == KeyEventKind::Press {
                     // --- Kluster detail: modal, scroll + close ---
@@ -887,6 +1065,23 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                         ActiveTab::Help => true,
                     };
 
+                    // Settings text fields have no cursor, so ←→ mean nothing
+                    // there: keep them switching tabs, as the help bar says.
+                    // Letter shortcuts stay blocked while a field takes input.
+                    if matches!(active_tab, ActiveTab::Settings) && !tab_nav_allowed {
+                        match k.code {
+                            KeyCode::Right => {
+                                active_tab = active_tab.next();
+                                continue;
+                            }
+                            KeyCode::Left => {
+                                active_tab = active_tab.prev();
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+
                     if tab_nav_allowed {
                         match k.code {
                             KeyCode::Right => {
@@ -944,9 +1139,16 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                             DeleteMode::Host { name } => {
                                                 if delete_button_index == 0 {
                                                     let deleted_name = name.clone();
-                                                    db.hosts.remove(name);
-                                                    save_and_export(db, &app_config);
+                                                    if reload_or_toast(db, &mut toast) {
+                                                        db.hosts.remove(name);
+                                                        save_and_export(db, &app_config);
+                                                        toast = Some(Toast::success(format!(
+                                                            "Deleted: {}",
+                                                            deleted_name
+                                                        )));
+                                                    }
                                                     items = db.hosts.values().collect();
+                                                    health_targets_stale = true;
                                                     sort_items(&mut items, sort_mode);
                                                     filtered = apply_filter(&filter, &items);
                                                     selected = 0;
@@ -955,10 +1157,6 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     } else {
                                                         Some(0)
                                                     });
-                                                    toast = Some(Toast::success(format!(
-                                                        "Deleted: {}",
-                                                        deleted_name
-                                                    )));
                                                 }
                                                 delete_mode = DeleteMode::None;
                                                 delete_button_index = 0;
@@ -966,23 +1164,29 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                             DeleteMode::EmptyFolder { name } => {
                                                 if delete_button_index == 0 {
                                                     let deleted_name = name.clone();
+                                                    let reloaded = reload_or_toast(db, &mut toast);
                                                     let prefix = format!("{}/", name);
-                                                    // Remove this folder + sub-folders from collapsed
-                                                    collapsed.retain(|k, _| {
-                                                        k != name && !k.starts_with(&prefix)
-                                                    });
-                                                    db.folders.retain(|f| {
-                                                        f != name && !f.starts_with(&prefix)
-                                                    });
-                                                    for h in db.hosts.values_mut() {
-                                                        if let Some(ref f) = h.folder {
-                                                            if f == name || f.starts_with(&prefix) {
-                                                                h.folder = None;
+                                                    if reloaded {
+                                                        // Remove this folder + sub-folders from collapsed
+                                                        collapsed.retain(|k, _| {
+                                                            k != name && !k.starts_with(&prefix)
+                                                        });
+                                                        db.folders.retain(|f| {
+                                                            f != name && !f.starts_with(&prefix)
+                                                        });
+                                                        for h in db.hosts.values_mut() {
+                                                            if let Some(ref f) = h.folder {
+                                                                if f == name
+                                                                    || f.starts_with(&prefix)
+                                                                {
+                                                                    h.folder = None;
+                                                                }
                                                             }
                                                         }
+                                                        save_and_export(db, &app_config);
                                                     }
-                                                    save_and_export(db, &app_config);
                                                     items = db.hosts.values().collect();
+                                                    health_targets_stale = true;
                                                     sort_items(&mut items, sort_mode);
                                                     filtered = apply_filter(&filter, &items);
                                                     selected = 0;
@@ -991,10 +1195,12 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     } else {
                                                         Some(0)
                                                     });
-                                                    toast = Some(Toast::success(format!(
-                                                        "Deleted folder: {}",
-                                                        deleted_name
-                                                    )));
+                                                    if reloaded {
+                                                        toast = Some(Toast::success(format!(
+                                                            "Deleted folder: {}",
+                                                            deleted_name
+                                                        )));
+                                                    }
                                                 }
                                                 delete_mode = DeleteMode::None;
                                                 delete_button_index = 0;
@@ -1002,7 +1208,11 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                             DeleteMode::FolderWithHosts { name, .. } => {
                                                 let deleted_name = name.clone();
                                                 let prefix = format!("{}/", name);
-                                                match delete_button_index {
+                                                // Cancel (2) touches nothing; a failed
+                                                // reload skips the change and the save.
+                                                let apply = delete_button_index < 2
+                                                    && reload_or_toast(db, &mut toast);
+                                                match if apply { delete_button_index } else { 2 } {
                                                     0 => {
                                                         // Delete folder + sub-folders + all hosts inside
                                                         collapsed.retain(|k, _| {
@@ -1047,8 +1257,11 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     }
                                                     _ => { /* Cancel */ }
                                                 }
-                                                save_and_export(db, &app_config);
+                                                if apply {
+                                                    save_and_export(db, &app_config);
+                                                }
                                                 items = db.hosts.values().collect();
+                                                health_targets_stale = true;
                                                 sort_items(&mut items, sort_mode);
                                                 filtered = apply_filter(&filter, &items);
                                                 selected = 0;
@@ -1161,34 +1374,25 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                                     Ordering::Relaxed,
                                                                 );
                                                             }
-                                                            let _ = disable_raw_mode();
-                                                            let _ = execute!(
-                                                                stdout(),
-                                                                LeaveAlternateScreen
-                                                            );
-                                                            // Bring up this host's auto-start
-                                                            // tunnels first, so they are already
-                                                            // listening when the session opens.
-                                                            let auto = tunnels
-                                                                .start_auto(&host_clone, &db.hosts);
-                                                            if !auto.is_empty() {
-                                                                println!(
-                                                                    "{}",
-                                                                    t!(
-                                                                        "toast.auto_tunnels_started",
-                                                                        "routes" => auto.join(", ")
+                                                            match run_ssh_session(
+                                                                &host_clone,
+                                                                &db.hosts,
+                                                                tunnels,
+                                                            ) {
+                                                                Ok(()) => {
+                                                                    launched_host = Some(
+                                                                        host_clone.name.clone(),
                                                                     )
-                                                                );
+                                                                }
+                                                                Err(e) => {
+                                                                    kluster_enabled.store(
+                                                                        kluster_started,
+                                                                        Ordering::Relaxed,
+                                                                    );
+                                                                    toast = Some(Toast::error(e));
+                                                                    let _ = terminal.clear();
+                                                                }
                                                             }
-                                                            crate::ssh::client::launch_ssh_with_recovery(&host_clone, &db.hosts, None);
-                                                            let _ = enable_raw_mode();
-                                                            let _ = execute!(
-                                                                stdout(),
-                                                                EnterAlternateScreen
-                                                            );
-                                                            clear_console();
-                                                            launched_host =
-                                                                Some(host_clone.name.clone());
                                                         }
                                                     }
                                                 }
@@ -1197,11 +1401,20 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                 // Drop borrows into db before mutating.
                                                 filtered.clear();
                                                 items.clear();
-                                                if let Some(h) = db.hosts.get_mut(&name) {
-                                                    record_connection(h);
+                                                if reload_or_toast(db, &mut toast) {
+                                                    if let Some(h) = db.hosts.get_mut(&name) {
+                                                        record_connection(h);
+                                                    }
+                                                    save_db(db);
+                                                    return;
                                                 }
-                                                save_db(db);
-                                                return;
+                                                // History not saved: stay, and say why.
+                                                kluster_enabled
+                                                    .store(kluster_started, Ordering::Relaxed);
+                                                items = db.hosts.values().collect();
+                                                health_targets_stale = true;
+                                                sort_items(&mut items, sort_mode);
+                                                filtered = apply_filter(&filter, &items);
                                             }
                                         }
                                     }
@@ -1225,20 +1438,32 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                         &collapsed,
                                                     );
                                                     if let Some(Row::Host(h)) = rows.get(selected) {
-                                                        let state =
-                                                            HostFormState::new_edit(db, &h.name);
-                                                        let _ = disable_raw_mode();
-                                                        let _ = execute!(
-                                                            stdout(),
-                                                            LeaveAlternateScreen
-                                                        );
-                                                        run_host_form(db, state);
-                                                        let _ = enable_raw_mode();
-                                                        let _ = execute!(
-                                                            stdout(),
-                                                            EnterAlternateScreen
-                                                        );
+                                                        let name = h.name.clone();
+                                                        if !reload_or_toast(db, &mut toast) {
+                                                            // toast says why
+                                                        } else if !db.hosts.contains_key(&name) {
+                                                            // Deleted elsewhere: an edit form
+                                                            // for it would open blank.
+                                                            toast = Some(Toast::error(format!(
+                                                                "{name} no longer exists"
+                                                            )));
+                                                        } else {
+                                                            let state =
+                                                                HostFormState::new_edit(db, &name);
+                                                            let _ = disable_raw_mode();
+                                                            let _ = execute!(
+                                                                stdout(),
+                                                                LeaveAlternateScreen
+                                                            );
+                                                            run_host_form(db, state);
+                                                            let _ = enable_raw_mode();
+                                                            let _ = execute!(
+                                                                stdout(),
+                                                                EnterAlternateScreen
+                                                            );
+                                                        }
                                                         items = db.hosts.values().collect();
+                                                        health_targets_stale = true;
                                                         sort_items(&mut items, sort_mode);
                                                         filtered = apply_filter(&filter, &items);
                                                         selected = 0;
@@ -1319,13 +1544,15 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                                 .unwrap_or(true);
                                                             collapsed.insert(f.clone(), state);
                                                         }
-                                                        save_and_export(db, &app_config);
+                                                        // apply_folder_form already saved (and a
+                                                        // cancel must not save at all).
                                                         let _ = enable_raw_mode();
                                                         let _ = execute!(
                                                             stdout(),
                                                             EnterAlternateScreen
                                                         );
                                                         items = db.hosts.values().collect();
+                                                        health_targets_stale = true;
                                                         sort_items(&mut items, sort_mode);
                                                         filtered = apply_filter(&filter, &items);
                                                         selected = 0;
@@ -1395,34 +1622,32 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                         &collapsed,
                                                     );
                                                     if let Some(Row::Host(h)) = rows.get(selected) {
-                                                        let name = h.name.clone();
-                                                        let status = crate::tui::health::probe_host(
-                                                            &h.host,
+                                                        // Probe off the UI thread; the result
+                                                        // comes back through the health channel.
+                                                        let (name, host, port) = (
+                                                            h.name.clone(),
+                                                            h.host.clone(),
                                                             h.port,
-                                                            Duration::from_millis(
-                                                                app_config
-                                                                    .health_probe_timeout_ms
-                                                                    .max(100),
-                                                            ),
                                                         );
-                                                        let msg = match &status {
-                                                    HostStatus::Reachable { latency_ms, ssh_banner } => {
-                                                        match ssh_banner {
-                                                            Some(b) => format!("{} reachable ✓ ({} ms, {})", name, latency_ms, b),
-                                                            None => format!("{} reachable ✓ ({} ms, no SSH banner)", name, latency_ms),
-                                                        }
-                                                    }
-                                                    HostStatus::Unreachable => format!("{} is unreachable ✗", name),
-                                                };
-                                                        toast = Some(match &status {
-                                                            HostStatus::Reachable { .. } => {
-                                                                Toast::success(msg)
-                                                            }
-                                                            HostStatus::Unreachable => {
-                                                                Toast::error(msg)
-                                                            }
+                                                        let timeout = Duration::from_millis(
+                                                            app_config
+                                                                .health_probe_timeout_ms
+                                                                .max(100),
+                                                        );
+                                                        let tx = check_tx.clone();
+                                                        let reply = name.clone();
+                                                        std::thread::spawn(move || {
+                                                            let status =
+                                                                crate::tui::health::probe_host(
+                                                                    &host, port, timeout,
+                                                                );
+                                                            let _ = tx.send((reply, status));
                                                         });
-                                                        host_status.insert(name, status);
+                                                        toast = Some(Toast::success(format!(
+                                                            "Checking {}…",
+                                                            name
+                                                        )));
+                                                        manual_check.insert(name);
                                                     }
                                                 }
                                                 'p' => {
@@ -1457,13 +1682,17 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                         if let Some(new_tunnels) =
                                                             result.updated_tunnels
                                                         {
-                                                            if let Some(host) =
-                                                                db.hosts.get_mut(&host_clone.name)
-                                                            {
-                                                                host.tunnels = new_tunnels;
+                                                            if reload_or_toast(db, &mut toast) {
+                                                                if let Some(host) = db
+                                                                    .hosts
+                                                                    .get_mut(&host_clone.name)
+                                                                {
+                                                                    host.tunnels = new_tunnels;
+                                                                }
+                                                                save_db(db);
                                                             }
-                                                            save_db(db);
                                                             items = db.hosts.values().collect();
+                                                            health_targets_stale = true;
                                                             sort_items(&mut items, sort_mode);
                                                             filtered =
                                                                 apply_filter(&filter, &items);
@@ -1584,24 +1813,48 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     if let Some(name) = target {
                                                         filtered.clear();
                                                         items.clear();
-                                                        let mut new_state = false;
-                                                        if let Some(h) = db.hosts.get_mut(&name) {
-                                                            h.favorite = !h.favorite;
-                                                            new_state = h.favorite;
+                                                        if reload_or_toast(db, &mut toast) {
+                                                            match db.hosts.get_mut(&name) {
+                                                                Some(h) => {
+                                                                    h.favorite = !h.favorite;
+                                                                    let fav = h.favorite;
+                                                                    save_db(db);
+                                                                    toast = Some(Toast::success(
+                                                                        format!(
+                                                                            "{} {}",
+                                                                            name,
+                                                                            if fav {
+                                                                                "★ favorited"
+                                                                            } else {
+                                                                                "unfavorited"
+                                                                            }
+                                                                        ),
+                                                                    ));
+                                                                }
+                                                                None => {
+                                                                    toast = Some(Toast::error(
+                                                                        format!(
+                                                                            "{name} no longer exists"
+                                                                        ),
+                                                                    ));
+                                                                }
+                                                            }
                                                         }
-                                                        save_db(db);
                                                         items = db.hosts.values().collect();
+                                                        health_targets_stale = true;
                                                         sort_items(&mut items, sort_mode);
                                                         filtered = apply_filter(&filter, &items);
-                                                        toast = Some(Toast::success(format!(
-                                                            "{} {}",
-                                                            name,
-                                                            if new_state {
-                                                                "★ favorited"
-                                                            } else {
-                                                                "unfavorited"
-                                                            }
-                                                        )));
+                                                        // A favorite can re-sort; keep the
+                                                        // cursor on the host just toggled.
+                                                        if let Some(i) = host_row_index(
+                                                            &rows_for(
+                                                                view_mode, db, &items, &filtered,
+                                                                &filter, &collapsed,
+                                                            ),
+                                                            &name,
+                                                        ) {
+                                                            selected = i;
+                                                        }
                                                     }
                                                 }
                                                 'a' => {
@@ -1622,6 +1875,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     let _ = disable_raw_mode();
                                                     let _ =
                                                         execute!(stdout(), LeaveAlternateScreen);
+                                                    // apply_host_form reloads before saving.
                                                     let state = HostFormState::new_create(
                                                         folder_ctx,
                                                         &app_config,
@@ -1631,6 +1885,7 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                     let _ =
                                                         execute!(stdout(), EnterAlternateScreen);
                                                     items = db.hosts.values().collect();
+                                                    health_targets_stale = true;
                                                     sort_items(&mut items, sort_mode);
                                                     filtered = apply_filter(&filter, &items);
                                                     selected = 0;
@@ -1656,57 +1911,63 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                         })
                                                     };
                                                     if let Some(src) = src_name {
-                                                        let mut clone_name =
-                                                            format!("{}-copy", src);
-                                                        let mut n = 2;
-                                                        while db.hosts.contains_key(&clone_name) {
-                                                            clone_name =
-                                                                format!("{}-copy-{}", src, n);
-                                                            n += 1;
+                                                        if reload_or_toast(db, &mut toast) {
+                                                            let mut clone_name =
+                                                                format!("{}-copy", src);
+                                                            let mut n = 2;
+                                                            while db.hosts.contains_key(&clone_name)
+                                                            {
+                                                                clone_name =
+                                                                    format!("{}-copy-{}", src, n);
+                                                                n += 1;
+                                                            }
+                                                            if let Some(mut clone) =
+                                                                db.hosts.get(&src).cloned()
+                                                            {
+                                                                clone.name = clone_name.clone();
+                                                                clone.last_connected_at = None;
+                                                                clone.use_count = 0;
+                                                                clone.favorite = false;
+                                                                db.hosts.insert(
+                                                                    clone_name.clone(),
+                                                                    clone,
+                                                                );
+                                                                save_and_export(db, &app_config);
+                                                                let state = HostFormState::new_edit(
+                                                                    db,
+                                                                    &clone_name,
+                                                                );
+                                                                let _ = disable_raw_mode();
+                                                                let _ = execute!(
+                                                                    stdout(),
+                                                                    LeaveAlternateScreen
+                                                                );
+                                                                run_host_form(db, state);
+                                                                let _ = enable_raw_mode();
+                                                                let _ = execute!(
+                                                                    stdout(),
+                                                                    EnterAlternateScreen
+                                                                );
+                                                                let _ = terminal.clear();
+                                                                toast =
+                                                                    Some(Toast::success(format!(
+                                                                        "Cloned {} → {}",
+                                                                        src, clone_name
+                                                                    )));
+                                                            }
                                                         }
-                                                        if let Some(mut clone) =
-                                                            db.hosts.get(&src).cloned()
-                                                        {
-                                                            clone.name = clone_name.clone();
-                                                            clone.last_connected_at = None;
-                                                            clone.use_count = 0;
-                                                            clone.favorite = false;
-                                                            db.hosts
-                                                                .insert(clone_name.clone(), clone);
-                                                            save_and_export(db, &app_config);
-                                                            let state = HostFormState::new_edit(
-                                                                db,
-                                                                &clone_name,
-                                                            );
-                                                            let _ = disable_raw_mode();
-                                                            let _ = execute!(
-                                                                stdout(),
-                                                                LeaveAlternateScreen
-                                                            );
-                                                            run_host_form(db, state);
-                                                            let _ = enable_raw_mode();
-                                                            let _ = execute!(
-                                                                stdout(),
-                                                                EnterAlternateScreen
-                                                            );
-                                                            items = db.hosts.values().collect();
-                                                            sort_items(&mut items, sort_mode);
-                                                            filtered =
-                                                                apply_filter(&filter, &items);
-                                                            selected = 0;
-                                                            list_state.select(
-                                                                if filtered.is_empty() {
-                                                                    None
-                                                                } else {
-                                                                    Some(0)
-                                                                },
-                                                            );
-                                                            let _ = terminal.clear();
-                                                            toast = Some(Toast::success(format!(
-                                                                "Cloned {} → {}",
-                                                                src, clone_name
-                                                            )));
-                                                        }
+                                                        // Rebuilt either way: the reload above
+                                                        // may have replaced the host map.
+                                                        items = db.hosts.values().collect();
+                                                        health_targets_stale = true;
+                                                        sort_items(&mut items, sort_mode);
+                                                        filtered = apply_filter(&filter, &items);
+                                                        selected = 0;
+                                                        list_state.select(if filtered.is_empty() {
+                                                            None
+                                                        } else {
+                                                            Some(0)
+                                                        });
                                                     }
                                                 }
                                                 'Y' => {
@@ -1803,15 +2064,23 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                         if confirmed {
                                                             filtered.clear();
                                                             items.clear();
-                                                            for n in &names {
-                                                                db.hosts.remove(n);
+                                                            let ok =
+                                                                reload_or_toast(db, &mut toast);
+                                                            if ok {
+                                                                for n in &names {
+                                                                    db.hosts.remove(n);
+                                                                }
+                                                                save_db(db);
+                                                                selection.clear();
+                                                                toast = Some(Toast::success(
+                                                                    t!("toast.deleted_n_hosts", "n" => names.len()),
+                                                                ));
                                                             }
-                                                            save_db(db);
                                                             items = db.hosts.values().collect();
+                                                            health_targets_stale = true;
                                                             sort_items(&mut items, sort_mode);
                                                             filtered =
                                                                 apply_filter(&filter, &items);
-                                                            selection.clear();
                                                             selected = 0;
                                                             list_state.select(
                                                                 if filtered.is_empty() {
@@ -1820,9 +2089,6 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                                     Some(0)
                                                                 },
                                                             );
-                                                            toast = Some(Toast::success(
-                                                                t!("toast.deleted_n_hosts", "n" => names.len()),
-                                                            ));
                                                         }
                                                     }
                                                 }
@@ -1858,43 +2124,53 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                             if !new_tags.is_empty() {
                                                                 filtered.clear();
                                                                 items.clear();
-                                                                for name in &names {
-                                                                    if let Some(h) =
-                                                                        db.hosts.get_mut(name)
-                                                                    {
-                                                                        let mut existing = h
-                                                                            .tags
-                                                                            .clone()
-                                                                            .unwrap_or_default();
-                                                                        for t in &new_tags {
-                                                                            if !existing
-                                                                                .iter()
-                                                                                .any(|e| e == t)
-                                                                            {
-                                                                                existing.push(
-                                                                                    t.clone(),
-                                                                                );
-                                                                            }
-                                                                        }
-                                                                        h.tags = if existing
-                                                                            .is_empty()
+                                                                let ok =
+                                                                    reload_or_toast(db, &mut toast);
+                                                                if ok {
+                                                                    for name in &names {
+                                                                        if let Some(h) =
+                                                                            db.hosts.get_mut(name)
                                                                         {
-                                                                            None
-                                                                        } else {
-                                                                            Some(existing)
-                                                                        };
+                                                                            let mut existing = h
+                                                                                .tags
+                                                                                .clone()
+                                                                                .unwrap_or_default(
+                                                                                );
+                                                                            for t in &new_tags {
+                                                                                if !existing
+                                                                                    .iter()
+                                                                                    .any(|e| e == t)
+                                                                                {
+                                                                                    existing.push(
+                                                                                        t.clone(),
+                                                                                    );
+                                                                                }
+                                                                            }
+                                                                            h.tags = if existing
+                                                                                .is_empty()
+                                                                            {
+                                                                                None
+                                                                            } else {
+                                                                                Some(existing)
+                                                                            };
+                                                                        }
                                                                     }
+                                                                    save_db(db);
                                                                 }
-                                                                save_db(db);
                                                                 items = db.hosts.values().collect();
+                                                                health_targets_stale = true;
                                                                 sort_items(&mut items, sort_mode);
                                                                 filtered =
                                                                     apply_filter(&filter, &items);
-                                                                toast = Some(Toast::success(t!(
-                                                                    "toast.tagged_n_hosts",
-                                                                    "n" => names.len(),
-                                                                    "tags" => new_tags.join(",")
-                                                                )));
+                                                                if ok {
+                                                                    toast = Some(Toast::success(
+                                                                        t!(
+                                                                            "toast.tagged_n_hosts",
+                                                                            "n" => names.len(),
+                                                                            "tags" => new_tags.join(",")
+                                                                        ),
+                                                                    ));
+                                                                }
                                                             }
                                                         }
                                                     }
@@ -1962,41 +2238,45 @@ pub fn run_tui(db: &mut Database, tunnels: &mut TunnelManager) {
                                                                     Ordering::Relaxed,
                                                                 );
                                                             }
-                                                            let _ = disable_raw_mode();
-                                                            let _ = execute!(
-                                                                stdout(),
-                                                                LeaveAlternateScreen
+                                                            let launched = run_ssh_session(
+                                                                &host_clone,
+                                                                &db.hosts,
+                                                                tunnels,
                                                             );
-                                                            // Bring up this host's auto-start
-                                                            // tunnels first, so they are already
-                                                            // listening when the session opens.
-                                                            let auto = tunnels
-                                                                .start_auto(&host_clone, &db.hosts);
-                                                            if !auto.is_empty() {
-                                                                println!(
-                                                                    "{}",
-                                                                    t!(
-                                                                        "toast.auto_tunnels_started",
-                                                                        "routes" => auto.join(", ")
-                                                                    )
-                                                                );
-                                                            }
-                                                            crate::ssh::client::launch_ssh_with_recovery(&host_clone, &db.hosts, None);
-                                                            let _ = enable_raw_mode();
-                                                            let _ = execute!(
-                                                                stdout(),
-                                                                EnterAlternateScreen
-                                                            );
-                                                            clear_console();
                                                             filtered.clear();
                                                             items.clear();
-                                                            if let Some(h) =
-                                                                db.hosts.get_mut(&host_clone.name)
-                                                            {
-                                                                record_connection(h);
+                                                            match launched {
+                                                                Err(e) => {
+                                                                    toast = Some(Toast::error(e));
+                                                                    let _ = terminal.clear();
+                                                                }
+                                                                Ok(())
+                                                                    if reload_or_toast(
+                                                                        db, &mut toast,
+                                                                    ) =>
+                                                                {
+                                                                    if let Some(h) = db
+                                                                        .hosts
+                                                                        .get_mut(&host_clone.name)
+                                                                    {
+                                                                        record_connection(h);
+                                                                    }
+                                                                    save_db(db);
+                                                                    return;
+                                                                }
+                                                                Ok(()) => {}
                                                             }
-                                                            save_db(db);
-                                                            return;
+                                                            // Not leaving: resume the workers
+                                                            // and rebuild the dropped lists.
+                                                            kluster_enabled.store(
+                                                                kluster_started,
+                                                                Ordering::Relaxed,
+                                                            );
+                                                            items = db.hosts.values().collect();
+                                                            health_targets_stale = true;
+                                                            sort_items(&mut items, sort_mode);
+                                                            filtered =
+                                                                apply_filter(&filter, &items);
                                                         }
                                                     } else {
                                                         toast = Some(Toast::error(
@@ -2168,6 +2448,8 @@ fn draw_folder_form(f: &mut Frame, state: &FolderFormState) {
 }
 
 fn apply_folder_form(db: &mut Database, state: &mut FolderFormState) -> Result<(), String> {
+    db.reload_if_changed()
+        .map_err(|e| format!("Not saved — could not re-read hosts: {e:#}"))?;
     let new_name = state.name.trim();
     if new_name.is_empty() {
         return Err("Folder name cannot be empty".into());

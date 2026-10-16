@@ -5,14 +5,14 @@
 //! roughly equivalent to a saved cluster: `local` is implicit, anything
 //! else needs a `<remote>:` prefix on instance names.
 
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
 use super::models::{IncusInstance, LifecycleAction};
-use super::shell::shell_path;
+use super::shell::{output_with_timeout, shell_path, LIFECYCLE_TIMEOUT, QUERY_TIMEOUT};
 
 struct AvailCache {
     last: Instant,
@@ -31,22 +31,11 @@ pub fn local_available() -> bool {
                 return c.value;
             }
         }
-        let value = Command::new("incus")
-            .args(["info", "--target", "none"])
-            // `incus info` (no target) prints daemon info on success.
-            // Using --target none is invalid syntax → fall back to plain info.
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .or_else(|_| {
-                Command::new("incus")
-                    .arg("info")
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status()
-                    .map(|s| s.success())
-            })
+        // Plain `incus info` prints the local server's info and fails when the
+        // daemon is unreachable. (`--target` is only valid against a cluster,
+        // so it made a standalone server look permanently unavailable.)
+        let value = output_with_timeout(Command::new("incus").arg("info"), QUERY_TIMEOUT)
+            .map(|o| o.status.success())
             .unwrap_or(false);
         *g = Some(AvailCache {
             last: Instant::now(),
@@ -67,11 +56,10 @@ pub fn invalidate_cache() {
 /// Discover saved Incus remotes (excluding `local`) by scraping
 /// `incus remote list --format=csv`. Format: `name,url,protocol,...`.
 pub fn list_remotes() -> Vec<String> {
-    let out = match Command::new("incus")
-        .args(["remote", "list", "--format=csv"])
-        .stderr(Stdio::null())
-        .output()
-    {
+    let out = match output_with_timeout(
+        Command::new("incus").args(["remote", "list", "--format=csv"]),
+        QUERY_TIMEOUT,
+    ) {
         Ok(o) if o.status.success() => o,
         _ => return Vec::new(),
     };
@@ -102,8 +90,11 @@ pub fn parse_remotes_csv(raw: &str) -> Vec<String> {
 ///   but `-c` doesn't expose image directly — use `--columns=ns,t,4` instead)
 ///
 /// We use `--format=json` for richer fields and parse minimally.
+///
+/// The local-daemon probe only gates `remote = None`: a remote is reached
+/// over the network and works on a client with no local daemon at all.
 pub fn list_instances(remote: Option<&str>) -> Result<Vec<IncusInstance>> {
-    if !local_available() {
+    if remote.is_none() && !local_available() {
         return Ok(Vec::new());
     }
     let mut cmd = Command::new("incus");
@@ -112,8 +103,7 @@ pub fn list_instances(remote: Option<&str>) -> Result<Vec<IncusInstance>> {
         cmd.arg(format!("{}:", r));
     }
     cmd.args(["--format=csv", "-c", "ns,t,b"]);
-    cmd.stderr(Stdio::null());
-    let out = cmd.output().context("running `incus list`")?;
+    let out = output_with_timeout(&mut cmd, QUERY_TIMEOUT).context("running `incus list`")?;
     if !out.status.success() {
         return Ok(Vec::new());
     }
@@ -199,8 +189,8 @@ pub fn lifecycle(name: &str, remote: Option<&str>, action: LifecycleAction) -> R
     if matches!(action, LifecycleAction::Stop | LifecycleAction::Restart) {
         cmd.arg("--timeout=5");
     }
-    cmd.stdout(Stdio::null()).stderr(Stdio::piped());
-    let out = cmd.output().context("running incus lifecycle command")?;
+    let out = output_with_timeout(&mut cmd, LIFECYCLE_TIMEOUT)
+        .context("running incus lifecycle command")?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(anyhow::anyhow!(

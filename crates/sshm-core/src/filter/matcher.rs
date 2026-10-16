@@ -156,7 +156,8 @@ pub fn apply_filter<'a>(pattern: &str, items: &'a [&'a Host]) -> Vec<&'a Host> {
     scored.into_iter().map(|(h, _)| h).collect()
 }
 
-/// Prefix-based filter (name:, host:, user:, tag:) using fuzzy matching per field.
+/// Prefix-based filter (name:, host:, user:, tag:): fuzzy per field, or
+/// wildcard when the pattern contains `*`.
 fn apply_filter_prefixed<'a>(filter: &str, items: &'a [&'a Host]) -> Vec<&'a Host> {
     // Always case-insensitive: `smart_case` would make an uppercase query
     // (e.g. "PROD") case-sensitive, which surprises users searching casually.
@@ -186,27 +187,32 @@ fn apply_filter_prefixed<'a>(filter: &str, items: &'a [&'a Host]) -> Vec<&'a Hos
         name_pats.push(tok.to_string());
     }
 
+    // `*` means wildcard (like the CLI); otherwise fuzzy.
+    let field_ok = |p: &str, text: &str| {
+        if p.contains('*') {
+            wildcard_match(p, text)
+        } else {
+            matcher.fuzzy_match(text, p).is_some()
+        }
+    };
+
     items
         .iter()
         .copied()
         .filter(|h| {
-            let name_ok = name_pats.is_empty()
-                || name_pats
-                    .iter()
-                    .all(|p| matcher.fuzzy_match(&h.name, p).is_some());
-            let host_ok = host_pats.is_empty()
-                || host_pats
-                    .iter()
-                    .all(|p| matcher.fuzzy_match(&h.host, p).is_some());
-            let user_ok = user_pats.is_empty()
-                || user_pats
-                    .iter()
-                    .all(|p| matcher.fuzzy_match(&h.username, p).is_some());
+            let name_ok = name_pats.iter().all(|p| field_ok(p, &h.name));
+            let host_ok = host_pats.iter().all(|p| field_ok(p, &h.host));
+            let user_ok = user_pats.iter().all(|p| field_ok(p, &h.username));
             let tag_ok = tag_pats.is_empty() || {
-                let tags = h.tags.as_ref().map(|v| v.join(" ")).unwrap_or_default();
-                tag_pats
-                    .iter()
-                    .all(|p| matcher.fuzzy_match(&tags, p).is_some())
+                let tags = h.tags.as_deref().unwrap_or_default();
+                let joined = tags.join(" ");
+                tag_pats.iter().all(|p| {
+                    if p.contains('*') {
+                        tags.iter().any(|t| wildcard_match(p, t))
+                    } else {
+                        matcher.fuzzy_match(&joined, p).is_some()
+                    }
+                })
             };
             name_ok && host_ok && user_ok && tag_ok
         })
@@ -328,5 +334,28 @@ mod tests {
         // An uppercase query must still match a lowercase host name.
         assert_eq!(apply_filter("PROD", &refs).len(), 1);
         assert_eq!(apply_filter("Web-Prod", &refs).len(), 1);
+    }
+
+    #[test]
+    fn apply_filter_prefixed_star_is_wildcard() {
+        let hosts = [
+            h("web", "10.0.0.1", "u", &["prod"]),
+            h("db", "192.168.10.2", "u", &["staging"]),
+        ];
+        let refs: Vec<&Host> = hosts.iter().collect();
+        let r = apply_filter("host:10.*", &refs);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "web");
+        let r = apply_filter("tag:pr*", &refs);
+        assert_eq!(r.len(), 1);
+        assert_eq!(r[0].name, "web");
+    }
+
+    #[test]
+    fn apply_filter_prefixed_without_star_stays_fuzzy() {
+        let hosts = [h("web-prod", "10.0.0.1", "u", &["production"])];
+        let refs: Vec<&Host> = hosts.iter().collect();
+        assert_eq!(apply_filter("name:wbprd", &refs).len(), 1);
+        assert_eq!(apply_filter("tag:prdn", &refs).len(), 1);
     }
 }

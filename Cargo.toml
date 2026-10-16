@@ -3,7 +3,7 @@ members = ["crates/sshm-core", "crates/sshm"]
 resolver = "2"
 
 [workspace.package]
-version = "2.2.2"
+version = "2.3.0"
 edition = "2021"
 authors = ["Sn0wAlice"]
 license = "Apache-2.0"
@@ -26,11 +26,11 @@ notify = "8"
 tempfile = "3"
 
 # Frontend-only (TUI/CLI) — deliberately kept out of sshm-core's dependency tree.
-inquire = { version = "0.7.5", default-features = true }
-prettytable = "0.10.0"
-ratatui = "0.30.0"
+inquire = { version = "0.9.4", default-features = true }
+unicode-width = "0.2"
+# No default features: `all-widgets` (calendar) drags in the `time` crate, unused.
+ratatui = { version = "0.30.0", default-features = false, features = ["crossterm", "layout-cache", "underline-color"] }
 crossterm = "0.29.0"
-openssl = { version = "0.10", features = ["vendored"] }
 
 # Internal
 sshm-core = { path = "crates/sshm-core" }

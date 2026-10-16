@@ -44,24 +44,16 @@ pub fn get_item_list<'a>(
                 };
                 let indent = "    ".repeat(depth);
 
-                // Color based on reachability status
-                let name_style = match host_status.get(&h.name) {
-                    Some(HostStatus::Reachable { .. }) => Style::default()
-                        .fg(theme.success)
-                        .add_modifier(Modifier::BOLD),
-                    Some(HostStatus::Unreachable) => Style::default()
-                        .fg(theme.error)
-                        .add_modifier(Modifier::BOLD),
-                    None => Style::default().add_modifier(Modifier::BOLD),
-                };
-
-                let host_style = match host_status.get(&h.name) {
+                // Color based on reachability status (one lookup per row).
+                let status = host_status.get(&h.name);
+                let host_style = match status {
                     Some(HostStatus::Reachable { .. }) => Style::default().fg(theme.success),
                     Some(HostStatus::Unreachable) => Style::default().fg(theme.error),
                     None => Style::default(),
                 };
+                let name_style = host_style.add_modifier(Modifier::BOLD);
 
-                let status_suffix: String = match host_status.get(&h.name) {
+                let status_suffix: String = match status {
                     Some(HostStatus::Reachable {
                         latency_ms,
                         ssh_banner,
@@ -78,23 +70,21 @@ pub fn get_item_list<'a>(
 
                 let mut spans = vec![Span::raw(indent)];
                 if !selection.is_empty() {
-                    let mark = if selection.contains(&h.name) {
-                        "[x] "
+                    let (mark, mark_style) = if selection.contains(&h.name) {
+                        (
+                            "[x] ",
+                            Style::default()
+                                .fg(theme.accent)
+                                .add_modifier(Modifier::BOLD),
+                        )
                     } else {
-                        "[ ] "
+                        ("[ ] ", Style::default().fg(theme.muted))
                     };
-                    let mark_style = if selection.contains(&h.name) {
-                        Style::default()
-                            .fg(theme.accent)
-                            .add_modifier(Modifier::BOLD)
-                    } else {
-                        Style::default().fg(theme.muted)
-                    };
-                    spans.push(Span::styled(mark.to_string(), mark_style));
+                    spans.push(Span::styled(mark, mark_style));
                 }
                 if h.favorite {
                     spans.push(Span::styled(
-                        "★ ".to_string(),
+                        "★ ",
                         Style::default()
                             .fg(theme.accent)
                             .add_modifier(Modifier::BOLD),
@@ -105,7 +95,7 @@ pub fn get_item_list<'a>(
 
                 if h.forward_agent {
                     spans.push(Span::styled(
-                        "  -A".to_string(),
+                        "  -A",
                         Style::default()
                             .fg(theme.error)
                             .add_modifier(Modifier::BOLD),
@@ -113,16 +103,7 @@ pub fn get_item_list<'a>(
                 }
 
                 if !status_suffix.is_empty() {
-                    spans.push(Span::styled(
-                        status_suffix,
-                        match host_status.get(&h.name) {
-                            Some(HostStatus::Reachable { .. }) => {
-                                Style::default().fg(theme.success)
-                            }
-                            Some(HostStatus::Unreachable) => Style::default().fg(theme.error),
-                            _ => Style::default(),
-                        },
-                    ));
+                    spans.push(Span::styled(status_suffix, host_style));
                 }
 
                 ListItem::new(Line::from(spans))

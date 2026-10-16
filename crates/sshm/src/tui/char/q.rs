@@ -6,12 +6,13 @@ use crossterm::{cursor::Show, terminal::LeaveAlternateScreen};
 pub fn press() {
     let _ = disable_raw_mode();
     let _ = execute!(stdout(), LeaveAlternateScreen, Show);
+    // process::exit skips destructors — SIGTERM background tunnels first so
+    // they don't leak as orphaned ssh processes, even if the user gives up
+    // on a slow sync below with Ctrl+C.
+    crate::tui::app::tunnels::kill_all();
     // Runs on the normal terminal, after the alternate screen is gone, so the
     // user can see what it is waiting on.
     sync_on_exit();
-    // process::exit skips destructors — SIGTERM background tunnels first so
-    // they don't leak as orphaned ssh processes.
-    crate::tui::app::tunnels::kill_all();
     process::exit(0);
 }
 

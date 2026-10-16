@@ -5,6 +5,90 @@ All notable changes to **sshm** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.0] - 2026-10-16
+
+### Changed
+
+- **Connection history stays on each machine.** `last_connected_at` and
+  `use_count` no longer travel through config sync: connecting to a host can't
+  collide with an edit made to it elsewhere any more. The first sync after
+  upgrading removes them from the repository once.
+- **Host `ssh_options` really override now.** They are emitted before sshm's
+  own flags, since OpenSSH keeps the first value it sees. A `ProxyJump=` /
+  `ProxyCommand=` option replaces the ProxyJump field and `ForwardAgent=…`
+  replaces the agent toggle, on the command line and in `export` alike.
+- **Background tunnels fail loudly.** They run with `ExitOnForwardFailure`,
+  `BatchMode` and keepalives, in their own process group: a busy local port, a
+  password prompt or a dead link now ends the tunnel (and triggers
+  `auto_restart`) instead of showing it "up" or drawing over the TUI. Auto-start
+  tunnels come up after the host key is trusted, and a foreground port forward
+  that closes shows ssh's reason. Closing the terminal or a SIGTERM still stops
+  them.
+- **Faster.** The TUI only redraws when something changed and only builds the
+  visible rows; the folder tree is built in one pass (≈14 ms → <1 ms per frame
+  at 5 000 hosts); health probes run in bounded batches with a DNS deadline and
+  try every address; the Identities tab scans `~/.ssh` on first visit; CLI
+  commands that don't need hosts (`version`, `completions`, `sync`, …) no
+  longer load `host.json`.
+- **Lighter build.** The unused OpenSSL dependency is gone (no more vendored
+  OpenSSL in release builds), as are prettytable and ratatui's unused widgets;
+  `inquire` 0.9 drops the duplicate crossterm.
+- Kluster and Identities filters are case-insensitive, like Hosts.
+
+### Fixed
+
+- **No more silent host wipes.** An unreadable or invalid `host.json` /
+  `settings.toml` — including one with a single bad field such as
+  `"port": "22"` — is never replaced by an empty or default one: it is backed
+  up and saving over it is refused until it is fixed. A reload that hits an
+  invalid file keeps the hosts in memory and the action is not saved.
+- **Sync refuses instead of guessing.** A file that doesn't parse, an emptied
+  local `host.json`, or a local read error aborts the run rather than
+  publishing deletions; `sshm sync push` can overwrite a broken remote, and a
+  broken merge base falls back to a two-way merge. A local edit made while a
+  sync is running is no longer overwritten. Connection history follows a host
+  renamed on another machine.
+- **No more lost updates.** The TUI (including the host form) and
+  `sshm create/edit/delete/connect/tag` reload `host.json` before saving, so
+  hosts pulled by a sync during a long SSH session or an open prompt survive.
+  The cursor stays on the same host when the list reloads, and cancelling a
+  folder rename no longer saves.
+- Sync lock: a stale-lock takeover can't let two syncs run at once, a run
+  never deletes a lock it no longer owns, and a lock held by a live process is
+  still released after an hour. Encrypting large payloads with `age`
+  no longer deadlocks; git runs with keepalives, without gpg signing or hooks.
+- Host-key pinning writes exactly the keys whose fingerprints you approved,
+  and is skipped for hosts reached through a jump host (ssh verifies those).
+- Hosts and usernames starting with `-` are rejected and the destination is
+  passed after `--`, so a host entry can't smuggle ssh options.
+- Config files are created `0600` and the config directory is kept `0700`;
+  `doctor` warns about a group/world-readable age identity.
+- The key-install fallback quotes its remote script and no longer glues the key
+  onto an `authorized_keys` without a trailing newline; `ssh-copy-id` gets its
+  options in the right order. Key install and fan-out ignore a host's
+  `RemoteCommand`. An empty username no longer produces `@host`.
+- `remote_command`: `%` is escaped and `docker exec …` no longer counts as an
+  `exec`.
+- A panic restores the terminal and stops background tunnels.
+- The Kluster tab no longer crashes on stale Apple container rows.
+- Ctrl-C during a fan-out skips the remaining hosts instead of killing sshm and
+  its tunnels; Ctrl-C at an ssh prompt no longer kills sshm.
+- `sshm tunnel stop` stops `auto_restart` tunnels for good.
+- "Sync on start" runs once per launch, not after every SSH session; settings
+  changed by a sync while the Settings form is being edited are applied later
+  instead of dropped; huge numeric settings no longer overflow.
+- The `c` host check no longer freezes the UI; the 8 s host-key probe only runs
+  when ssh itself failed (exit 255).
+- kubectl (including credential plugins), docker, incus and Apple container
+  calls time out and are killed with their helpers; incus remotes are listed
+  without a local daemon.
+- TUI search: `host:10.*` / `tag:pr*` wildcards work again. Kluster and
+  Identities lists scroll properly, the Help tab scroll is clamped, the hosts
+  scrollbar reaches the bottom, and tag groups show their own details.
+- `sshm tag add/del` keeps empty folders.
+- ←→ switch tabs from the Settings tab again, even with a text field
+  selected (the help bar always said so).
+
 ## [2.2.2] - 2026-09-30
 
 ### Added

@@ -111,19 +111,24 @@ fn run_age(args: &[&str], input: &str, what: &str) -> Result<String> {
         .stderr(Stdio::piped())
         .spawn()
         .with_context(|| format!("running `age` to {what}"))?;
-    child
-        .stdin
-        .take()
-        .context("age stdin")?
-        .write_all(input.as_bytes())
-        .with_context(|| format!("feeding `age` while trying to {what}"))?;
+    // Feed stdin from a thread while `wait_with_output` drains stdout: age
+    // streams, so writing everything first deadlocks once its output fills
+    // the pipe buffer (~64 KiB) and it stops reading our input.
+    let mut stdin = child.stdin.take().context("age stdin")?;
+    let input = input.to_owned();
+    let feeder = std::thread::spawn(move || stdin.write_all(input.as_bytes()));
     let out = child
         .wait_with_output()
         .with_context(|| format!("waiting for `age` to {what}"))?;
+    let fed = feeder
+        .join()
+        .map_err(|_| anyhow::anyhow!("`age` stdin writer panicked"))?;
+    // A failing age closes stdin early; its stderr explains more than EPIPE.
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
         bail!("age failed to {what}: {err}");
     }
+    fed.with_context(|| format!("feeding `age` while trying to {what}"))?;
     String::from_utf8(out.stdout).with_context(|| format!("`age` output while trying to {what}"))
 }
 
@@ -371,6 +376,15 @@ mod tests {
         with_identity(|c| {
             let blob = seal(c, "").expect("seal");
             assert_eq!(unseal(c, &blob).expect("unseal"), "");
+        });
+    }
+
+    #[test]
+    fn a_payload_larger_than_a_pipe_buffer_round_trips() {
+        with_identity(|c| {
+            let plain = "x".repeat(1 << 20);
+            let blob = seal(c, &plain).expect("seal");
+            assert_eq!(unseal(c, &blob).expect("unseal"), plain);
         });
     }
 }

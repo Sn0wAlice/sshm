@@ -32,14 +32,9 @@ libc.workspace = true
 fuzzy-matcher.workspace = true
 
 inquire.workspace = true
-prettytable.workspace = true
+unicode-width.workspace = true
 ratatui.workspace = true
 crossterm.workspace = true
-
-openssl = { workspace = true, optional = true }
-
-[features]
-vendored-openssl = ["openssl"]
 
 # `cargo generate-rpm -p crates/sshm --target <triple>` (release CI).
 [package.metadata.generate-rpm]

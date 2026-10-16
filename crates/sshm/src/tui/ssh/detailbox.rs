@@ -127,6 +127,33 @@ pub fn show_detail_box(
                     );
                     f.render_widget(p, hchunks[1]);
                 }
+                Row::Folder { name, collapsed } if name.starts_with("tag:") => {
+                    // Tag view: virtual group, count hosts carrying the tag
+                    // ("(no tag)" collects untagged hosts, see build_rows_by_tag).
+                    let tag = &name["tag:".len()..];
+                    let count = db
+                        .hosts
+                        .values()
+                        .filter(|h| match h.tags.as_deref() {
+                            Some(ts) if !ts.is_empty() => ts.iter().any(|t| t == tag),
+                            _ => tag == "(no tag)",
+                        })
+                        .count();
+                    let state_text = if *collapsed { "collapsed" } else { "expanded" };
+                    let detail = format!(
+                        "Tag: {}\nHosts tagged: {}\nState: {}\n\nEnter to expand/collapse.",
+                        tag, count, state_text
+                    );
+
+                    let p = Paragraph::new(detail).block(
+                        Block::default()
+                            .title("Tag Details")
+                            .borders(Borders::ALL)
+                            .border_style(Style::default().fg(theme.accent))
+                            .style(Style::default().bg(theme.bg).fg(theme.muted)),
+                    );
+                    f.render_widget(p, hchunks[1]);
+                }
                 Row::Folder { name, collapsed } => {
                     // Count direct hosts + hosts in sub-folders
                     let prefix = format!("{}/", name);

@@ -37,11 +37,13 @@ fn main() {
     sshm::util::register_tty_release_hook();
 
     let args: Vec<String> = env::args().collect();
-    let mut db: Database = load_db();
+    // The DB is loaded only by the commands that use it: `version`, `help`,
+    // `doctor`, `tunnel`, … stay instant on a large host list and never create
+    // config files on a fresh HOME.
 
     match args.get(1).map(String::as_str) {
         Some("list") => match commands::list::parse_args(&args[2..]) {
-            Ok(opts) => commands::list::list_hosts(&db.hosts, &opts),
+            Ok(opts) => commands::list::list_hosts(&load_db().hosts, &opts),
             Err(e) => {
                 eprintln!("{e}");
                 std::process::exit(2);
@@ -54,17 +56,23 @@ fn main() {
             } else {
                 args[2..].to_vec()
             };
+            let mut db: Database = load_db();
             let launched = commands::connect::connect_host(&db.hosts, name, &extras);
             if let Some(connected) = launched {
-                if let Some(host) = db.hosts.get_mut(&connected) {
+                // The session may have lasted hours; pick up whatever another
+                // instance or a sync wrote meanwhile before saving over it —
+                // and don't save at all when host.json can't be read.
+                if let Err(e) = db.reload_if_changed() {
+                    eprintln!("Connection history not saved: {e:#}");
+                } else if let Some(host) = db.hosts.get_mut(&connected) {
                     sshm::history::record_connection(host);
                     save_db(&db);
                 }
             }
         }
-        Some("create") => commands::crud::create(&mut db, None),
-        Some("delete") => commands::crud::delete(&mut db),
-        Some("edit") => commands::crud::edit_host(&mut db),
+        Some("create") => commands::crud::create(&mut load_db(), None),
+        Some("delete") => commands::crud::delete(&mut load_db()),
+        Some("edit") => commands::crud::edit_host(&mut load_db()),
         Some("tag") => match (args.get(2).map(String::as_str), args.get(3), args.get(4)) {
             (Some("add"), Some(name), Some(tlist)) => {
                 let tags: Vec<String> = tlist
@@ -73,7 +81,7 @@ fn main() {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect();
-                commands::tags::tag_add(&mut db.hosts, name.clone(), tags);
+                commands::tags::tag_add(&mut Default::default(), name.clone(), tags);
             }
             (Some("del"), Some(name), Some(tlist)) => {
                 let tags: Vec<String> = tlist
@@ -82,11 +90,12 @@ fn main() {
                     .map(|s| s.trim().to_string())
                     .filter(|s| !s.is_empty())
                     .collect();
-                commands::tags::tag_del(&mut db.hosts, name.clone(), tags);
+                commands::tags::tag_del(&mut Default::default(), name.clone(), tags);
             }
             _ => println!("Usage: sshm tag [add|del] <name> <tag1,tag2,...>"),
         },
         Some("load_local_conf") => {
+            let mut db: Database = load_db();
             let before = db.hosts.len();
             import_ssh_config(&mut db.hosts);
             if db.hosts.len() > before {
@@ -108,6 +117,7 @@ fn main() {
                 eprintln!("No export path provided. Usage: sshm export <path>");
                 eprintln!("Or set an export path in Settings.");
             } else {
+                let db: Database = load_db();
                 match export_ssh_config(&db, &path) {
                     Ok(()) => println!("Exported {} hosts to {}", db.hosts.len(), path),
                     Err(e) => eprintln!("Export failed: {e}"),
@@ -133,7 +143,7 @@ fn main() {
             } else {
                 args[2..].to_vec()
             };
-            sshm::ssh::add_identity::cmd_add_identity(&db.hosts, name, &extras);
+            sshm::ssh::add_identity::cmd_add_identity(&load_db().hosts, name, &extras);
         }
         Some("help") | Some("-h") | Some("--help") => {
             println!("sshm — SSH + Docker + Incus + Kubernetes manager for the terminal");
@@ -201,6 +211,7 @@ Config sync (git over SSH):"
         None => {
             // The tunnel manager outlives individual `run_tui` calls so that
             // background tunnels survive connecting to a host and returning.
+            let mut db: Database = load_db();
             let mut tunnels = sshm::tui::app::tunnels::TunnelManager::new();
             loop {
                 run_tui(&mut db, &mut tunnels)

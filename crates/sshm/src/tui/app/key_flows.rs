@@ -96,7 +96,9 @@ pub fn run_host_fingerprint_flow(hostname: &str, port: u16) -> std::io::Result<F
     use inquire::Select;
 
     let pinned = known_hosts::pinned_fingerprints(hostname, port);
-    let live = known_hosts::scan_fingerprints(hostname, port);
+    // Keep the scan: pinning writes exactly these keys, not a second scan.
+    let scan = known_hosts::scan_host(hostname, port);
+    let live = &scan.keys;
 
     println!();
     println!("Host key — {hostname}:{port}");
@@ -111,7 +113,7 @@ pub fn run_host_fingerprint_flow(hostname: &str, port: u16) -> std::io::Result<F
     if live.is_empty() {
         println!("  Live (server):        (unreachable)");
     } else {
-        for k in &live {
+        for k in live {
             println!("  Live (server):        {k}");
         }
     }
@@ -149,12 +151,12 @@ pub fn run_host_fingerprint_flow(hostname: &str, port: u16) -> std::io::Result<F
     };
     match choice {
         "Pin this key (trust on first use)" => {
-            known_hosts::pin_host(hostname, port)?;
+            known_hosts::pin_host(&scan)?;
             Ok(FingerprintOutcome::Pinned)
         }
         "Replace — forget the stale key and pin the current one" => {
             known_hosts::remove_known_host_port(hostname, port)?;
-            known_hosts::pin_host(hostname, port)?;
+            known_hosts::pin_host(&scan)?;
             Ok(FingerprintOutcome::Pinned)
         }
         "Forget — remove from known_hosts" => {

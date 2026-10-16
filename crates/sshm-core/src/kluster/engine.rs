@@ -13,14 +13,14 @@
 //! so [`super::docker::parse_inspect`] stays defensive about every field.
 
 use std::collections::HashMap;
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
 use super::models::LifecycleAction;
-use super::shell::shell_path;
+use super::shell::{output_with_timeout, shell_path, LIFECYCLE_TIMEOUT, QUERY_TIMEOUT};
 
 /// One container CLI: which binary to run, and how to point it at a remote.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,12 +76,8 @@ impl ContainerCli {
                 return c.value;
             }
         }
-        let value = Command::new(self.bin)
-            .arg("info")
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
+        let value = output_with_timeout(Command::new(self.bin).arg("info"), QUERY_TIMEOUT)
+            .map(|o| o.status.success())
             .unwrap_or(false);
         map.insert(
             self.bin,
@@ -118,10 +114,8 @@ impl ContainerCli {
             "-a",
             "--format",
             "{{.ID}}\t{{.Names}}\t{{.Image}}\t{{.Status}}\t{{.State}}",
-        ])
-        .stderr(Stdio::null());
-        let out = cmd
-            .output()
+        ]);
+        let out = output_with_timeout(&mut cmd, QUERY_TIMEOUT)
             .with_context(|| format!("running `{} ps`", self.bin))?;
         if !out.status.success() {
             return if remote.is_some() {
@@ -165,9 +159,8 @@ impl ContainerCli {
         if matches!(action, LifecycleAction::Stop | LifecycleAction::Restart) {
             cmd.args(["-t", "5"]);
         }
-        cmd.arg(id).stdout(Stdio::null()).stderr(Stdio::piped());
-        let out = cmd
-            .output()
+        cmd.arg(id);
+        let out = output_with_timeout(&mut cmd, LIFECYCLE_TIMEOUT)
             .with_context(|| format!("running {} lifecycle command", self.bin))?;
         if !out.status.success() {
             let err = String::from_utf8_lossy(&out.stderr).trim().to_string();
@@ -185,11 +178,7 @@ impl ContainerCli {
 
     /// Raw `<bin> inspect <id>` JSON.
     pub fn inspect_raw(&self, id: &str, remote: Option<&str>) -> Result<String> {
-        let out = self
-            .command(remote)
-            .args(["inspect", id])
-            .stderr(Stdio::null())
-            .output()
+        let out = output_with_timeout(self.command(remote).args(["inspect", id]), QUERY_TIMEOUT)
             .with_context(|| format!("running `{} inspect`", self.bin))?;
         if !out.status.success() {
             return Err(anyhow::anyhow!(
@@ -205,13 +194,11 @@ impl ContainerCli {
     /// engine sends container stdout on ours and stderr on ours, and a tail
     /// that showed only one half would be misleading.
     pub fn log_tail(&self, id: &str, lines: u32, remote: Option<&str>) -> Vec<String> {
-        let Ok(o) = self
-            .command(remote)
-            .args(["logs", "--tail", &lines.to_string(), id])
-            .stderr(Stdio::piped())
-            .stdout(Stdio::piped())
-            .output()
-        else {
+        let Ok(o) = output_with_timeout(
+            self.command(remote)
+                .args(["logs", "--tail", &lines.to_string(), id]),
+            QUERY_TIMEOUT,
+        ) else {
             return Vec::new();
         };
         let mut out: Vec<String> = String::from_utf8_lossy(&o.stdout)

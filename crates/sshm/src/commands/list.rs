@@ -3,8 +3,8 @@
 use crate::filter::filter_hosts;
 use crate::models::tags_to_string;
 use crate::models::Host;
-use prettytable::{row, Table};
 use std::collections::HashMap;
+use unicode_width::UnicodeWidthStr;
 
 /// How `sshm list` prints what it found.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -96,20 +96,41 @@ pub fn list_hosts(hosts: &HashMap<String, Host>, opts: &ListOptions) {
                 println!("No hosts match your filter.");
                 return;
             }
-            let mut table = Table::new();
-            table.add_row(row!["Name", "Username", "Host", "Port", "Tags"]);
+            let mut table = vec![["Name", "Username", "Host", "Port", "Tags"].map(String::from)];
             for h in rows {
-                table.add_row(row![
-                    h.name,
-                    h.username,
-                    h.host,
+                table.push([
+                    h.name.clone(),
+                    h.username.clone(),
+                    h.host.clone(),
                     h.port.to_string(),
-                    tags_to_string(&h.tags)
+                    tags_to_string(&h.tags),
                 ]);
             }
-            table.printstd();
+            print!("{}", render_table(&table));
         }
     }
+}
+
+/// Boxed table, every row ruled (the look prettytable's default format had).
+fn render_table(rows: &[[String; 5]]) -> String {
+    let mut widths = [0usize; 5];
+    for r in rows {
+        for (w, c) in widths.iter_mut().zip(r) {
+            *w = (*w).max(c.width());
+        }
+    }
+    let rule: String = widths
+        .iter()
+        .fold("+".into(), |acc, w| acc + &"-".repeat(w + 2) + "+");
+    let mut out = format!("{rule}\n");
+    for r in rows {
+        out.push('|');
+        for (w, c) in widths.iter().zip(r) {
+            out += &format!(" {c}{} |", " ".repeat(w - c.width()));
+        }
+        out += &format!("\n{rule}\n");
+    }
+    out
 }
 
 /// Back-compat shim for callers that only ever wanted the table.
@@ -129,6 +150,24 @@ mod tests {
 
     fn args(v: &[&str]) -> Vec<String> {
         v.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn table_is_boxed_and_padded_by_display_width() {
+        let t = [["Name", "Tags"], ["été", "a,b"]].map(|r| {
+            let mut a: [String; 5] = Default::default();
+            a[0] = r[0].into();
+            a[1] = r[1].into();
+            a
+        });
+        assert_eq!(
+            render_table(&t),
+            "+------+------+--+--+--+\n\
+             | Name | Tags |  |  |  |\n\
+             +------+------+--+--+--+\n\
+             | été  | a,b  |  |  |  |\n\
+             +------+------+--+--+--+\n"
+        );
     }
 
     #[test]

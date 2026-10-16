@@ -1,5 +1,7 @@
 use crate::models::Host;
 use crate::ssh::agent::agent_fingerprints;
+use crate::ssh::proxy::resolve_proxy_jump;
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -202,25 +204,80 @@ mod tests {
     }
 }
 
-pub fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<()> {
-    // 1) Try ssh-copy-id
+/// Shell script run on the remote side of the manual key install. The key
+/// arrives on stdin. Written without `!` so a csh/tcsh login shell doesn't
+/// history-expand it before `sh` ever runs.
+const INSTALL_KEY_SCRIPT: &str = "set -e; umask 077; \
+     mkdir -p ~/.ssh; touch ~/.ssh/authorized_keys; \
+     chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys; \
+     TMP=$(mktemp); cat > \"$TMP\"; \
+     if [ -s ~/.ssh/authorized_keys ] && [ -n \"$(tail -c1 ~/.ssh/authorized_keys)\" ]; then \
+        echo >> ~/.ssh/authorized_keys; \
+     fi; \
+     grep -qxF \"$(cat \"$TMP\")\" ~/.ssh/authorized_keys || cat \"$TMP\" >> ~/.ssh/authorized_keys; \
+     rm -f \"$TMP\"";
+
+/// The remote command for the manual install, as ONE argument: ssh joins its
+/// trailing argv with spaces and hands the result to the remote login shell,
+/// so separate `sh`, `-c`, `<script>` args would lose the script's quoting.
+fn install_key_remote_command() -> String {
+    format!("sh -c {}", crate::os::shell_quote(INSTALL_KEY_SCRIPT))
+}
+
+/// ssh flags for the manual install: the host's own settings, preceded by
+/// overrides for a RemoteCommand / RequestTTY that would otherwise clash with
+/// the install script (OpenSSH keeps the first value it sees).
+fn manual_install_opts(h: &Host, all_hosts: &HashMap<String, Host>) -> Vec<String> {
+    let mut opts: Vec<String> = crate::ssh::client::NO_REMOTE_COMMAND
+        .map(String::from)
+        .to_vec();
+    opts.extend(crate::ssh::client::build_ssh_opts(h, all_hosts));
+    opts
+}
+
+/// Install `pubkey_path` into `h`'s `authorized_keys`, via `ssh-copy-id` when
+/// it works, else a manual `ssh … sh -c '<script>'` fallback. `all_hosts`
+/// resolves a ProxyJump chain that names saved hosts.
+pub fn install_pubkey_on_host(
+    h: &Host,
+    all_hosts: &HashMap<String, Host>,
+    pubkey_path: &Path,
+) -> std::io::Result<()> {
+    crate::ssh::client::validate_destination(&h.username, &h.host)
+        .map_err(std::io::Error::other)?;
+    let target = crate::ssh::client::destination(h);
+
+    // 1) Try ssh-copy-id. It only takes `-o` for ssh settings, and stops
+    //    parsing options at the target, so everything goes before it.
     let mut try_copy_id = Command::new("ssh-copy-id");
     try_copy_id
+        .arg("-f")
+        .arg("-i")
+        .arg(pubkey_path)
         .arg("-p")
         .arg(h.port.to_string())
-        .arg("-f")
-        .arg(format!("{}@{}", h.username, h.host))
-        .arg("-i")
-        .arg(pubkey_path);
-
-    if let Some(j) = &h.proxy_jump {
-        try_copy_id.arg("-o").arg(format!("ProxyJump={}", j));
+        .args(crate::ssh::client::NO_REMOTE_COMMAND);
+    for raw in h
+        .ssh_options
+        .iter()
+        .map(|o| o.trim())
+        .filter(|o| !o.is_empty())
+    {
+        try_copy_id.arg("-o").arg(raw);
     }
-    if let Some(id) = &h.identity_file {
+    if let Some(j) = h
+        .proxy_jump
+        .as_deref()
+        .and_then(|j| resolve_proxy_jump(j, all_hosts))
+    {
+        try_copy_id.arg("-o").arg(format!("ProxyJump={j}"));
+    }
+    if let Some(id) = h.identity_file.as_deref().filter(|id| !id.is_empty()) {
         try_copy_id
             .arg("-o")
             .arg(format!("IdentityFile={}", shellexpand::tilde(id)));
     }
+    try_copy_id.arg(&target);
 
     match try_copy_id.status() {
         Ok(st) if st.success() => return Ok(()),
@@ -230,31 +287,16 @@ pub fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<(
     }
 
     // 2) Manual fallback
-    let key_content = std::fs::read_to_string(pubkey_path)?;
+    let mut key_content = std::fs::read_to_string(pubkey_path)?;
+    if !key_content.ends_with('\n') {
+        key_content.push('\n');
+    }
     let mut ssh = Command::new("ssh");
-    ssh.arg(format!("{}@{}", h.username, h.host))
-        .arg("-p")
-        .arg(h.port.to_string())
+    ssh.args(manual_install_opts(h, all_hosts))
+        .arg("--")
+        .arg(&target)
+        .arg(install_key_remote_command())
         .stdin(Stdio::piped());
-
-    if let Some(j) = &h.proxy_jump {
-        ssh.arg("-J").arg(j);
-    }
-    if let Some(id) = &h.identity_file {
-        ssh.arg("-i").arg(shellexpand::tilde(id).to_string());
-    }
-
-    ssh.arg("bash").arg("-lc").arg(
-        "set -e; \
-         umask 077; \
-         mkdir -p ~/.ssh; \
-         touch ~/.ssh/authorized_keys; \
-         chmod 700 ~/.ssh; chmod 600 ~/.ssh/authorized_keys; \
-         TMP=$(mktemp); cat >> \"$TMP\"; \
-         if ! grep -qxF \"$(cat \"$TMP\")\" ~/.ssh/authorized_keys; then \
-            cat \"$TMP\" >> ~/.ssh/authorized_keys; \
-         fi; rm -f \"$TMP\"",
-    );
 
     let mut child = ssh.spawn()?;
     {
@@ -269,4 +311,42 @@ pub fn install_pubkey_on_host(h: &Host, pubkey_path: &Path) -> std::io::Result<(
         )));
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod install_tests {
+    use super::*;
+
+    #[test]
+    fn remote_command_is_a_single_quoted_sh_invocation() {
+        let cmd = install_key_remote_command();
+        assert!(cmd.starts_with("sh -c '"), "{cmd}");
+        assert!(cmd.ends_with('\''), "{cmd}");
+        assert!(!cmd.contains('!'), "csh would history-expand: {cmd}");
+    }
+
+    #[test]
+    fn manual_install_overrides_a_host_remote_command() {
+        let h = Host {
+            host: "h".into(),
+            ssh_options: vec!["RemoteCommand=tmux".into(), "RequestTTY=force".into()],
+            ..Default::default()
+        };
+        let opts = manual_install_opts(&h, &HashMap::new());
+        let pos = |v: &str| opts.iter().position(|o| o == v).unwrap();
+        assert!(
+            pos("RemoteCommand=none") < pos("RemoteCommand=tmux"),
+            "{opts:?}"
+        );
+        assert!(pos("RequestTTY=no") < pos("RequestTTY=force"), "{opts:?}");
+    }
+
+    #[test]
+    fn refuses_a_hostile_destination() {
+        let h = Host {
+            host: "-oProxyCommand=x".into(),
+            ..Default::default()
+        };
+        assert!(install_pubkey_on_host(&h, &HashMap::new(), Path::new("/nonexistent")).is_err());
+    }
 }

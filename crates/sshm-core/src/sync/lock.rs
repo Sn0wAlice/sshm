@@ -29,6 +29,11 @@ use serde::{Deserialize, Serialize};
 /// process doesn't wedge auto-sync for a whole session.
 pub const STALE_AFTER: Duration = Duration::from_secs(5 * 60);
 
+/// Hard ceiling even for a holder whose pid is alive: after a crash or reboot
+/// the pid may have been recycled by an unrelated process, and a suspended
+/// sync shouldn't block every other one forever. No real sync runs this long.
+pub const STALE_EVEN_IF_ALIVE: Duration = Duration::from_secs(60 * 60);
+
 /// Who is holding the lock, as recorded in the lock file.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LockInfo {
@@ -60,18 +65,24 @@ impl LockInfo {
         (chrono::Utc::now().timestamp() - self.acquired_at).max(0)
     }
 
-    /// True when this entry can be taken over: too old, or its process is
-    /// provably gone on this machine.
+    /// True when this entry can be taken over: its process is provably gone
+    /// on this machine, or — when liveness can't be checked — it is too old.
     fn is_stale(&self) -> bool {
-        if self.age_secs() as u64 >= STALE_AFTER.as_secs() {
-            return true;
-        }
         // Only trust pids we can actually check: same host, and not our own
-        // (a recycled pid equal to ours means the file is ours already).
-        if self.host == hostname() && self.pid != std::process::id() {
-            return !pid_alive(self.pid);
+        // (a recycled pid equal to ours means the file is ours already). A
+        // live holder on this host keeps the lock however long it runs: a
+        // slow push past `STALE_AFTER` must not let a second sync in — up to
+        // `STALE_EVEN_IF_ALIVE`, past which the pid is presumed recycled.
+        let age = self.age_secs() as u64;
+        if cfg!(unix) && self.host == hostname() && self.pid != std::process::id() {
+            return !pid_alive(self.pid) || age >= STALE_EVEN_IF_ALIVE.as_secs();
         }
-        false
+        age >= STALE_AFTER.as_secs()
+    }
+
+    /// Same acquisition (not merely the same process): pid, host and time.
+    fn same_holder(&self, other: &LockInfo) -> bool {
+        self.pid == other.pid && self.host == other.host && self.acquired_at == other.acquired_at
     }
 }
 
@@ -79,6 +90,8 @@ impl LockInfo {
 #[derive(Debug)]
 pub struct SyncLock {
     path: PathBuf,
+    /// What we wrote into the lock file, so release only deletes *our* lock.
+    info: LockInfo,
     /// Set once released, so `Drop` doesn't delete a lock somebody else
     /// has since acquired.
     released: bool,
@@ -97,10 +110,12 @@ impl SyncLock {
         // Two attempts: the second one only happens after we removed a stale
         // file, and losing that race just means somebody else got in first.
         for attempt in 0..2 {
-            match create_exclusive(path, &LockInfo::new(what)) {
+            let info = LockInfo::new(what);
+            match create_exclusive(path, &info) {
                 Ok(()) => {
                     return Ok(Some(SyncLock {
                         path: path.to_path_buf(),
+                        info,
                         released: false,
                     }))
                 }
@@ -115,10 +130,10 @@ impl SyncLock {
                             if !unreadable_lock_is_stale(path) {
                                 return Ok(None);
                             }
-                            let _ = fs::remove_file(path);
+                            remove_if_holder(path, None);
                         }
                         Some(info) if info.is_stale() => {
-                            let _ = fs::remove_file(path);
+                            remove_if_holder(path, Some(&info));
                         }
                         Some(_) => return Ok(None),
                     }
@@ -161,7 +176,9 @@ impl SyncLock {
     fn release_inner(&mut self) {
         if !self.released {
             self.released = true;
-            let _ = fs::remove_file(&self.path);
+            // Our lock may have been judged stale and taken over meanwhile;
+            // deleting unconditionally would free somebody else's lock.
+            remove_if_holder(&self.path, Some(&self.info));
         }
     }
 }
@@ -204,6 +221,36 @@ fn create_exclusive(path: &Path, info: &LockInfo) -> std::io::Result<()> {
     let linked = fs::hard_link(&tmp, path);
     let _ = fs::remove_file(&tmp);
     linked
+}
+
+/// Delete the lock at `path` only if it still holds `expected` (`None`: still
+/// unparseable). Checking then deleting would race with another process
+/// replacing the file in between, so the file is first renamed aside
+/// atomically, checked, and linked back if it turned out not to be the one we
+/// meant to remove.
+///
+/// ponytail: if a third process creates a new lock in the tiny window between
+/// our rename and the link-back, the displaced lock is lost; an flock-based
+/// lock would close that, not worth it for a scheduler that just retries.
+fn remove_if_holder(path: &Path, expected: Option<&LockInfo>) {
+    let dir = path.parent().unwrap_or_else(|| Path::new("."));
+    let aside = dir.join(format!(
+        ".sync.lock.old-{}-{}",
+        std::process::id(),
+        LOCK_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    ));
+    if fs::rename(path, &aside).is_err() {
+        return;
+    }
+    let ours = match (read_info(&aside), expected) {
+        (Some(got), Some(want)) => got.same_holder(want),
+        (None, None) => true,
+        _ => false,
+    };
+    if !ours {
+        let _ = fs::hard_link(&aside, path);
+    }
+    let _ = fs::remove_file(&aside);
 }
 
 /// Makes temp lock names unique within a process (the pid alone isn't enough:
@@ -338,6 +385,55 @@ mod tests {
         };
         create_exclusive(&path, &old).unwrap();
         assert!(SyncLock::try_acquire_at(&path, "test").unwrap().is_some());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn an_old_lock_held_by_a_live_local_process_is_respected() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sync.lock");
+        let slow = LockInfo {
+            pid: 1, // init/launchd: always alive
+            host: hostname(),
+            acquired_at: chrono::Utc::now().timestamp() - (STALE_AFTER.as_secs() as i64) - 1,
+            what: "slow push".into(),
+        };
+        create_exclusive(&path, &slow).unwrap();
+        assert!(SyncLock::try_acquire_at(&path, "test").unwrap().is_none());
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn a_very_old_lock_with_a_live_local_pid_is_taken_over() {
+        // pid reuse after a crash/reboot must not wedge the lock forever.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sync.lock");
+        let wedged = LockInfo {
+            pid: 1,
+            host: hostname(),
+            acquired_at: chrono::Utc::now().timestamp() - STALE_EVEN_IF_ALIVE.as_secs() as i64,
+            what: "crashed".into(),
+        };
+        create_exclusive(&path, &wedged).unwrap();
+        assert!(SyncLock::try_acquire_at(&path, "test").unwrap().is_some());
+    }
+
+    #[test]
+    fn release_leaves_a_lock_that_was_taken_over_alone() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sync.lock");
+        let held = SyncLock::try_acquire_at(&path, "test").unwrap().unwrap();
+        // Somebody judged us stale and took over.
+        fs::remove_file(&path).unwrap();
+        let other = LockInfo {
+            pid: 1,
+            host: "some-other-box".into(),
+            acquired_at: 42,
+            what: "thief".into(),
+        };
+        create_exclusive(&path, &other).unwrap();
+        drop(held);
+        assert_eq!(read_info(&path).expect("still locked").what, "thief");
     }
 
     #[test]

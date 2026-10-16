@@ -48,9 +48,16 @@ pub fn build_forward_arg(t: &Tunnel) -> Vec<String> {
 }
 
 /// Full argv for a background tunnel:
-/// `ssh -N <forward> user@host -p port [-i id] [-J jump] [-A]`. `argv[0]` is the
-/// program (`ssh`). `all_hosts` resolves a named multi-hop ProxyJump chain, the
-/// same way [`crate::ssh::client::build_ssh_argv`] does.
+/// `ssh -N <forward> <host opts> -o ExitOnForwardFailure=yes … -- user@host`.
+/// `argv[0]` is the program (`ssh`). `all_hosts` resolves a named multi-hop
+/// ProxyJump chain, the same way [`crate::ssh::client::build_ssh_argv`] does.
+///
+/// The tunnel runs detached with no terminal, so it must fail fast rather
+/// than linger: `ExitOnForwardFailure` exits when the port can't be bound
+/// (instead of an `ssh -N` forwarding nothing), `BatchMode` refuses a password
+/// prompt nobody can answer, and the `ServerAlive` pair notices a dead link
+/// (~45s) so auto-restart can kick in. They follow the host's own
+/// `ssh_options`, which therefore still win (OpenSSH keeps the first value).
 pub fn build_tunnel_argv(
     host: &Host,
     tunnel: &Tunnel,
@@ -58,8 +65,19 @@ pub fn build_tunnel_argv(
 ) -> Vec<String> {
     let mut argv = vec!["ssh".to_string(), "-N".to_string()];
     argv.extend(build_forward_arg(tunnel));
-    argv.push(format!("{}@{}", host.username, host.host));
     argv.extend(crate::ssh::client::build_ssh_opts(host, all_hosts));
+    for o in [
+        "ExitOnForwardFailure=yes",
+        "BatchMode=yes",
+        "ServerAliveInterval=15",
+        "ServerAliveCountMax=3",
+    ] {
+        argv.push("-o".to_string());
+        argv.push(o.to_string());
+    }
+    // `--`: the destination can never be read as an option.
+    argv.push("--".to_string());
+    argv.push(crate::ssh::client::destination(host));
     argv
 }
 
@@ -144,11 +162,35 @@ mod tests {
                 "-N",
                 "-L",
                 "5432:localhost:5432",
-                "root@10.0.0.5",
                 "-p",
-                "2222"
+                "2222",
+                "-o",
+                "ExitOnForwardFailure=yes",
+                "-o",
+                "BatchMode=yes",
+                "-o",
+                "ServerAliveInterval=15",
+                "-o",
+                "ServerAliveCountMax=3",
+                "--",
+                "root@10.0.0.5",
             ]
         );
+    }
+
+    #[test]
+    fn host_ssh_options_precede_the_tunnel_defaults() {
+        let mut h = host();
+        h.ssh_options = vec!["ServerAliveInterval=60".into()];
+        let t = Tunnel {
+            kind: TunnelKind::Dynamic,
+            local_port: 1080,
+            ..Default::default()
+        };
+        let argv = build_tunnel_argv(&h, &t, &HashMap::new());
+        let theirs = argv.iter().position(|a| a == "ServerAliveInterval=60");
+        let ours = argv.iter().position(|a| a == "ServerAliveInterval=15");
+        assert!(theirs < ours, "{argv:?}");
     }
 
     #[test]

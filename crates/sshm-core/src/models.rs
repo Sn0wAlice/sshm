@@ -189,6 +189,12 @@ pub struct Database {
     /// [`Database::reload_if_changed`] short-circuit when nothing changed.
     #[serde(skip)]
     pub(crate) source_sig: Option<SourceSig>,
+    /// Set when this Database stands in for a `host.json` that exists but could
+    /// not be read or parsed. In-memory only. Saving such a placeholder would
+    /// silently replace the user's real (if broken) file with an empty DB, so
+    /// [`crate::config::io::try_save_db`] refuses while this is set.
+    #[serde(skip)]
+    pub(crate) load_failed: bool,
 }
 
 impl Database {
@@ -234,10 +240,21 @@ impl Database {
         if current == self.source_sig {
             return Ok(false);
         }
-        // The signature moved — rebase it, then decide whether anything the user
-        // would see actually changed.
-        self.source_sig = current;
-        let text = std::fs::read_to_string(path).unwrap_or_default();
+        // A read error or invalid JSON must not wipe what we hold in memory:
+        // it's usually a transient state (an editor mid-save, a permission
+        // flip), and replacing `hosts` with `{}` would let the next save
+        // persist the loss. Keep the in-memory data and surface the error —
+        // without advancing `source_sig` (so the next call retries rather than
+        // reporting "unchanged") and with `load_failed` set so saves are
+        // refused until the file parses again.
+        let text = match std::fs::read_to_string(path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => {
+                self.load_failed = true;
+                anyhow::bail!("reading {}: {e}", path.display())
+            }
+        };
 
         // Compare the file against our own canonical serialization. A frontend's
         // own save writes exactly this, so this swallows self-writes (and any
@@ -246,13 +263,30 @@ impl Database {
         // dedups folders, matching what lands on disk.
         if let Ok(canonical) = crate::config::io::serialize_db(self) {
             if text.trim() == canonical.trim() {
+                self.source_sig = current;
+                self.load_failed = false;
                 return Ok(false);
             }
         }
 
-        let fresh = crate::config::io::parse_db_text(&text).unwrap_or_default();
+        let fresh = if text.trim().is_empty() {
+            Database::default()
+        } else {
+            match crate::config::io::parse_db_text(&text) {
+                Some(db) => db,
+                None => {
+                    self.load_failed = true;
+                    anyhow::bail!(
+                        "{} is not valid JSON; keeping in-memory hosts",
+                        path.display()
+                    )
+                }
+            }
+        };
+        self.source_sig = current;
         self.hosts = fresh.hosts;
         self.folders = fresh.folders;
+        self.load_failed = false;
         Ok(true)
     }
 }

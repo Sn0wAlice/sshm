@@ -10,24 +10,19 @@
 //! initProcess, mounts, publishedPorts, … }, status: "running"|"stopped"|…,
 //! networks: [ { ipv4Address, … } ], startedDate }`. `id` doubles as the name.
 
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, Result};
 
 use super::models::{ContainerDetail, ContainerInfo, DetailSection, LifecycleAction};
-use super::shell::shell_path;
+use super::shell::{output_with_timeout, shell_path, LIFECYCLE_TIMEOUT, QUERY_TIMEOUT};
 
 /// True when `name` resolves on `PATH`.
 fn bin_exists(name: &str) -> bool {
-    Command::new("which")
-        .arg(name)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    output_with_timeout(Command::new("which").arg(name), QUERY_TIMEOUT)
+        .is_ok_and(|o| o.status.success())
 }
 
 /// Cached "is the `container` system service up?" check. `container system
@@ -53,13 +48,11 @@ pub fn available() -> bool {
             }
         }
         let value = bin_exists("container")
-            && Command::new("container")
-                .args(["system", "status"])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
+            && output_with_timeout(
+                Command::new("container").args(["system", "status"]),
+                QUERY_TIMEOUT,
+            )
+            .is_ok_and(|o| o.status.success());
         *guard = Some(SystemCache {
             last: Instant::now(),
             value,
@@ -84,11 +77,11 @@ pub fn list_containers() -> Result<Vec<ContainerInfo>> {
     if !available() {
         return Ok(Vec::new());
     }
-    let out = Command::new("container")
-        .args(["ls", "-a", "--format", "json"])
-        .stderr(Stdio::null())
-        .output()
-        .context("running `container ls`")?;
+    let out = output_with_timeout(
+        Command::new("container").args(["ls", "-a", "--format", "json"]),
+        QUERY_TIMEOUT,
+    )
+    .context("running `container ls`")?;
     if !out.status.success() {
         return Ok(Vec::new());
     }
@@ -182,11 +175,11 @@ pub fn lifecycle(id: &str, action: LifecycleAction) -> Result<()> {
 /// Build the rich detail view for one Apple container: `container inspect
 /// <id>` parsed into sections, plus a short log tail.
 pub fn inspect_detail(id: &str) -> Result<ContainerDetail> {
-    let out = Command::new("container")
-        .args(["inspect", id])
-        .stderr(Stdio::null())
-        .output()
-        .context("running `container inspect`")?;
+    let out = output_with_timeout(
+        Command::new("container").args(["inspect", id]),
+        QUERY_TIMEOUT,
+    )
+    .context("running `container inspect`")?;
     if !out.status.success() {
         return Err(anyhow::anyhow!("container inspect exited {}", out.status));
     }
@@ -194,11 +187,10 @@ pub fn inspect_detail(id: &str) -> Result<ContainerDetail> {
     let mut detail = parse_inspect(id, &raw)
         .ok_or_else(|| anyhow::anyhow!("could not parse container inspect JSON"))?;
     // Best-effort recent logs (non-follow). Ignore failures.
-    if let Ok(o) = Command::new("container")
-        .args(["logs", "-n", "20", id])
-        .stderr(Stdio::null())
-        .output()
-    {
+    if let Ok(o) = output_with_timeout(
+        Command::new("container").args(["logs", "-n", "20", id]),
+        QUERY_TIMEOUT,
+    ) {
         if o.status.success() {
             detail.log_tail = String::from_utf8_lossy(&o.stdout)
                 .lines()
@@ -380,11 +372,7 @@ fn human_bytes(n: u64) -> String {
 }
 
 fn run_simple(args: &[&str]) -> Result<()> {
-    let out = Command::new("container")
-        .args(args)
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .output()
+    let out = output_with_timeout(Command::new("container").args(args), LIFECYCLE_TIMEOUT)
         .context("running container command")?;
     if !out.status.success() {
         let err = String::from_utf8_lossy(&out.stderr).trim().to_string();

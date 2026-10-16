@@ -48,8 +48,11 @@ pub fn ssh_command_for(cfg: &SyncConfig) -> String {
         "accept-new"
     };
     cmd.push_str(&format!(" -o StrictHostKeyChecking={host_keys}"));
-    // No password/passphrase prompts, and don't sit on a dead network.
+    // No password/passphrase prompts, and don't sit on a dead network —
+    // neither at connect time nor on a link that dies mid-transfer, which
+    // would otherwise hang a background sync (and hold its lock) forever.
     cmd.push_str(" -o BatchMode=yes -o ConnectTimeout=10");
+    cmd.push_str(" -o ServerAliveInterval=15 -o ServerAliveCountMax=3");
     cmd
 }
 
@@ -101,6 +104,15 @@ impl Git {
             // Identity for the commits we create. Set per-invocation so we
             // never depend on (or touch) the user's global git config.
             .args(["-c", "user.name=sshm", "-c", "user.email=sshm@localhost"])
+            // A user's global signing or hooks would prompt (pinentry), hang or
+            // fail a background commit in a repo that is only scratch space.
+            // A non-existent hooks dir disables hooks on every platform.
+            .args([
+                "-c",
+                "commit.gpgsign=false",
+                "-c",
+                "core.hooksPath=/dev/null",
+            ])
             .args(args)
             .env("GIT_SSH_COMMAND", &self.ssh_command)
             .env("GIT_TERMINAL_PROMPT", "0")

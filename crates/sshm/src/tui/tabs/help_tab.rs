@@ -4,10 +4,15 @@ use ratatui::prelude::*;
 use ratatui::widgets::{
     Block, Borders, Paragraph, Scrollbar, ScrollbarOrientation, ScrollbarState,
 };
+use std::cell::Cell;
 
 #[derive(Default)]
 pub struct HelpTabState {
     pub scroll: u16,
+    /// Last reachable scroll offset, recorded by `draw_help_tab` (which only
+    /// gets `&self`) so the key handler can clamp `scroll` instead of letting
+    /// it grow past the last page (which made Up look dead for a while).
+    max_scroll: Cell<u16>,
 }
 
 impl HelpTabState {
@@ -35,6 +40,7 @@ pub fn handle_help_event(key: KeyCode, state: &mut HelpTabState) {
         }
         _ => {}
     }
+    state.scroll = state.scroll.min(state.max_scroll.get());
 }
 
 const HELP_TEXT: &str = r#"
@@ -284,23 +290,21 @@ pub fn draw_help_tab(f: &mut Frame, area: Rect, state: &HelpTabState, theme: &Th
     let inner = block.inner(area);
     f.render_widget(block, area);
 
+    // Spans borrow the `'static` HELP_TEXT, so a frame only allocates the Vecs.
     let lines: Vec<Line> = HELP_TEXT
         .lines()
         .map(|l| {
             if l.trim_start().starts_with("───") || l.trim_start().starts_with("═") {
-                Line::from(Span::styled(
-                    l.to_string(),
-                    Style::default().fg(theme.accent),
-                ))
+                Line::from(Span::styled(l, Style::default().fg(theme.accent)))
             } else if l.contains("SSHM") && l.contains("SSH Host Manager") {
                 Line::from(Span::styled(
-                    l.to_string(),
+                    l,
                     Style::default()
                         .fg(theme.accent)
                         .add_modifier(Modifier::BOLD),
                 ))
             } else if l.trim_start().starts_with("•") {
-                Line::from(Span::styled(l.to_string(), Style::default().fg(theme.fg)))
+                Line::from(Span::styled(l, Style::default().fg(theme.fg)))
             } else {
                 // Highlight key bindings (lines where first non-space word is a key)
                 let trimmed = l.trim_start();
@@ -313,22 +317,19 @@ pub fn draw_help_tab(f: &mut Frame, area: Rect, state: &HelpTabState, theme: &Th
                         // Only style as key+desc if key_part looks like a shortcut
                         if key_part.len() <= 16 && !key_part.contains('.') {
                             return Line::from(vec![
-                                Span::raw(" ".repeat(indent)),
+                                Span::raw(&l[..indent]),
                                 Span::styled(
-                                    key_part.to_string(),
+                                    key_part,
                                     Style::default()
                                         .fg(theme.accent)
                                         .add_modifier(Modifier::BOLD),
                                 ),
-                                Span::styled(
-                                    desc_part.to_string(),
-                                    Style::default().fg(theme.muted),
-                                ),
+                                Span::styled(desc_part, Style::default().fg(theme.muted)),
                             ]);
                         }
                     }
                 }
-                Line::from(Span::styled(l.to_string(), Style::default().fg(theme.fg)))
+                Line::from(Span::styled(l, Style::default().fg(theme.fg)))
             }
         })
         .collect();
@@ -337,6 +338,7 @@ pub fn draw_help_tab(f: &mut Frame, area: Rect, state: &HelpTabState, theme: &Th
     let visible = inner.height;
     let max_scroll = total_lines.saturating_sub(visible);
 
+    state.max_scroll.set(max_scroll);
     let scroll = state.scroll.min(max_scroll);
 
     let paragraph = Paragraph::new(lines).scroll((scroll, 0));
@@ -347,5 +349,22 @@ pub fn draw_help_tab(f: &mut Frame, area: Rect, state: &HelpTabState, theme: &Th
         let mut sb_state = ScrollbarState::new(total_lines as usize).position(scroll as usize);
         let sb = Scrollbar::default().orientation(ScrollbarOrientation::VerticalRight);
         f.render_stateful_widget(sb, inner, &mut sb_state);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn scroll_is_clamped_to_last_drawn_max() {
+        let mut s = HelpTabState::new();
+        s.max_scroll.set(5);
+        for _ in 0..20 {
+            handle_help_event(KeyCode::Down, &mut s);
+        }
+        assert_eq!(s.scroll, 5);
+        handle_help_event(KeyCode::Up, &mut s);
+        assert_eq!(s.scroll, 4, "Up responds immediately after holding Down");
     }
 }

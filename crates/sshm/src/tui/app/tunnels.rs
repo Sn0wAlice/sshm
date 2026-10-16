@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::fs;
 use std::process::{Child, Command, Stdio};
-use std::sync::Mutex;
+use std::sync::atomic::{AtomicI32, Ordering};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -31,36 +31,82 @@ use crate::models::{Host, Tunnel, TunnelKind};
 use crate::tui::theme::Theme;
 use crate::tunnels::build_tunnel_argv;
 
-/// PIDs of every live background tunnel of *this* process. Used by
-/// [`kill_all`] for the clean-quit cleanup (`q::press` calls `process::exit`,
-/// which skips destructors).
-static ACTIVE_PIDS: Mutex<Vec<u32>> = Mutex::new(Vec::new());
+/// PIDs of every live background tunnel of *this* process (0 = free slot).
+/// Used by [`kill_all`] for the clean-quit cleanup (`q::press` calls
+/// `process::exit`, which skips destructors) and by the SIGHUP/SIGTERM
+/// handler, which may only touch async-signal-safe state — hence plain
+/// atomics in a fixed array rather than a `Mutex<Vec>`.
+// ponytail: fixed cap; a tunnel past it still runs but is not killed on a
+// signal (orphan recovery reaps it on next launch). Raise if anyone hits it.
+const MAX_TRACKED: usize = 128;
+static ACTIVE_PIDS: [AtomicI32; MAX_TRACKED] = [const { AtomicI32::new(0) }; MAX_TRACKED];
 
 fn register_pid(pid: u32) {
-    if let Ok(mut g) = ACTIVE_PIDS.lock() {
-        g.push(pid);
+    for slot in &ACTIVE_PIDS {
+        if slot
+            .compare_exchange(0, pid as i32, Ordering::SeqCst, Ordering::SeqCst)
+            .is_ok()
+        {
+            return;
+        }
     }
 }
 
 fn unregister_pid(pid: u32) {
-    if let Ok(mut g) = ACTIVE_PIDS.lock() {
-        g.retain(|&p| p != pid);
+    for slot in &ACTIVE_PIDS {
+        let _ = slot.compare_exchange(pid as i32, 0, Ordering::SeqCst, Ordering::SeqCst);
+    }
+}
+
+/// SIGTERM every registered tunnel. Async-signal-safe: atomics and `kill`.
+fn signal_all() {
+    for slot in &ACTIVE_PIDS {
+        let pid = slot.load(Ordering::SeqCst);
+        if pid > 0 {
+            // SAFETY: kill() with a plain signal is safe; a stale PID just
+            // yields ESRCH, which we ignore.
+            unsafe {
+                libc::kill(pid, libc::SIGTERM);
+            }
+        }
     }
 }
 
 /// SIGTERM every background tunnel of this process and drop our state file.
 /// Call this right before the process exits.
 pub fn kill_all() {
-    if let Ok(g) = ACTIVE_PIDS.lock() {
-        for &pid in g.iter() {
-            // SAFETY: kill() with a plain signal is safe; a stale PID just
-            // yields ESRCH, which we ignore.
+    signal_all();
+    let _ = fs::remove_file(state_file_for(std::process::id()));
+}
+
+extern "C" fn on_fatal_signal(sig: libc::c_int) {
+    signal_all();
+    // SAFETY: signal() and raise() are async-signal-safe. Restoring the
+    // default disposition and re-raising ends the process with the status the
+    // sender expects (the state file is cleaned by the next launch's orphan
+    // recovery).
+    unsafe {
+        libc::signal(sig, libc::SIG_DFL);
+        libc::raise(sig);
+    }
+}
+
+/// Take background tunnels down with sshm when the terminal closes (SIGHUP) or
+/// sshm is asked to stop (SIGTERM). Tunnels run in their own process group, so
+/// nothing else would reach them. Installed once per process.
+fn install_signal_handlers() {
+    static ONCE: std::sync::Once = std::sync::Once::new();
+    ONCE.call_once(|| {
+        for sig in [libc::SIGHUP, libc::SIGTERM] {
+            // SAFETY: the handler only uses async-signal-safe calls.
             unsafe {
-                libc::kill(pid as i32, libc::SIGTERM);
+                libc::signal(
+                    sig,
+                    on_fatal_signal as extern "C" fn(libc::c_int) as libc::sighandler_t,
+                );
             }
         }
-    }
-    let _ = fs::remove_file(state_file_for(std::process::id()));
+    });
 }
 
 // ============================================================================
@@ -114,14 +160,44 @@ fn process_is_sshm(pid: u32) -> bool {
 /// another instance's records and must apply the same guard.
 fn process_is_ssh_tunnel(pid: u32) -> bool {
     process_cmdline(pid)
-        .map(|c| {
-            let has_ssh = c
-                .split_whitespace()
-                .any(|w| w == "ssh" || w.ends_with("/ssh"));
-            let has_n = c.split_whitespace().any(|w| w == "-N");
-            has_ssh && has_n
-        })
+        .map(|c| looks_like_ssh_tunnel(&c))
         .unwrap_or(false)
+}
+
+fn looks_like_ssh_tunnel(cmdline: &str) -> bool {
+    let has_ssh = cmdline
+        .split_whitespace()
+        .any(|w| w == "ssh" || w.ends_with("/ssh"));
+    let has_n = cmdline.split_whitespace().any(|w| w == "-N");
+    has_ssh && has_n
+}
+
+/// PIDs of every live `ssh -N` process, from a single `ps` call — for callers
+/// checking many records at once ([`pid_is_ssh_tunnel`] forks `ps` per PID).
+pub fn live_ssh_tunnel_pids() -> std::collections::HashSet<u32> {
+    let Ok(out) = Command::new("ps")
+        .args(["-A", "-o", "pid=,command="])
+        .output()
+    else {
+        return Default::default();
+    };
+    parse_ps_tunnels(&String::from_utf8_lossy(&out.stdout))
+}
+
+fn parse_ps_tunnels(ps: &str) -> std::collections::HashSet<u32> {
+    ps.lines()
+        .filter_map(|l| {
+            let (pid, cmd) = l.trim_start().split_once(char::is_whitespace)?;
+            looks_like_ssh_tunnel(cmd).then_some(pid.parse().ok()?)
+        })
+        .collect()
+}
+
+/// Marker `sshm tunnel stop` drops before signalling a tunnel's `ssh` PID, so
+/// the owning instance's [`TunnelManager::reap`] reads the exit as a user stop
+/// rather than a drop to auto-restart.
+pub fn stop_marker_for(ssh_pid: u32) -> std::path::PathBuf {
+    tunnels_dir().join(format!("{ssh_pid}.stop"))
 }
 
 /// Scan the tunnels dir for state files left behind by SSHM instances that
@@ -171,7 +247,57 @@ fn recover_orphans() -> usize {
         }
         let _ = fs::remove_file(&path);
     }
+    remove_stale_stop_markers();
     killed
+}
+
+/// Drop `<pid>.stop` markers no live instance still tracks. A marker outlives
+/// its purpose when the owning sshm died before reaping the tunnel; left in
+/// place, a later tunnel that reuses the PID would never auto-restart.
+/// Runs after orphan recovery, so every remaining state file has a live owner.
+fn remove_stale_stop_markers() {
+    let Ok(read) = fs::read_dir(tunnels_dir()) else {
+        return;
+    };
+    let tracked: std::collections::HashSet<u32> = crate::tunnels::read_all_records()
+        .into_iter()
+        .map(|r| r.pid)
+        .collect();
+    for entry in read.flatten() {
+        let path = entry.path();
+        if path.extension().and_then(|e| e.to_str()) != Some("stop") {
+            continue;
+        }
+        let pid: Option<u32> = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .and_then(|s| s.parse().ok());
+        if !pid.is_some_and(|p| tracked.contains(&p)) {
+            let _ = fs::remove_file(&path);
+        }
+    }
+}
+
+/// Whether the sshm instance whose state file lists tunnel `ssh_pid` is still
+/// running — only then is anyone left to read a stop marker for it.
+pub fn tunnel_owner_alive(ssh_pid: u32) -> bool {
+    let Ok(read) = fs::read_dir(tunnels_dir()) else {
+        return false;
+    };
+    read.flatten().any(|entry| {
+        let path = entry.path();
+        let owner: Option<u32> = (path.extension().and_then(|e| e.to_str()) == Some("json"))
+            .then(|| path.file_stem()?.to_str()?.parse().ok())
+            .flatten();
+        let Some(owner) = owner else {
+            return false;
+        };
+        let lists_it = fs::read_to_string(&path)
+            .ok()
+            .and_then(|t| serde_json::from_str::<Vec<PersistEntry>>(&t).ok())
+            .is_some_and(|list| list.iter().any(|e| e.pid == ssh_pid));
+        lists_it && process_is_sshm(owner)
+    })
 }
 
 // ============================================================================
@@ -235,6 +361,7 @@ impl Default for TunnelManager {
 impl TunnelManager {
     /// Build the manager and clean up tunnels orphaned by a previous crash.
     pub fn new() -> Self {
+        install_signal_handlers();
         TunnelManager {
             active: Vec::new(),
             pending_restarts: Vec::new(),
@@ -287,6 +414,10 @@ impl TunnelManager {
         cmd.stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null());
+        // Own process group: a Ctrl+C typed into the terminal (during an ssh
+        // session or a fan-out) must not reach background tunnels.
+        #[cfg(unix)]
+        std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
 
         let child = cmd.spawn().map_err(|e| e.to_string())?;
         register_pid(child.id());
@@ -308,13 +439,19 @@ impl TunnelManager {
     /// A tunnel marked `auto_restart` is queued for relaunch instead of being
     /// announced as closed — see [`Self::restart_due`], which the main loop
     /// calls with the host DB it needs to rebuild the command.
-    pub fn reap(&mut self) {
+    ///
+    /// Returns whether the active set changed.
+    pub fn reap(&mut self) -> bool {
         let mut closed: Vec<String> = Vec::new();
         let mut pending: Vec<PendingRestart> = Vec::new();
+        let mut stopped = false;
         self.active.retain_mut(|t| match t.child.try_wait() {
             Ok(Some(_)) => {
                 unregister_pid(t.child.id());
-                if t.tunnel.auto_restart && t.restarts < MAX_RESTARTS {
+                // Stopped on purpose via `sshm tunnel stop`: no restart.
+                if fs::remove_file(stop_marker_for(t.child.id())).is_ok() {
+                    stopped = true;
+                } else if t.tunnel.auto_restart && t.restarts < MAX_RESTARTS {
                     pending.push(PendingRestart {
                         host_name: t.host_name.clone(),
                         tunnel: t.tunnel.clone(),
@@ -332,13 +469,15 @@ impl TunnelManager {
             }
             _ => true,
         });
+        let changed = stopped || !closed.is_empty() || !pending.is_empty();
         self.pending_restarts.extend(pending);
-        if !closed.is_empty() || !self.pending_restarts.is_empty() {
+        if changed {
             self.persist();
         }
         for c in &closed {
             crate::os::notify("SSHM — tunnel closed", c);
         }
+        changed
     }
 
     /// Start every `auto_start` tunnel saved on `host` that is not already up.
@@ -634,6 +773,17 @@ pub fn terminate_tunnel_pid(pid: u32) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ps_listing_keeps_only_ssh_tunnels() {
+        let ps = "  101 /usr/bin/ssh -N -L 8080:localhost:80 box\n\
+                    102 ssh box\n\
+                    103 /bin/zsh -N\n\
+                    104 ssh -N -D 1080 jump\n\
+                    junk line\n";
+        let pids = parse_ps_tunnels(ps);
+        assert_eq!(pids, [101, 104].into_iter().collect());
+    }
 
     fn tunnel(kind: TunnelKind, local: u16) -> Tunnel {
         Tunnel {

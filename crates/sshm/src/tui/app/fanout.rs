@@ -45,6 +45,12 @@ pub fn run_fanout(all_hosts: &HashMap<String, Host>, names: &[String]) -> Option
     }
 
     println!();
+    // Ctrl+C kills the host currently running, not sshm (and with it the
+    // user's background tunnels), then stops the batch there.
+    let _sigint_guard = super::kluster_actions::IgnoreSigint::new();
+    use super::kluster_actions::SIGINT_SEEN;
+    use std::sync::atomic::Ordering;
+    SIGINT_SEEN.store(false, Ordering::Relaxed);
     let mut ok = 0usize;
     let mut failed = 0usize;
     for name in names {
@@ -66,6 +72,10 @@ pub fn run_fanout(all_hosts: &HashMap<String, Host>, names: &[String]) -> Option
             }
         }
         println!();
+        if SIGINT_SEEN.load(Ordering::Relaxed) {
+            println!("Interrupted — remaining hosts skipped.");
+            break;
+        }
     }
 
     println!(

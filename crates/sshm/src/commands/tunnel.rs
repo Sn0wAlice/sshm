@@ -69,11 +69,13 @@ fn route(r: &TunnelRecord) -> String {
 
 /// Records whose `ssh -N` is still alive. A record can outlive its process
 /// when the owning sshm was killed hard, so liveness is checked rather than
-/// trusted — the same `ps` guard the TUI uses before signalling a PID.
+/// trusted — the same `ps` guard the TUI uses before signalling a PID, run
+/// once for every record.
 fn live_records() -> Vec<TunnelRecord> {
+    let live = crate::tui::app::tunnels::live_ssh_tunnel_pids();
     read_all_records()
         .into_iter()
-        .filter(|r| crate::tui::app::tunnels::pid_is_ssh_tunnel(r.pid))
+        .filter(|r| live.contains(&r.pid))
         .collect()
 }
 
@@ -158,12 +160,24 @@ fn stop(pid_arg: &str) {
         eprintln!("No running sshm tunnel with PID {pid}. See `sshm tunnel list`.");
         return;
     };
+    // Tell the owning instance this exit is deliberate, or an auto-restart
+    // tunnel would come straight back. Only when that instance is alive to
+    // read it: a marker nobody reaps would later silence an unrelated tunnel
+    // that happens to reuse the PID.
+    let marker = crate::tui::app::tunnels::tunnel_owner_alive(pid)
+        .then(|| crate::tui::app::tunnels::stop_marker_for(pid));
+    if let Some(m) = &marker {
+        let _ = std::fs::write(m, b"");
+    }
     if crate::tui::app::tunnels::terminate_tunnel_pid(pid) {
         println!("Stopped {} ({})", route(&record), record.host_name);
         println!(
-            "Note: the sshm instance that owns it will drop it from its list on the next tick."
+            "Note: the sshm instance that owns it drops it from its list on its next tick, without restarting it."
         );
     } else {
+        if let Some(m) = &marker {
+            let _ = std::fs::remove_file(m);
+        }
         eprintln!("Could not signal PID {pid}.");
     }
 }

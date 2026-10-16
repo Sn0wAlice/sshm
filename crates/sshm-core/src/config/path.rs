@@ -11,10 +11,42 @@ pub fn config_dir() -> PathBuf {
     });
 
     let dir = base.join("sshm");
-    if let Err(e) = fs::create_dir_all(&dir) {
-        eprintln!("Cannot create folder {:?}: {}", dir, e);
+    if !dir.is_dir() {
+        if let Err(e) = create_private_dir(&dir) {
+            eprintln!("Cannot create folder {:?}: {}", dir, e);
+        }
+    } else {
+        tighten_dir_mode(&dir);
     }
     dir
+}
+
+/// sshm's own dir holds hosts, settings and the sync clone: if an older
+/// version (or a umask) left it group/other accessible, pull it back to 0o700.
+#[cfg(unix)]
+fn tighten_dir_mode(dir: &std::path::Path) {
+    use std::os::unix::fs::PermissionsExt;
+    if let Ok(meta) = fs::metadata(dir) {
+        if meta.permissions().mode() & 0o077 != 0 {
+            let _ = fs::set_permissions(dir, fs::Permissions::from_mode(0o700));
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn tighten_dir_mode(_dir: &std::path::Path) {}
+
+/// `create_dir_all`, with the leaf owner-only (0o700) on Unix when we create
+/// it. An existing directory's mode is left alone.
+fn create_private_dir(dir: &std::path::Path) -> io::Result<()> {
+    let mut b = fs::DirBuilder::new();
+    b.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        b.mode(0o700);
+    }
+    b.create(dir)
 }
 
 pub fn config_path() -> PathBuf {
@@ -49,12 +81,12 @@ pub fn sync_state_path() -> PathBuf {
     config_dir().join("sync-state.json")
 }
 
-pub fn ensure_config_file(path: &PathBuf) -> io::Result<()> {
+pub fn ensure_config_file(path: &std::path::Path) -> io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
     if !path.exists() {
-        fs::write(path, "{}\n")?;
+        super::io::write_private(path, b"{}\n")?;
     }
     Ok(())
 }

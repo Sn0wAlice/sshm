@@ -86,21 +86,21 @@ pub fn handle_settings_tab(
                             app_config.notifications_enabled = settings_state.notifications_enabled;
                             crate::os::set_notifications_enabled(app_config.notifications_enabled);
                             if let Ok(v) = settings_state.health_ttl_secs.trim().parse::<u64>() {
-                                app_config.health_ttl_secs = v.max(1);
+                                app_config.health_ttl_secs = v.clamp(1, 86_400);
                             }
                             if let Ok(v) =
                                 settings_state.health_probe_timeout_ms.trim().parse::<u64>()
                             {
-                                app_config.health_probe_timeout_ms = v.max(100);
+                                app_config.health_probe_timeout_ms = v.clamp(100, 60_000);
                             }
                             if let Ok(v) = settings_state.kluster_refresh_secs.trim().parse::<u64>()
                             {
-                                app_config.kluster_refresh_secs = v.max(2);
+                                app_config.kluster_refresh_secs = v.clamp(2, 86_400);
                             }
                             if let Ok(v) =
                                 settings_state.kluster_log_tail_lines.trim().parse::<u32>()
                             {
-                                app_config.kluster_log_tail_lines = v.max(1);
+                                app_config.kluster_log_tail_lines = v.clamp(1, 1_000_000);
                             }
                             // Config sync. An interval of 0 means "manual
                             // only"; anything else is floored by the engine.
@@ -124,7 +124,7 @@ pub fn handle_settings_tab(
                                 app_config.sync.mode = crate::config::settings::SyncMode::Manual;
                             } else {
                                 app_config.sync.mode = crate::config::settings::SyncMode::Interval;
-                                app_config.sync.interval_secs = minutes * 60;
+                                app_config.sync.interval_secs = minutes.saturating_mul(60);
                             }
                             if let Ok(mut shared) = knobs.sync_cfg.lock() {
                                 *shared = app_config.sync.clone();

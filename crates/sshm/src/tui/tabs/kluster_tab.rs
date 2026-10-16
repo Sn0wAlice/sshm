@@ -48,16 +48,16 @@ fn is_header(row: &KlusterRow) -> bool {
     )
 }
 
-/// Fuzzy match `text` against `filter` (smart-case, fzf-style). An empty
-/// filter matches everything.
-fn item_matches(text: &str, filter: &str) -> bool {
-    if filter.is_empty() {
-        return true;
-    }
-    SkimMatcherV2::default()
-        .smart_case()
-        .fuzzy_match(text, filter)
-        .is_some()
+/// Fuzzy matcher for the row filter. Case-insensitive, like the Hosts filter
+/// (`sshm_core::filter::matcher`).
+fn row_matcher() -> SkimMatcherV2 {
+    SkimMatcherV2::default().ignore_case()
+}
+
+/// Fuzzy match `text` against `filter` (fzf-style). An empty filter matches
+/// everything.
+fn item_matches(matcher: &SkimMatcherV2, text: &str, filter: &str) -> bool {
+    filter.is_empty() || matcher.fuzzy_match(text, filter).is_some()
 }
 
 /// One renderable row in the left pane. Indices reference the live snapshot
@@ -153,6 +153,9 @@ pub struct KlusterTabState {
     pub filter: String,
     /// True while the user is typing into [`Self::filter`] (entered with `/`).
     pub input_mode: bool,
+    /// List scroll offset, persisted across frames so the viewport only moves
+    /// when the selection leaves it (`Cell`: draw only gets `&self`).
+    list_offset: std::cell::Cell<usize>,
 }
 
 impl Default for KlusterTabState {
@@ -201,6 +204,7 @@ impl KlusterTabState {
             collapsed,
             filter: String::new(),
             input_mode: false,
+            list_offset: Default::default(),
         };
         state.rebuild_rows();
         state
@@ -354,12 +358,14 @@ impl KlusterTabState {
     fn apply_row_filter(&self, rows: Vec<KlusterRow>) -> Vec<KlusterRow> {
         let mut out: Vec<KlusterRow> = Vec::new();
         let mut pending_header: Option<KlusterRow> = None;
+        let matcher = row_matcher();
+        let mut buf = String::new();
         for row in rows {
             if is_header(&row) {
                 // A new header supersedes any previous header that never got
                 // a match (so empty sections are dropped while filtering).
                 pending_header = Some(row);
-            } else if self.row_item_matches(&row) {
+            } else if self.row_item_matches(&row, &matcher, &mut buf) {
                 if let Some(h) = pending_header.take() {
                     out.push(h);
                 }
@@ -371,20 +377,25 @@ impl KlusterTabState {
 
     /// True when the item on `row` fuzzy-matches the current filter. Headers
     /// and unknown rows return false.
-    fn row_item_matches(&self, row: &KlusterRow) -> bool {
-        let text: Option<String> = match row {
+    fn row_item_matches(
+        &self,
+        row: &KlusterRow,
+        matcher: &SkimMatcherV2,
+        buf: &mut String,
+    ) -> bool {
+        let text: Option<(&str, &str)> = match row {
             KlusterRow::DockerContainer(i) => self
                 .docker_containers
                 .get(*i)
-                .map(|c| format!("{} {}", c.name, c.image)),
+                .map(|c| (c.name.as_str(), c.image.as_str())),
             KlusterRow::AppleContainer(i) => self
                 .apple_containers
                 .get(*i)
-                .map(|c| format!("{} {}", c.name, c.image)),
+                .map(|c| (c.name.as_str(), c.image.as_str())),
             KlusterRow::PodmanContainer(i) => self
                 .podman_containers
                 .get(*i)
-                .map(|c| format!("{} {}", c.name, c.image)),
+                .map(|c| (c.name.as_str(), c.image.as_str())),
             KlusterRow::DockerRemoteContainer {
                 remote_idx,
                 container_idx,
@@ -394,7 +405,7 @@ impl KlusterTabState {
                 .get(*remote_idx)
                 .and_then(|r| self.docker_remote_containers.get(&r.host_alias))
                 .and_then(|v| v.get(*container_idx))
-                .map(|c| format!("{} {}", c.name, c.image)),
+                .map(|c| (c.name.as_str(), c.image.as_str())),
             KlusterRow::ClusterPod {
                 cluster_idx,
                 pod_idx,
@@ -404,11 +415,11 @@ impl KlusterTabState {
                 .get(*cluster_idx)
                 .and_then(|x| x.as_ref())
                 .and_then(|p| p.get(*pod_idx))
-                .map(|p| format!("{} {}", p.namespace, p.name)),
+                .map(|p| (p.namespace.as_str(), p.name.as_str())),
             KlusterRow::IncusLocalInstance(i) => self
                 .incus_local_instances
                 .get(*i)
-                .map(|inst| format!("{} {}", inst.name, inst.image)),
+                .map(|inst| (inst.name.as_str(), inst.image.as_str())),
             KlusterRow::IncusRemoteInstance {
                 remote_idx,
                 instance_idx,
@@ -418,13 +429,18 @@ impl KlusterTabState {
                 .get(*remote_idx)
                 .and_then(|r| self.incus_remote_instances.get(r))
                 .and_then(|v| v.get(*instance_idx))
-                .map(|inst| format!("{} {}", inst.name, inst.image)),
+                .map(|inst| (inst.name.as_str(), inst.image.as_str())),
             _ => return false,
         };
-        match text {
-            Some(t) => item_matches(&t, &self.filter),
-            None => false,
-        }
+        let Some((a, b)) = text else {
+            return false;
+        };
+        // Reuse one buffer across rows instead of allocating per row.
+        buf.clear();
+        buf.push_str(a);
+        buf.push(' ');
+        buf.push_str(b);
+        item_matches(matcher, buf, &self.filter)
     }
 
     /// Re-pack `collapsed` keys after a deletion at `deleted_idx` for entries
@@ -742,7 +758,7 @@ pub fn draw_kluster_tab(f: &mut Frame, area: Rect, state: &KlusterTabState, them
         .map(|row| render_row(row, state, theme))
         .collect();
 
-    let mut ls = ListState::default();
+    let mut ls = ListState::default().with_offset(state.list_offset.get());
     if !state.flat_rows.is_empty() {
         ls.select(Some(state.selected));
     }
@@ -770,9 +786,13 @@ pub fn draw_kluster_tab(f: &mut Frame, area: Rect, state: &KlusterTabState, them
                 .add_modifier(Modifier::BOLD),
         );
     f.render_stateful_widget(list, area, &mut ls);
+    state.list_offset.set(ls.offset());
 }
 
 fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> ListItem<'a> {
+    // Rows can briefly outlive the snapshot they index (async refresh before
+    // `rebuild_rows`); render a placeholder instead of panicking.
+    let missing = || ListItem::new(Span::raw("    ?"));
     match row {
         KlusterRow::DockerHeader { count, available } => {
             let glyph = if state.collapsed.contains("docker") {
@@ -796,10 +816,10 @@ fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> L
             };
             ListItem::new(Line::from(Span::styled(label, style)))
         }
-        KlusterRow::DockerContainer(i) => {
-            let c = &state.docker_containers[*i];
-            render_docker_container(c, theme)
-        }
+        KlusterRow::DockerContainer(i) => match state.docker_containers.get(*i) {
+            Some(c) => render_docker_container(c, theme),
+            None => missing(),
+        },
         KlusterRow::AppleHeader { count, available } => {
             let glyph = if state.collapsed.contains("apple") {
                 "▸"
@@ -822,10 +842,10 @@ fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> L
             };
             ListItem::new(Line::from(Span::styled(label, style)))
         }
-        KlusterRow::AppleContainer(i) => {
-            let c = &state.apple_containers[*i];
-            render_docker_container(c, theme)
-        }
+        KlusterRow::AppleContainer(i) => match state.apple_containers.get(*i) {
+            Some(c) => render_docker_container(c, theme),
+            None => missing(),
+        },
         KlusterRow::PodmanHeader { count, available } => {
             let glyph = if state.collapsed.contains("podman") {
                 "▸"
@@ -850,15 +870,19 @@ fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> L
         }
         KlusterRow::PodmanContainer(i) => {
             // Podman's `ps` output is Docker's, so the row renders identically.
-            let c = &state.podman_containers[*i];
-            render_docker_container(c, theme)
+            match state.podman_containers.get(*i) {
+                Some(c) => render_docker_container(c, theme),
+                None => missing(),
+            }
         }
         KlusterRow::DockerRemoteHeader {
             remote_idx,
             count,
             reachable,
         } => {
-            let remote = &state.db.docker_remotes[*remote_idx];
+            let Some(remote) = state.db.docker_remotes.get(*remote_idx) else {
+                return missing();
+            };
             let key = format!("docker_remote_{}", remote_idx);
             let glyph = if state.collapsed.contains(&key) {
                 "▸"
@@ -888,15 +912,21 @@ fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> L
             remote_idx,
             container_idx,
         } => {
-            let remote = &state.db.docker_remotes[*remote_idx];
-            let containers = state.docker_remote_containers.get(&remote.host_alias);
-            match containers.and_then(|v| v.get(*container_idx)) {
+            let c = state
+                .db
+                .docker_remotes
+                .get(*remote_idx)
+                .and_then(|r| state.docker_remote_containers.get(&r.host_alias))
+                .and_then(|v| v.get(*container_idx));
+            match c {
                 Some(c) => render_docker_container(c, theme),
-                None => ListItem::new(Span::raw("    ?")),
+                None => missing(),
             }
         }
         KlusterRow::ClusterHeader { cluster_idx, count } => {
-            let cluster = &state.db.clusters[*cluster_idx];
+            let Some(cluster) = state.db.clusters.get(*cluster_idx) else {
+                return missing();
+            };
             let key = format!("cluster_{}", cluster_idx);
             let glyph = if state.collapsed.contains(&key) {
                 "▸"
@@ -922,8 +952,14 @@ fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> L
             pod_idx,
             ..
         } => {
-            let pods = state.cluster_pods[*cluster_idx].as_ref().unwrap();
-            let pod = &pods[*pod_idx];
+            let Some(pod) = state
+                .cluster_pods
+                .get(*cluster_idx)
+                .and_then(|x| x.as_ref())
+                .and_then(|p| p.get(*pod_idx))
+            else {
+                return missing();
+            };
             let phase_style = match pod.phase.as_str() {
                 "Running" => Style::default().fg(theme.success),
                 "Pending" => Style::default().fg(theme.muted),
@@ -971,12 +1007,14 @@ fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> L
             };
             ListItem::new(Line::from(Span::styled(label, style)))
         }
-        KlusterRow::IncusLocalInstance(i) => {
-            let inst = &state.incus_local_instances[*i];
-            render_incus_instance(inst, theme)
-        }
+        KlusterRow::IncusLocalInstance(i) => match state.incus_local_instances.get(*i) {
+            Some(inst) => render_incus_instance(inst, theme),
+            None => missing(),
+        },
         KlusterRow::IncusRemoteHeader { remote_idx, count } => {
-            let remote = &state.db.incus_remotes[*remote_idx];
+            let Some(remote) = state.db.incus_remotes.get(*remote_idx) else {
+                return missing();
+            };
             let key = format!("incus_remote_{}", remote_idx);
             let glyph = if state.collapsed.contains(&key) {
                 "▸"
@@ -994,9 +1032,16 @@ fn render_row<'a>(row: &KlusterRow, state: &KlusterTabState, theme: &Theme) -> L
             remote_idx,
             instance_idx,
         } => {
-            let remote = &state.db.incus_remotes[*remote_idx];
-            let inst = &state.incus_remote_instances[remote][*instance_idx];
-            render_incus_instance(inst, theme)
+            let inst = state
+                .db
+                .incus_remotes
+                .get(*remote_idx)
+                .and_then(|r| state.incus_remote_instances.get(r))
+                .and_then(|v| v.get(*instance_idx));
+            match inst {
+                Some(inst) => render_incus_instance(inst, theme),
+                None => missing(),
+            }
         }
     }
 }
@@ -1514,7 +1559,7 @@ mod tests {
 
     #[test]
     fn an_empty_filter_matches_everything() {
-        assert!(item_matches("anything", ""));
+        assert!(item_matches(&row_matcher(), "anything", ""));
     }
 
     #[test]

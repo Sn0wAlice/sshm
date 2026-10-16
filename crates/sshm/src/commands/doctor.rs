@@ -403,12 +403,23 @@ fn check_sync() -> Vec<Check> {
             "copy it from another machine, or `age-keygen -o {}`",
             p.display()
         )),
-        (true, Some(p)) => Check::new(
-            "Config sync",
-            "encryption",
-            Status::Ok,
-            format!("age, {}", p.display()),
-        ),
+        // The identity decrypts every synced file; readable by others it is
+        // as good as no encryption on a shared machine.
+        (true, Some(p)) => match mode_of(&p) {
+            Some(m) if m & 0o077 != 0 => Check::new(
+                "Config sync",
+                "encryption",
+                Status::Warn,
+                format!("identity {} is {m:o}, group/other can read", p.display()),
+            )
+            .with_hint(format!("chmod 600 {}", p.display())),
+            _ => Check::new(
+                "Config sync",
+                "encryption",
+                Status::Ok,
+                format!("age, {}", p.display()),
+            ),
+        },
     });
 
     out.push(match sshm_core::sync::SyncLock::holder() {

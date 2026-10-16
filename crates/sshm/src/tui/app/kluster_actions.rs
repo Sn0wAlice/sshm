@@ -38,13 +38,31 @@ fn restore_tui<B: Backend>(terminal: &mut Terminal<B>) {
 /// Used around foreground commands like `docker logs -f` / `kubectl logs -f`
 /// so the user's `Ctrl+C` only terminates the child (which exits naturally)
 /// without killing sshm itself.
-struct IgnoreSigint {
+///
+/// A no-op handler rather than `SIG_IGN`: an ignored signal stays ignored
+/// across `exec`, so children spawned under the guard (ssh keeps an inherited
+/// `SIG_IGN`) would shrug off Ctrl+C too. A handler resets to the default.
+pub(crate) struct IgnoreSigint {
     previous: libc::sighandler_t,
 }
+/// Set by the guard's handler when a Ctrl+C arrives, so a loop of foreground
+/// commands (fan-out) can stop after the current one. Reset by the caller.
+pub(crate) static SIGINT_SEEN: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+extern "C" fn swallow_sigint(_: libc::c_int) {
+    // An atomic store is async-signal-safe.
+    SIGINT_SEEN.store(true, std::sync::atomic::Ordering::Relaxed);
+}
 impl IgnoreSigint {
-    fn new() -> Self {
-        // SAFETY: libc::signal is safe to call; we only swap to SIG_IGN.
-        let previous = unsafe { libc::signal(libc::SIGINT, libc::SIG_IGN) };
+    pub(crate) fn new() -> Self {
+        // SAFETY: libc::signal is safe to call; the handler only stores an
+        // atomic, which is async-signal-safe.
+        let previous = unsafe {
+            libc::signal(
+                libc::SIGINT,
+                swallow_sigint as extern "C" fn(libc::c_int) as libc::sighandler_t,
+            )
+        };
         IgnoreSigint { previous }
     }
 }

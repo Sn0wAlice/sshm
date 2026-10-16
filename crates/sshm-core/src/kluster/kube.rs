@@ -1,26 +1,26 @@
 //! Thin wrappers around the `kubectl` CLI.
 
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, ExitStatus};
+use std::sync::OnceLock;
 
 use anyhow::{Context, Result};
 
 use super::models::{Cluster, PodInfo};
-use super::shell::shell_path;
+use super::shell::{output_with_timeout, shell_path, LIFECYCLE_TIMEOUT, QUERY_TIMEOUT};
 
-/// Returns true if `kubectl` is on PATH.
+/// Returns true if `kubectl` is on PATH. Probed once per process: it runs on
+/// every [`list_pods`] poll, and the binary doesn't come and go meanwhile.
 pub fn cli_available() -> bool {
-    which("kubectl")
+    static AVAILABLE: OnceLock<bool> = OnceLock::new();
+    *AVAILABLE.get_or_init(|| which("kubectl"))
 }
 
 fn which(bin: &str) -> bool {
-    Command::new(bin)
-        .arg("version")
-        .arg("--client=true")
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    output_with_timeout(
+        Command::new(bin).arg("version").arg("--client=true"),
+        QUERY_TIMEOUT,
+    )
+    .is_ok_and(|o| o.status.success())
 }
 
 /// Build a `kubectl` command pre-loaded with the saved cluster's
@@ -47,10 +47,12 @@ pub fn list_pods(cluster: &Cluster) -> Result<Vec<PodInfo>> {
     cmd.args([
         "get", "pods",
         "--all-namespaces",
+        // An unreachable API server would otherwise stall the poll loop for
+        // kubectl's own (long) default.
+        "--request-timeout=10s",
         "-o", "jsonpath={range .items[*]}{.metadata.namespace}{\"\\t\"}{.metadata.name}{\"\\t\"}{.status.phase}{\"\\t\"}{range .spec.containers[*]}{.name}{\" \"}{end}{\"\\n\"}{end}",
     ]);
-    cmd.stderr(Stdio::null());
-    let out = cmd.output().context("running `kubectl get pods`")?;
+    let out = output_with_timeout(&mut cmd, QUERY_TIMEOUT).context("running `kubectl get pods`")?;
     if !out.status.success() {
         return Ok(Vec::new());
     }
@@ -108,7 +110,7 @@ pub fn delete_pod(
 ) -> std::io::Result<std::process::Output> {
     let mut cmd = base_cmd(cluster);
     cmd.args(["delete", "pod", "-n", namespace, pod, "--wait=false"]);
-    cmd.output()
+    output_with_timeout(&mut cmd, LIFECYCLE_TIMEOUT)
 }
 
 /// `kubectl logs -n NS POD [-c CONTAINER] [--tail N] [-f]`.

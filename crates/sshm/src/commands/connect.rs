@@ -24,8 +24,7 @@ pub fn connect_host(
     };
 
     if let Some(h) = hosts.get(&name) {
-        launch_ssh_with_recovery(h, hosts, Some(extra));
-        return Some(h.name.clone());
+        return launched(h, hosts, extra);
     }
     let matching: Vec<&Host> = hosts.values().filter(|h| h.name.contains(&name)).collect();
     match matching.len() {
@@ -35,8 +34,7 @@ pub fn connect_host(
         }
         1 => {
             let h = matching[0];
-            launch_ssh_with_recovery(h, hosts, Some(extra));
-            Some(h.name.clone())
+            launched(h, hosts, extra)
         }
         _ => {
             let options: Vec<String> = matching.iter().map(|h| h.name.clone()).collect();
@@ -45,6 +43,18 @@ pub fn connect_host(
             } else {
                 None
             }
+        }
+    }
+}
+
+/// Connect to `h`; the host name when ssh actually ran (for history), `None`
+/// when it was refused before launch (bad destination, untrusted key).
+fn launched(h: &Host, hosts: &HashMap<String, Host>, extra: &[String]) -> Option<String> {
+    match launch_ssh_with_recovery(h, hosts, Some(extra), || {}) {
+        Ok(()) => Some(h.name.clone()),
+        Err(e) => {
+            eprintln!("sshm: {e}");
+            None
         }
     }
 }

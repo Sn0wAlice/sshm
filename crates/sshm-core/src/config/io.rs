@@ -37,8 +37,8 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 
     // Write + fsync the temp file, closing the handle (scope end) before rename.
     {
-        let mut f =
-            File::create(&tmp).with_context(|| format!("creating temp file {}", tmp.display()))?;
+        let mut f = create_private(&tmp)
+            .with_context(|| format!("creating temp file {}", tmp.display()))?;
         f.write_all(bytes)
             .with_context(|| format!("writing temp file {}", tmp.display()))?;
         f.sync_all()
@@ -65,29 +65,62 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
     }
 }
 
+/// Create (truncate) `path` readable by the owner only on Unix. The DBs and
+/// settings hold hostnames, usernames and the sync remote — no reason for
+/// other local users to read them. The mode only applies on creation, which is
+/// fine: `atomic_write` always creates a fresh temp file.
+pub(crate) fn create_private(path: &Path) -> std::io::Result<File> {
+    let mut opts = fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        opts.mode(0o600);
+    }
+    opts.open(path)
+}
+
+/// Write `bytes` to `path` via [`create_private`] (used for `.bak` copies).
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
+    create_private(path)?.write_all(bytes)
+}
+
 /// Pure parse: take JSON text and return a [`Database`] handling all
 /// supported schema variants (current, legacy map-only, loose migration).
 /// Returns `None` if the content can't be coerced into anything sensible.
 pub fn parse_db_text(content: &str) -> Option<Database> {
+    parse_db_text_inner(content).map(|(db, _)| db)
+}
+
+/// [`parse_db_text`] plus whether `content` was already the canonical schema
+/// (so [`load_db`] knows whether to migrate without parsing a third time).
+fn parse_db_text_inner(content: &str) -> Option<(Database, bool)> {
     // Distinguish schemas by inspecting the top-level shape: the canonical
     // schema has a `hosts` key, the legacy ones are a flat alias→entry map.
     let top: serde_json::Value = serde_json::from_str(content).ok()?;
-    let has_hosts_key = top.get("hosts").is_some();
 
-    if has_hosts_key {
-        if let Ok(db) = serde_json::from_str::<Database>(content) {
-            return Some(db);
-        }
+    // A canonical file that fails to deserialize (e.g. `"port": "22"`) is
+    // broken, not legacy: the legacy parsers would "recover" an empty DB that
+    // then gets saved over the user's hosts. Report it as invalid instead.
+    if top.get("hosts").is_some() {
+        return serde_json::from_value::<Database>(top)
+            .ok()
+            .map(|db| (db, true));
     }
     if let Ok(map) = serde_json::from_str::<HashMap<String, Host>>(content) {
         let mut folders: Vec<String> = map.values().filter_map(|h| h.folder.clone()).collect();
         folders.sort();
         folders.dedup();
-        return Some(Database {
-            hosts: map,
-            folders,
-            ..Default::default()
-        });
+        // `{}` (the fresh-file placeholder) has nothing to migrate.
+        let canonical = map.is_empty();
+        return Some((
+            Database {
+                hosts: map,
+                folders,
+                ..Default::default()
+            },
+            canonical,
+        ));
     }
 
     let mut migrated: HashMap<String, Host> = HashMap::new();
@@ -164,14 +197,22 @@ pub fn parse_db_text(content: &str) -> Option<Database> {
             }
         }
     }
+    // Entries present but none recognisable as a host: that's not a DB we
+    // understand, and an empty result would be saved over it.
+    if migrated.is_empty() && !obj.is_empty() {
+        return None;
+    }
     let mut folders: Vec<String> = migrated.values().filter_map(|h| h.folder.clone()).collect();
     folders.sort();
     folders.dedup();
-    Some(Database {
-        hosts: migrated,
-        folders,
-        ..Default::default()
-    })
+    Some((
+        Database {
+            hosts: migrated,
+            folders,
+            ..Default::default()
+        },
+        false,
+    ))
 }
 
 /// Pure serialize: produce the canonical pretty JSON representation of `db`
@@ -203,10 +244,13 @@ pub fn load_db() -> Database {
     if std::env::var_os("SSHM_VERBOSE").is_some() {
         eprintln!("Loading DB from {}", path.display());
     }
+    // On any failure other than "file absent" (which `ensure_config_file`
+    // handles), the real host.json may still hold the user's hosts: never save
+    // over it. Hand back a placeholder flagged `load_failed` so later saves
+    // refuse instead of persisting an empty DB.
     if let Err(e) = ensure_config_file(&path) {
         eprintln!("Cannot init config file {}: {e}", path.display());
-        save_empty_database();
-        return Database::default();
+        return failed_db();
     }
 
     let mut content = String::new();
@@ -214,22 +258,27 @@ pub fn load_db() -> Database {
         Ok(mut file) => {
             if let Err(e) = file.read_to_string(&mut content) {
                 eprintln!("Error reading {}: {e}", path.display());
-                save_empty_database();
-                return Database::default();
+                return failed_db();
             }
         }
         Err(e) => {
             eprintln!("Cannot open {}: {e}", path.display());
-            save_empty_database();
-            return Database::default();
+            return failed_db();
         }
     }
 
-    match parse_db_text(&content) {
-        Some(mut db) => {
+    // A zero-byte file (e.g. truncated by an editor) holds nothing to lose.
+    if content.trim().is_empty() {
+        let mut db = Database::default();
+        db.set_source(&path);
+        return db;
+    }
+
+    match parse_db_text_inner(&content) {
+        Some((mut db, canonical)) => {
             // If the content didn't already match the canonical schema, save
             // back so the next load is fast and stable.
-            if serde_json::from_str::<Database>(&content).is_err() {
+            if !canonical {
                 eprintln!("Migrated config to new schema. Saving...");
                 save_db(&db);
             }
@@ -241,13 +290,21 @@ pub fn load_db() -> Database {
         None => {
             // Backup invalid JSON and return empty
             let bak = path.with_extension("json.bak");
-            if let Err(be) = fs::write(&bak, content) {
+            if let Err(be) = write_private(&bak, content.as_bytes()) {
                 eprintln!("Failed to write backup {}: {be}", bak.display());
             } else {
                 eprintln!("Config was invalid JSON. Backed up to {}.", bak.display());
             }
-            Database::default()
+            failed_db()
         }
+    }
+}
+
+/// Empty placeholder for a host.json that exists but couldn't be loaded.
+fn failed_db() -> Database {
+    Database {
+        load_failed: true,
+        ..Default::default()
     }
 }
 
@@ -257,6 +314,12 @@ pub fn load_db() -> Database {
 /// Durability/atomicity is handled by [`atomic_write`].
 pub fn try_save_db(db: &Database) -> Result<()> {
     let path = config_path();
+    if db.load_failed {
+        anyhow::bail!(
+            "refusing to save: {} could not be loaded; fix or remove it first",
+            path.display()
+        );
+    }
     let json = serialize_db(db).context("serializing database")?;
     atomic_write(&path, json.as_bytes())
         .with_context(|| format!("saving database {}", path.display()))
@@ -264,12 +327,17 @@ pub fn try_save_db(db: &Database) -> Result<()> {
 
 /// Read + parse the host DB at `path` quietly: no "Loading DB…" log, no
 /// migration re-save, no backup side effects. Returns an empty [`Database`] if
-/// the file is missing, unreadable, or invalid, and records `path` as the
-/// result's source signature. Used for hot-reloads where the loud, side-effect
+/// the file is missing, unreadable, or invalid (flagged `load_failed` in the
+/// latter two cases so it can't be saved over the file), and records `path` as
+/// the result's source signature. Used for hot-reloads where the loud, side-effect
 /// laden [`load_db`] is inappropriate.
 pub fn read_db_at(path: &Path) -> Database {
-    let text = fs::read_to_string(path).unwrap_or_default();
-    let mut db = parse_db_text(&text).unwrap_or_default();
+    let mut db = match fs::read_to_string(path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Database::default(),
+        Ok(text) if text.trim().is_empty() => Database::default(),
+        Ok(text) => parse_db_text(&text).unwrap_or_else(failed_db),
+        Err(_) => failed_db(),
+    };
     db.set_source(path);
     db
 }
@@ -282,34 +350,13 @@ pub fn save_db(db: &Database) {
     }
 }
 
-// -----------------------------------------------------------------------------
-// Legacy shims (for older code paths). Prefer using load_db/save_db everywhere.
-// -----------------------------------------------------------------------------
-
-/// Legacy: load only hosts map
-pub fn load_hosts() -> HashMap<String, Host> {
-    load_db().hosts
-}
-
-/// Legacy: save only hosts map (folders inferred from hosts' `folder` fields)
-pub fn save_hosts(hosts: &HashMap<String, Host>) {
-    let mut folders: Vec<String> = hosts.values().filter_map(|h| h.folder.clone()).collect();
-    folders.sort();
-    folders.dedup();
-    let db = Database {
-        hosts: hosts.clone(),
-        folders,
-        ..Default::default()
-    };
-    save_db(&db);
-}
-
 // Create files
 pub fn save_empty_database() {
     let path = config_path();
     let db = Database::default();
     save_db(&db);
-    println!("Created empty database at {}", path.display());
+    // stderr: stdout belongs to the command's output (`sshm list --json`).
+    eprintln!("Created empty database at {}", path.display());
 }
 
 #[cfg(test)]
@@ -365,6 +412,20 @@ mod tests {
         assert_eq!(h.port, 22);
         assert_eq!(h.username, "root");
         assert_eq!(h.name, "old");
+    }
+
+    #[test]
+    fn canonical_schema_with_bad_field_is_invalid_not_empty() {
+        // Must not fall through to the legacy parsers and come back empty.
+        assert!(parse_db_text(r#"{"hosts":{"a":{"name":"a","host":"h","port":"22"}}}"#).is_none());
+        assert!(parse_db_text(r#"{"hosts":{"a":{"name":"a","host":"h","port":70000}}}"#).is_none());
+    }
+
+    #[test]
+    fn loose_parser_rejects_entries_with_no_recoverable_host() {
+        assert!(parse_db_text(r#"{"a":{"port":22}}"#).is_none());
+        // The fresh-file placeholder is still a valid (empty) DB.
+        assert!(parse_db_text("{}").unwrap().hosts.is_empty());
     }
 
     #[test]
@@ -524,5 +585,43 @@ mod tests {
         atomic_write(&path, bytes.as_bytes()).unwrap(); // rewrite, identical content
         assert!(!db.reload_if_changed_from(&path).unwrap());
         assert_eq!(db.hosts.len(), 3);
+    }
+
+    #[test]
+    fn failed_load_placeholder_refuses_to_save() {
+        assert!(try_save_db(&failed_db()).is_err());
+    }
+
+    #[test]
+    fn reload_keeps_hosts_when_file_turns_invalid() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.json");
+        atomic_write(&path, serialize_db(&db_with(&["a"])).unwrap().as_bytes()).unwrap();
+        let mut db = read_db_at(&path);
+        fs::write(&path, "{ half written").unwrap();
+        assert!(db.reload_if_changed_from(&path).is_err());
+        assert!(db.hosts.contains_key("a"));
+        // Still broken: keep erroring (sig not advanced) and refuse saves.
+        assert!(db.reload_if_changed_from(&path).is_err());
+        assert!(db.load_failed);
+        // Repaired: reload succeeds and saves are allowed again.
+        atomic_write(
+            &path,
+            serialize_db(&db_with(&["a", "b"])).unwrap().as_bytes(),
+        )
+        .unwrap();
+        assert!(db.reload_if_changed_from(&path).unwrap());
+        assert!(!db.load_failed);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_write_creates_owner_only_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("host.json");
+        atomic_write(&path, b"{}").unwrap();
+        let mode = fs::metadata(&path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 }

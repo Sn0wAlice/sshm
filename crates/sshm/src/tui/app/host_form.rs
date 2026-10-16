@@ -304,6 +304,11 @@ pub fn draw_host_form(f: &mut Frame, state: &HostFormState) {
 }
 
 pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), String> {
+    // Pick up what another instance (or a sync) wrote while the form was
+    // open — the duplicate-name check and the save below must see it. An
+    // unreadable host.json stops the save rather than overwriting it.
+    db.reload_if_changed()
+        .map_err(|e| format!("Not saved — could not re-read hosts: {e:#}"))?;
     let name = state.name.trim();
     if name.is_empty() {
         return Err("Name cannot be empty".into());
@@ -321,6 +326,7 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
     if host.is_empty() {
         return Err("Host cannot be empty".into());
     }
+    state.validate_destination()?;
 
     let port: u16 = state
         .port

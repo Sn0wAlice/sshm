@@ -171,26 +171,56 @@ fn attempt_sync(
 
     for &item in items {
         let file = item.file_name();
-        let local_disk = std::fs::read_to_string(item.local_path()).ok();
+        // Only a missing file means "absent" (which the merge turns into a
+        // deletion and publishes). Any other read error must stop the run.
+        let local_disk = match std::fs::read_to_string(item.local_path()) {
+            Ok(t) => Some(t),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                return Err(e).with_context(|| format!("reading {}", item.local_path().display()))
+            }
+        };
+        if let Some(t) = &local_disk {
+            ensure_local_parses(item, t)?;
+        }
         let local_repo = local_disk.as_deref().map(|t| to_repo(item, t));
         // Everything read back from the repo goes through `unseal` first: the
         // merge below reconciles entry by entry, so it has to see structure,
         // not a blob. A plaintext blob passes through untouched.
         let base = match base_rev.as_deref().and_then(|rev| git.show_file(rev, file)) {
-            Some(blob) => Some(
-                super::crypt::unseal(cfg, &blob)
-                    .with_context(|| format!("decrypting {file} at the merge base"))?,
-            ),
+            Some(blob) => {
+                let text = super::crypt::unseal(cfg, &blob)
+                    .with_context(|| format!("decrypting {file} at the merge base"))?;
+                // The base ref only advances on success, so failing here would
+                // abort every run forever. Fall back to a two-way merge.
+                match ensure_parses(item, &text, "merge base") {
+                    Ok(()) => Some(from_repo(item, text)),
+                    Err(e) => {
+                        eprintln!("sync: {e:#}; merging without a base");
+                        None
+                    }
+                }
+            }
             None => None,
         };
         let remote = match remote_commit
             .as_deref()
             .and_then(|rev| git.show_file(rev, file))
         {
-            Some(blob) => Some(
-                super::crypt::unseal(cfg, &blob)
-                    .with_context(|| format!("decrypting {file} from the remote"))?,
-            ),
+            Some(blob) => {
+                let text = super::crypt::unseal(cfg, &blob)
+                    .with_context(|| format!("decrypting {file} from the remote"))?;
+                match ensure_parses(item, &text, "remote") {
+                    Ok(()) => Some(from_repo(item, text)),
+                    // A push is how a user repairs a broken remote: treat it
+                    // as absent so local state overwrites it.
+                    Err(e) if direction == Direction::Push => {
+                        eprintln!("sync: {e:#}; overwriting it with the local copy");
+                        None
+                    }
+                    Err(e) => return Err(e),
+                }
+            }
             None => None,
         };
 
@@ -222,11 +252,29 @@ fn attempt_sync(
     // Every direction writes locally, push included: the merged state is what
     // the remote ends up holding, so leaving the local copy behind would make
     // the next run mistake it for a fresh local edit and undo the difference.
+    let mut writes = Vec::new();
     for p in &pending {
         let Some(merged) = &p.merged else { continue };
-        let want = to_local(p.item, merged, &local_sync);
+        let want = to_local(p.item, merged, &local_sync, p.local_disk.as_deref());
         if p.local_disk.as_deref().map(str::trim_end) == Some(want.trim_end()) {
             continue;
+        }
+        writes.push((p, want));
+    }
+    // The merge took a while (network); a TUI or CLI may have saved in the
+    // meantime. Writing now would silently drop that edit, so bail and let the
+    // next run (the scheduler retries) merge it properly. Checked for every
+    // file before writing any, so an abort leaves nothing half-applied.
+    for (p, _) in &writes {
+        let now = std::fs::read_to_string(p.item.local_path()).ok();
+        if now != p.local_disk {
+            bail!("local {} changed during sync, retry", p.item.file_name());
+        }
+    }
+    for (p, want) in writes {
+        // Re-check right before each write to shrink the window further.
+        if std::fs::read_to_string(p.item.local_path()).ok() != p.local_disk {
+            bail!("local {} changed during sync, retry", p.item.file_name());
         }
         atomic_write(&p.item.local_path(), want.as_bytes())
             .with_context(|| format!("writing {}", p.item.local_path().display()))?;
@@ -257,7 +305,7 @@ fn attempt_sync(
                 if !body.ends_with('\n') {
                     body.push('\n');
                 }
-                std::fs::write(&path, body)
+                crate::config::io::write_private(&path, body.as_bytes())
                     .with_context(|| format!("writing {}", path.display()))?;
             }
             None => {
@@ -285,23 +333,121 @@ fn attempt_sync(
 
 // -----------------------------------------------------------------------------
 // Per-item transforms between "the file on this machine" and "the file in the
-// repo". Only settings.toml needs one.
+// repo". settings.toml drops its `[sync]` block, host.json its history.
 // -----------------------------------------------------------------------------
+
+/// Refuse to sync a file that exists but doesn't parse. Every transform and
+/// merge downstream would otherwise read it as empty, and the "merged" result
+/// would delete the user's entries — locally and on every other machine.
+fn ensure_parses(item: SyncItem, text: &str, side: &str) -> Result<()> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    let ok = match item {
+        SyncItem::Hosts => crate::config::io::parse_db_text(text).is_some(),
+        SyncItem::Kluster => {
+            serde_json::from_str::<crate::kluster::models::KlusterDb>(text).is_ok()
+        }
+        SyncItem::Settings => toml::from_str::<AppConfig>(text).is_ok(),
+        // Merged as an opaque flat file; nothing to misread.
+        SyncItem::Theme => true,
+    };
+    if !ok {
+        bail!(
+            "{} ({side}) is not valid; fix it before syncing",
+            item.file_name()
+        );
+    }
+    Ok(())
+}
+
+/// [`ensure_parses`] for this machine's own file. A blank host.json or
+/// kluster.json (truncated by an editor, a full disk…) must not be published
+/// as "delete everything"; a missing one never gets here.
+fn ensure_local_parses(item: SyncItem, text: &str) -> Result<()> {
+    if text.trim().is_empty() && matches!(item, SyncItem::Hosts | SyncItem::Kluster) {
+        bail!(
+            "local {} is empty; fix or remove it before syncing",
+            item.file_name()
+        );
+    }
+    ensure_parses(item, text, "local copy")
+}
 
 /// Local file → repo form.
 fn to_repo(item: SyncItem, text: &str) -> String {
     match item {
         SyncItem::Settings => settings_neutralized(text),
+        SyncItem::Hosts => hosts_without_history(text),
         _ => text.to_string(),
     }
 }
 
-/// Repo form → local file, preserving this machine's `[sync]` block.
-fn to_local(item: SyncItem, text: &str, keep: &SyncConfig) -> String {
+/// A blob read back from the repo. Remotes written before history stopped
+/// travelling still carry it; strip it so it can't surface as a conflict.
+fn from_repo(item: SyncItem, text: String) -> String {
+    match item {
+        SyncItem::Hosts => hosts_without_history(&text),
+        _ => text,
+    }
+}
+
+/// Repo form → local file, preserving this machine's `[sync]` block and
+/// connection history (`local_disk` is the file as it is on disk now).
+fn to_local(item: SyncItem, text: &str, keep: &SyncConfig, local_disk: Option<&str>) -> String {
     match item {
         SyncItem::Settings => settings_with_sync(text, keep),
+        SyncItem::Hosts => hosts_with_history(text, local_disk),
         _ => text.to_string(),
     }
+}
+
+/// host.json as it travels: `last_connected_at` / `use_count` describe what
+/// *this* machine did, and since hosts merge as whole entries, a connection
+/// would otherwise collide with a real edit made elsewhere. Unparseable text
+/// passes through untouched.
+fn hosts_without_history(text: &str) -> String {
+    let Some(mut db) = crate::config::io::parse_db_text(text) else {
+        return text.to_string();
+    };
+    for h in db.hosts.values_mut() {
+        h.last_connected_at = None;
+        h.use_count = 0;
+    }
+    crate::config::io::serialize_db(&db).unwrap_or_else(|_| text.to_string())
+}
+
+/// The reverse: hosts this machine already knows get their history back.
+fn hosts_with_history(text: &str, local_disk: Option<&str>) -> String {
+    let (Some(mut db), Some(local)) = (
+        crate::config::io::parse_db_text(text),
+        local_disk.and_then(crate::config::io::parse_db_text),
+    ) else {
+        return text.to_string();
+    };
+    let names: std::collections::HashSet<String> = db.hosts.keys().cloned().collect();
+    for (name, h) in db.hosts.iter_mut() {
+        // A rename coming from elsewhere changes the alias: fall back to the
+        // one local host (whose alias is gone) with the same endpoint, if
+        // unambiguous.
+        let found = local.hosts.get(name).or_else(|| {
+            let mut same = local.hosts.iter().filter(|(k, l)| {
+                !names.contains(*k)
+                    && l.host == h.host
+                    && l.port == h.port
+                    && l.username == h.username
+            });
+            match (same.next(), same.next()) {
+                (Some((_, l)), None) => Some(l),
+                _ => None,
+            }
+        });
+        if let Some(l) = found {
+            h.last_connected_at = l.last_connected_at.clone();
+            h.use_count = l.use_count;
+        }
+    }
+    crate::config::io::serialize_db(&db).unwrap_or_else(|_| text.to_string())
 }
 
 /// settings.toml as it travels: parsed, re-serialized (so formatting can't
@@ -445,13 +591,65 @@ mod tests {
     }
 
     #[test]
-    fn only_settings_gets_rewritten_on_the_way_out() {
-        let raw = r#"{"hosts":{}}"#;
-        assert_eq!(to_repo(SyncItem::Hosts, raw), raw);
+    fn the_theme_is_not_rewritten_on_the_way_back() {
         assert_eq!(
-            to_local(SyncItem::Theme, "bg = \"#000\"", &SyncConfig::default()),
+            to_local(
+                SyncItem::Theme,
+                "bg = \"#000\"",
+                &SyncConfig::default(),
+                None
+            ),
             "bg = \"#000\""
         );
+    }
+
+    #[test]
+    fn unparseable_non_empty_files_abort_instead_of_reading_as_empty() {
+        assert!(ensure_parses(SyncItem::Hosts, "{ broken", "local copy").is_err());
+        assert!(ensure_parses(SyncItem::Kluster, "nope", "remote").is_err());
+        assert!(ensure_parses(SyncItem::Settings, "default_port = \"x\"", "base").is_err());
+        assert!(ensure_parses(SyncItem::Hosts, "  \n", "local copy").is_ok());
+        assert!(ensure_parses(SyncItem::Hosts, r#"{"hosts":{}}"#, "remote").is_ok());
+    }
+
+    #[test]
+    fn a_blank_local_db_is_refused() {
+        assert!(ensure_local_parses(SyncItem::Hosts, " \n").is_err());
+        assert!(ensure_local_parses(SyncItem::Kluster, "").is_err());
+        assert!(ensure_local_parses(SyncItem::Theme, "").is_ok());
+        assert!(ensure_local_parses(SyncItem::Hosts, r#"{"hosts":{}}"#).is_ok());
+    }
+
+    #[test]
+    fn history_follows_a_host_renamed_elsewhere() {
+        let local =
+            r#"{"hosts":{"old":{"name":"old","host":"1.2.3.4","use_count":7}},"folders":[]}"#;
+        let merged = r#"{"hosts":{"new":{"name":"new","host":"1.2.3.4"}},"folders":[]}"#;
+        let back = hosts_with_history(merged, Some(local));
+        let db = crate::config::io::parse_db_text(&back).unwrap();
+        assert_eq!(db.hosts["new"].use_count, 7);
+    }
+
+    #[test]
+    fn host_history_never_travels_and_survives_the_round_trip() {
+        let local = r#"{"hosts":{"prod":{"name":"prod","host":"1.2.3.4","last_connected_at":"2026-10-16T10:00:00Z","use_count":7}},"folders":[]}"#;
+        let out = to_repo(SyncItem::Hosts, local);
+        assert!(!out.contains("2026-10-16"), "{out}");
+        assert!(!out.contains("\"use_count\": 7"), "{out}");
+
+        // Remote changed the port; this machine's history comes back.
+        let merged = out.replace("1.2.3.4", "5.6.7.8");
+        let back = to_local(
+            SyncItem::Hosts,
+            &merged,
+            &SyncConfig::default(),
+            Some(local),
+        );
+        let db = crate::config::io::parse_db_text(&back).unwrap();
+        let h = &db.hosts["prod"];
+        assert_eq!(h.host, "5.6.7.8");
+        assert_eq!(h.use_count, 7);
+        assert_eq!(h.last_connected_at.as_deref(), Some("2026-10-16T10:00:00Z"));
     }
 
     #[test]

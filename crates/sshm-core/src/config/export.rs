@@ -1,4 +1,5 @@
 use crate::models::{Database, TunnelKind};
+use crate::ssh::client::has_ssh_option;
 use anyhow::{anyhow, Context, Result};
 use std::fs;
 use std::path::Path;
@@ -28,24 +29,9 @@ pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<()> {
         }
         content.push_str(&format!("Host {}\n", host.name));
         content.push_str(&format!("    HostName {}\n", host.host));
-        content.push_str(&format!("    User {}\n", host.username));
-        if host.port != 22 {
-            content.push_str(&format!("    Port {}\n", host.port));
-        }
-        if let Some(ref id) = host.identity_file {
-            if !id.is_empty() {
-                content.push_str(&format!("    IdentityFile {}\n", id));
-            }
-        }
-        if let Some(ref pj) = host.proxy_jump {
-            if !pj.is_empty() {
-                content.push_str(&format!("    ProxyJump {}\n", pj));
-            }
-        }
-        if host.forward_agent {
-            content.push_str("    ForwardAgent yes\n");
-        }
         // `-o Key=Value` on the command line is `Key Value` in a config file.
+        // Emitted first: ssh_config keeps the first value, so these must
+        // precede the fields below to override them, as on the command line.
         // An entry without `=` is rejected at input, but stay defensive: a
         // hand-edited host.json could carry one, and a bare keyword would make
         // ssh refuse to parse the whole file.
@@ -56,6 +42,25 @@ pub fn export_ssh_config(db: &Database, raw_path: &str) -> Result<()> {
                     content.push_str(&format!("    {k} {v}\n"));
                 }
             }
+        }
+        if !host.username.is_empty() {
+            content.push_str(&format!("    User {}\n", host.username));
+        }
+        if host.port != 22 {
+            content.push_str(&format!("    Port {}\n", host.port));
+        }
+        if let Some(ref id) = host.identity_file {
+            if !id.is_empty() {
+                content.push_str(&format!("    IdentityFile {}\n", id));
+            }
+        }
+        if let Some(ref pj) = host.proxy_jump {
+            if !pj.is_empty() && !has_ssh_option(host, &["proxyjump", "proxycommand"]) {
+                content.push_str(&format!("    ProxyJump {}\n", pj));
+            }
+        }
+        if host.forward_agent && !has_ssh_option(host, &["forwardagent"]) {
+            content.push_str("    ForwardAgent yes\n");
         }
         for t in &host.tunnels {
             let target_host = if t.remote_host.is_empty() {
@@ -154,6 +159,31 @@ mod tests {
         assert!(!out.contains("Compression"), "{out}");
         assert!(!out.contains("novalue"), "{out}");
         assert!(!out.contains("Empty"), "{out}");
+    }
+
+    #[test]
+    fn raw_options_come_first_and_suppress_conflicting_fields() {
+        let out = export_to_string(&db_with(Host {
+            name: "web".into(),
+            host: "10.0.0.5".into(),
+            port: 2222,
+            forward_agent: true,
+            proxy_jump: Some("bastion".into()),
+            ssh_options: vec![
+                "Port=2200".into(),
+                "ProxyCommand=nc %h %p".into(),
+                "ForwardAgent=no".into(),
+            ],
+            ..Default::default()
+        }));
+        let pos = |needle: &str| {
+            out.find(needle)
+                .unwrap_or_else(|| panic!("{needle}: {out}"))
+        };
+        assert!(pos("Port 2200") < pos("Port 2222"), "{out}");
+        assert!(pos("HostName") < pos("Port 2200"), "{out}");
+        assert!(!out.contains("ProxyJump"), "{out}");
+        assert!(!out.contains("ForwardAgent yes"), "{out}");
     }
 
     #[test]

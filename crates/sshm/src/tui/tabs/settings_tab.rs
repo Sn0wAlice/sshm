@@ -343,10 +343,6 @@ pub fn handle_settings_event(key: KeyCode, state: &mut SettingsFormState) -> Set
                 SettingsAction::None
             }
         }
-        KeyCode::Left | KeyCode::Right => {
-            state.toggle_bool();
-            SettingsAction::None
-        }
         KeyCode::Char(' ') => {
             if state.toggle_bool() {
                 SettingsAction::None

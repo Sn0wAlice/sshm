@@ -146,6 +146,13 @@ impl HostFormState {
             field.pop();
         }
     }
+
+    /// Reject a host / username that ssh would parse as an option (leading
+    /// `-`) or that would split the `user@host` destination (whitespace, an
+    /// `@` in the host). An empty username is fine: it defaults to `root`.
+    pub fn validate_destination(&self) -> Result<(), String> {
+        sshm_core::ssh::client::validate_destination(self.username.trim(), self.host.trim())
+    }
 }
 
 #[cfg(test)]
@@ -274,6 +281,21 @@ mod tests {
         let s = HostFormState::new_edit(&db, "nope");
         assert!(!s.is_edit);
         assert!(s.original_name.is_none());
+    }
+
+    #[test]
+    fn destination_validation_rejects_option_like_values() {
+        let mut s = state();
+        s.host = "10.0.0.5".into();
+        s.username = String::new();
+        assert!(s.validate_destination().is_ok());
+        s.host = "-oProxyCommand=x".into();
+        assert!(s.validate_destination().is_err());
+        s.host = "user@10.0.0.5".into();
+        assert!(s.validate_destination().is_err());
+        s.host = "10.0.0.5".into();
+        s.username = "-l".into();
+        assert!(s.validate_destination().is_err());
     }
 
     #[test]

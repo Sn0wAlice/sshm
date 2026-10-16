@@ -75,7 +75,7 @@ pub fn cmd_add_identity(hosts: &HashMap<String, Host>, name: Option<String>, arg
         h.port
     );
 
-    match install_pubkey_on_host(h, &pubkey_path) {
+    match install_pubkey_on_host(h, hosts, &pubkey_path) {
         Ok(_) => {
             println!("✅ Public key installed. You should be able to connect without password.")
         }

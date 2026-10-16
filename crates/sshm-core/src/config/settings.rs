@@ -126,8 +126,27 @@ pub fn settings_path() -> PathBuf {
 pub fn load_settings() -> AppConfig {
     let path = settings_path();
     if let Ok(content) = fs::read_to_string(&path) {
-        if let Ok(cfg) = toml::from_str::<AppConfig>(&content) {
-            return cfg;
+        match toml::from_str::<AppConfig>(&content) {
+            Ok(cfg) => return cfg,
+            Err(e) => {
+                // Keep a copy: the defaults returned below must never be the
+                // only surviving version of the user's config (and `[sync]`).
+                let bak = path.with_extension("toml.bak");
+                // Only (re)write when it'd change something: this runs on every
+                // load while the file stays invalid.
+                let res = match fs::read(&bak) {
+                    Ok(old) if old == content.as_bytes() => Ok(()),
+                    _ => super::io::write_private(&bak, content.as_bytes()),
+                };
+                match res {
+                    Ok(()) => eprintln!(
+                        "{} is invalid ({e}); using defaults. Backed up to {}.",
+                        path.display(),
+                        bak.display()
+                    ),
+                    Err(be) => eprintln!("Failed to write backup {}: {be}", bak.display()),
+                }
+            }
         }
     }
     AppConfig::default()
@@ -135,9 +154,25 @@ pub fn load_settings() -> AppConfig {
 
 pub fn try_save_settings(config: &AppConfig) -> Result<()> {
     let path = settings_path();
+    refuse_overwriting_invalid(&path)?;
     let toml_str = toml::to_string_pretty(config).context("serializing settings")?;
     super::io::atomic_write(&path, toml_str.as_bytes())
         .with_context(|| format!("saving settings {}", path.display()))
+}
+
+/// A `settings.toml` that doesn't parse was loaded as defaults; saving now
+/// would persist those defaults over the user's real config. Refuse until the
+/// file is fixed or removed (mirrors the `load_failed` guard on host.json).
+fn refuse_overwriting_invalid(path: &std::path::Path) -> Result<()> {
+    if let Ok(content) = fs::read_to_string(path) {
+        if !content.trim().is_empty() && toml::from_str::<AppConfig>(&content).is_err() {
+            anyhow::bail!(
+                "refusing to save: {} is invalid; fix or remove it first",
+                path.display()
+            );
+        }
+    }
+    Ok(())
 }
 
 pub fn save_settings(config: &AppConfig) {
@@ -382,5 +417,21 @@ impl SyncConfig {
             SyncMode::Interval => Some(self.interval_secs.max(MIN_SYNC_INTERVAL_SECS)),
             SyncMode::Manual => None,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn save_refuses_to_overwrite_an_unparseable_settings_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.toml");
+        assert!(refuse_overwriting_invalid(&path).is_ok()); // absent
+        fs::write(&path, "default_port = \"not a number\"").unwrap();
+        assert!(refuse_overwriting_invalid(&path).is_err());
+        fs::write(&path, "default_port = 2222").unwrap();
+        assert!(refuse_overwriting_invalid(&path).is_ok());
     }
 }

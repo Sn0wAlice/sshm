@@ -21,10 +21,11 @@ pub fn resolve_proxy_jump(raw: &str, hosts: &HashMap<String, Host>) -> Option<St
         .filter(|hop| !hop.is_empty())
         .map(|hop| {
             if let Some(h) = hosts.get(hop) {
+                let dest = super::client::destination(h);
                 if h.port == 22 {
-                    format!("{}@{}", h.username, h.host)
+                    dest
                 } else {
-                    format!("{}@{}:{}", h.username, h.host, h.port)
+                    format!("{dest}:{}", h.port)
                 }
             } else {
                 hop.to_string()

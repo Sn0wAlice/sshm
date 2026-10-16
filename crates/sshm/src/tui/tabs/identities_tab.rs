@@ -38,6 +38,9 @@ pub struct IdentitiesTabState {
     pub filter: String,
     /// True while the user is typing into `filter` (entered with `/`).
     pub input_mode: bool,
+    /// List scroll offset, persisted across frames so the viewport only moves
+    /// when the selection leaves it (`Cell`: draw only gets `&self`).
+    list_offset: std::cell::Cell<usize>,
 }
 
 impl Default for IdentitiesTabState {
@@ -56,6 +59,21 @@ impl IdentitiesTabState {
             selected: 0,
             filter: String::new(),
             input_mode: false,
+            list_offset: Default::default(),
+        }
+    }
+
+    /// No keys yet: the first [`refresh`](Self::refresh) scans. Lets the TUI
+    /// defer the `~/.ssh` scan (one `ssh-keygen` per key) until the tab is
+    /// actually opened.
+    pub fn empty() -> Self {
+        IdentitiesTabState {
+            keys: Vec::new(),
+            visible: Vec::new(),
+            selected: 0,
+            filter: String::new(),
+            input_mode: false,
+            list_offset: Default::default(),
         }
     }
 
@@ -70,7 +88,7 @@ impl IdentitiesTabState {
         if self.filter.is_empty() {
             self.visible = (0..self.keys.len()).collect();
         } else {
-            let matcher = SkimMatcherV2::default().smart_case();
+            let matcher = SkimMatcherV2::default().ignore_case();
             self.visible = self
                 .keys
                 .iter()
@@ -221,7 +239,7 @@ pub fn draw_identities_tab(f: &mut Frame, area: Rect, state: &IdentitiesTabState
         })
         .collect();
 
-    let mut ls = ListState::default();
+    let mut ls = ListState::default().with_offset(state.list_offset.get());
     if !state.visible.is_empty() {
         ls.select(Some(state.selected));
     }
@@ -255,6 +273,7 @@ pub fn draw_identities_tab(f: &mut Frame, area: Rect, state: &IdentitiesTabState
         );
 
     f.render_stateful_widget(list, hchunks[0], &mut ls);
+    state.list_offset.set(ls.offset());
 
     // ----- Right: details -----
     let detail_text: String = if let Some(k) = state.selected_key() {

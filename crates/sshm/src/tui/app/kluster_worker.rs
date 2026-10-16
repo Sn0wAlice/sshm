@@ -239,7 +239,9 @@ pub fn spawn_kluster_worker(
                     break;
                 }
 
-                let interval = Duration::from_secs(interval_secs.load(Ordering::Relaxed).max(2));
+                // Capped: a huge value would overflow `Instant + Duration`.
+                let interval =
+                    Duration::from_secs(interval_secs.load(Ordering::Relaxed).clamp(2, 86_400));
                 next_pass = Instant::now() + interval;
             }
             thread::sleep(Duration::from_millis(250));

@@ -10,12 +10,13 @@ use crossterm::{
 };
 use ratatui::{
     prelude::*,
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Wrap},
     Terminal,
 };
-use std::collections::HashMap;
-use std::io::stdout;
+use std::collections::{HashMap, VecDeque};
+use std::io::{stdout, BufRead, BufReader};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 // ============================================================================
@@ -753,6 +754,20 @@ pub fn run_port_forward(host: &Host, all_hosts: &HashMap<String, Host>) -> PortF
     finish!(Some(tunnel_def));
 }
 
+/// Lines of ssh stderr kept for the closed-tunnel screen.
+const STDERR_TAIL: usize = 5;
+
+/// Append a non-blank `line`, keeping only the last [`STDERR_TAIL`].
+fn push_tail(tail: &mut VecDeque<String>, line: String) {
+    if line.trim().is_empty() {
+        return;
+    }
+    if tail.len() == STDERR_TAIL {
+        tail.pop_front();
+    }
+    tail.push_back(line);
+}
+
 fn run_tunnel_loop<B: Backend>(
     terminal: &mut Terminal<B>,
     host: &Host,
@@ -764,12 +779,27 @@ fn run_tunnel_loop<B: Backend>(
     let argv = build_tunnel_argv(host, tunnel, all_hosts);
     let mut cmd = Command::new(&argv[0]);
     cmd.args(&argv[1..]);
+    // stderr is kept (last few lines) so a BatchMode failure — auth, host
+    // key, a port already bound — shows *why* on the closed screen.
     cmd.stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(Stdio::piped());
+    let stderr_tail: Arc<Mutex<VecDeque<String>>> = Arc::default();
 
     let mut child: Option<Child> = match cmd.spawn() {
-        Ok(c) => Some(c),
+        Ok(mut c) => {
+            if let Some(pipe) = c.stderr.take() {
+                let tail = Arc::clone(&stderr_tail);
+                std::thread::spawn(move || {
+                    for line in BufReader::new(pipe).lines().map_while(Result::ok) {
+                        if let Ok(mut t) = tail.lock() {
+                            push_tail(&mut t, line);
+                        }
+                    }
+                });
+            }
+            Some(c)
+        }
         Err(e) => {
             let _ = terminal.draw(|f| {
                 let theme = theme::load();
@@ -832,10 +862,14 @@ fn run_tunnel_loop<B: Backend>(
                     .style(Style::default().bg(theme.bg).fg(theme.fg));
                 let inner = block.inner(area);
                 f.render_widget(block, area);
-                f.render_widget(
-                    Paragraph::new(crate::t!("dialog.tunnel_closed.body")),
-                    inner,
-                );
+                let mut body = crate::t!("dialog.tunnel_closed.body").to_string();
+                if let Ok(t) = stderr_tail.lock() {
+                    for line in t.iter() {
+                        body.push('\n');
+                        body.push_str(line);
+                    }
+                }
+                f.render_widget(Paragraph::new(body).wrap(Wrap { trim: false }), inner);
             }
         });
 
@@ -865,6 +899,18 @@ fn run_tunnel_loop<B: Backend>(
 #[cfg(test)]
 mod render_tests {
     use super::*;
+
+    #[test]
+    fn stderr_tail_keeps_the_last_non_blank_lines() {
+        let mut t = VecDeque::new();
+        for i in 0..8 {
+            push_tail(&mut t, format!("line {i}"));
+            push_tail(&mut t, "  ".into());
+        }
+        assert_eq!(t.len(), STDERR_TAIL);
+        assert_eq!(t.front().unwrap(), "line 3");
+        assert_eq!(t.back().unwrap(), "line 7");
+    }
     use ratatui::backend::TestBackend;
 
     /// Render the form and return the visible text, one string per line.

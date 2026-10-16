@@ -20,28 +20,43 @@ pub use sshm_core::ssh::client::{build_ssh_argv, launch_ssh};
 /// À appeler pendant que le terminal normal est actif (raw mode désactivé,
 /// écran alternatif quitté) : le bandeau d'avertissement d'OpenSSH reste alors
 /// visible juste au-dessus de l'invite de confirmation.
+///
+/// `on_trusted` runs once the destination is valid and the TOFU gate passed,
+/// right before ssh starts — the TUI brings auto-start tunnels up there, so
+/// their `BatchMode` ssh finds the host key already pinned. `Err` means ssh
+/// was never launched (invalid destination, or the host key was declined).
 pub fn launch_ssh_with_recovery(
     h: &Host,
     all_hosts: &HashMap<String, Host>,
     overrides: Option<&[String]>,
-) {
+    on_trusted: impl FnOnce(),
+) -> Result<(), String> {
+    sshm_core::ssh::client::validate_destination(&h.username, &h.host)
+        .map_err(|e| format!("refusing to connect to '{}': {e}", h.name))?;
     // Trust-on-first-use: for a host we've never pinned, show its live
     // fingerprint and let the user vet it here rather than blindly answering
     // ssh's raw "(yes/no)?" prompt. Declining aborts the connection.
     if !tofu_gate(h) {
-        return;
+        return Err(format!(
+            "host key for {} not trusted — not connected",
+            h.host
+        ));
     }
+    on_trusted();
 
+    // Ctrl+C at an ssh prompt (password, passphrase) must end ssh, not sshm
+    // and its background tunnels. The guard installs a handler, not SIG_IGN,
+    // so ssh still gets the default SIGINT after exec.
+    let _sigint_guard = crate::tui::app::kluster_actions::IgnoreSigint::new();
     let status = launch_ssh(h, all_hosts, overrides);
 
-    // Only bother probing when ssh actually exited non-zero. A changed host key
-    // makes ssh bail with status 255 before any shell starts.
-    let failed = matches!(status, Some(s) if !s.success());
-    if !failed {
-        return;
-    }
-    if !known_hosts::host_key_changed(&h.host, h.port) {
-        return;
+    // Only bother probing (up to 8s) when ssh itself failed: a changed host
+    // key makes ssh bail with status 255 before any shell starts, whereas any
+    // other non-zero code is just the remote shell's last exit status. A
+    // proxied host can't be probed directly — ssh's own message stands.
+    let failed = matches!(status, Some(s) if s.code() == Some(255));
+    if !failed || uses_proxy(h) || !known_hosts::host_key_changed(&h.host, h.port) {
+        return Ok(());
     }
 
     println!();
@@ -53,7 +68,7 @@ pub fn launch_ssh_with_recovery(
     .prompt()
     .unwrap_or(false);
     if !confirmed {
-        return;
+        return Ok(());
     }
 
     match known_hosts::remove_known_host_port(&h.host, h.port) {
@@ -62,6 +77,20 @@ pub fn launch_ssh_with_recovery(
         }
         Err(e) => eprintln!("sshm: failed to clean known_hosts for {}: {e}", h.host),
     }
+    Ok(())
+}
+
+/// True when `h` is reached through a jump host or a proxy command. A direct
+/// `ssh-keyscan` would then talk to the wrong machine (or none), so the TOFU
+/// gate and the host-key probe stand aside and ssh verifies the key itself.
+fn uses_proxy(h: &Host) -> bool {
+    h.proxy_jump
+        .as_deref()
+        .is_some_and(|p| !p.trim().is_empty())
+        || h.ssh_options.iter().any(|o| {
+            let key = o.split(['=', ' ', '\t']).next().unwrap_or("").trim();
+            key.eq_ignore_ascii_case("ProxyJump") || key.eq_ignore_ascii_case("ProxyCommand")
+        })
 }
 
 /// Trust-on-first-use gate, run just before the first connection to a host.
@@ -73,12 +102,12 @@ pub fn launch_ssh_with_recovery(
 /// fetched (host down, `ssh-keyscan` missing) it proceeds and lets `ssh` handle
 /// verification itself, so this never blocks a connection it couldn't vet.
 fn tofu_gate(h: &Host) -> bool {
-    if known_hosts::is_pinned(&h.host, h.port) {
+    if uses_proxy(h) || known_hosts::is_pinned(&h.host, h.port) {
         return true;
     }
 
-    let keys = known_hosts::scan_fingerprints(&h.host, h.port);
-    if keys.is_empty() {
+    let scan = known_hosts::scan_host(&h.host, h.port);
+    if scan.keys.is_empty() {
         // Couldn't reach / fingerprint the host — don't stand in ssh's way.
         return true;
     }
@@ -88,7 +117,7 @@ fn tofu_gate(h: &Host) -> bool {
         "The authenticity of host '{}' (port {}) can't be established — it isn't in known_hosts yet.",
         h.host, h.port
     );
-    for k in &keys {
+    for k in &scan.keys {
         println!("  {k}");
     }
     let trust = inquire::Confirm::new("Trust this host key and connect?")
@@ -96,9 +125,30 @@ fn tofu_gate(h: &Host) -> bool {
         .prompt()
         .unwrap_or(false);
     if trust {
-        if let Err(e) = known_hosts::pin_host(&h.host, h.port) {
+        // Pin exactly the keys just shown, not a fresh (swappable) scan.
+        if let Err(e) = known_hosts::pin_host(&scan) {
             eprintln!("sshm: could not pin host key: {e}");
         }
     }
     trust
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn proxied_hosts_skip_the_direct_key_scan() {
+        let mut h = Host::default();
+        assert!(!uses_proxy(&h));
+        h.ssh_options = vec!["ServerAliveInterval=30".into()];
+        assert!(!uses_proxy(&h));
+        h.ssh_options = vec!["proxycommand=nc -X 5 %h %p".into()];
+        assert!(uses_proxy(&h));
+        h.ssh_options = vec!["ProxyJump bastion".into()];
+        assert!(uses_proxy(&h));
+        h.ssh_options.clear();
+        h.proxy_jump = Some("bastion".into());
+        assert!(uses_proxy(&h));
+    }
 }

@@ -6,8 +6,10 @@
 //! - The TUI/background worker keep their own cache of last-known statuses
 //!   keyed by host name and the timestamp at which each entry was refreshed.
 
+use std::collections::HashSet;
 use std::io::Read;
-use std::net::{SocketAddr, TcpStream, ToSocketAddrs};
+use std::net::{IpAddr, SocketAddr, TcpStream, ToSocketAddrs};
+use std::sync::{mpsc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::tui::app::HostStatus;
@@ -19,46 +21,81 @@ use crate::tui::app::HostStatus;
 /// at 750ms) and try to read the `SSH-…\r\n` greeting line. If anything goes
 /// wrong with banner reading, we still report the host as `Reachable` —
 /// just without an `ssh_banner`.
+///
+/// `connect_timeout` is the whole budget for name resolution plus connecting;
+/// every resolved address is tried in turn (an IPv6-first `localhost` must not
+/// read as down because the server only listens on IPv4).
 pub fn probe_host(host: &str, port: u16, connect_timeout: Duration) -> HostStatus {
-    let addr = format!("{}:{}", host, port);
+    let connect_timeout = connect_timeout.min(Duration::from_secs(60));
     let start = Instant::now();
+    let deadline = start + connect_timeout;
 
-    let sock: SocketAddr = match addr.parse::<SocketAddr>() {
-        Ok(s) => s,
-        Err(_) => match addr.to_socket_addrs() {
-            Ok(mut addrs) => match addrs.next() {
-                Some(s) => s,
-                None => return HostStatus::Unreachable,
-            },
-            Err(_) => return HostStatus::Unreachable,
-        },
-    };
-
-    match TcpStream::connect_timeout(&sock, connect_timeout) {
-        Ok(mut stream) => {
-            let latency_ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
-            let read_to = std::cmp::min(
-                Duration::from_millis(750),
-                connect_timeout
-                    .checked_div(3)
-                    .unwrap_or(Duration::from_millis(300)),
-            );
-            let _ = stream.set_read_timeout(Some(read_to));
-
-            // OpenSSH banner: ASCII line ending with \r\n, at most 255 chars per RFC 4253.
-            // Read up to 256 bytes — that covers any sane banner without blocking forever.
-            let mut buf = [0u8; 256];
-            let banner = match stream.read(&mut buf) {
-                Ok(n) if n > 0 => parse_ssh_banner(&buf[..n]),
-                _ => None,
-            };
-            HostStatus::Reachable {
-                latency_ms,
-                ssh_banner: banner,
-            }
+    for sock in resolve(host, port, connect_timeout) {
+        let left = deadline.saturating_duration_since(Instant::now());
+        if left.is_zero() {
+            break;
         }
-        Err(_) => HostStatus::Unreachable,
+        let Ok(mut stream) = TcpStream::connect_timeout(&sock, left) else {
+            continue;
+        };
+        let latency_ms = start.elapsed().as_millis().min(u32::MAX as u128) as u32;
+        let read_to = std::cmp::min(
+            Duration::from_millis(750),
+            connect_timeout
+                .checked_div(3)
+                .unwrap_or(Duration::from_millis(300)),
+        );
+        let _ = stream.set_read_timeout(Some(read_to));
+
+        // OpenSSH banner: ASCII line ending with \r\n, at most 255 chars per RFC 4253.
+        // Read up to 256 bytes — that covers any sane banner without blocking forever.
+        let mut buf = [0u8; 256];
+        let banner = match stream.read(&mut buf) {
+            Ok(n) if n > 0 => parse_ssh_banner(&buf[..n]),
+            _ => None,
+        };
+        return HostStatus::Reachable {
+            latency_ms,
+            ssh_banner: banner,
+        };
     }
+    HostStatus::Unreachable
+}
+
+/// Hostnames with a `getaddrinfo` still running on an abandoned helper thread.
+static DNS_IN_FLIGHT: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+/// Resolve `host:port`, giving up after `timeout`. `getaddrinfo` has no
+/// timeout of its own, so it runs on a helper thread that is abandoned (and
+/// exits whenever the resolver finally returns) when the budget runs out.
+///
+/// At most one lookup per hostname is in flight: while a previous one is
+/// still hanging, this resolves to nothing (the host reads as unreachable for
+/// this pass) instead of piling up another stuck thread every probe.
+fn resolve(host: &str, port: u16, timeout: Duration) -> Vec<SocketAddr> {
+    if let Ok(ip) = host.trim_matches(['[', ']']).parse::<IpAddr>() {
+        return vec![SocketAddr::new(ip, port)];
+    }
+    let host = host.to_string();
+    if let Ok(mut set) = DNS_IN_FLIGHT.lock() {
+        if !set.insert(host.clone()) {
+            return Vec::new();
+        }
+    }
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let addrs = (host.as_str(), port)
+            .to_socket_addrs()
+            .map(|a| a.collect::<Vec<_>>());
+        if let Ok(mut set) = DNS_IN_FLIGHT.lock() {
+            set.remove(&host);
+        }
+        let _ = tx.send(addrs);
+    });
+    rx.recv_timeout(timeout)
+        .ok()
+        .and_then(Result::ok)
+        .unwrap_or_default()
 }
 
 /// Extract the version token from a raw SSH banner.
@@ -92,6 +129,27 @@ pub fn parse_ssh_banner(raw: &[u8]) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::parse_ssh_banner;
+
+    #[test]
+    fn probes_every_resolved_address() {
+        // `localhost` often resolves to ::1 first; an IPv4-only listener must
+        // still be found.
+        let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = l.local_addr().unwrap().port();
+        let status = super::probe_host("localhost", port, std::time::Duration::from_secs(2));
+        assert!(matches!(status, super::HostStatus::Reachable { .. }));
+    }
+
+    #[test]
+    fn a_hung_lookup_is_not_duplicated() {
+        super::DNS_IN_FLIGHT
+            .lock()
+            .unwrap()
+            .insert("stuck.invalid".into());
+        let t = std::time::Duration::from_millis(50);
+        assert!(super::resolve("stuck.invalid", 22, t).is_empty());
+        super::DNS_IN_FLIGHT.lock().unwrap().remove("stuck.invalid");
+    }
 
     #[test]
     fn parses_openssh() {

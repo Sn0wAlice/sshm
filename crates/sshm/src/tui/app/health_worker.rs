@@ -25,6 +25,15 @@ impl Drop for WorkerGuard {
     }
 }
 
+/// Probes in flight at once. A pass over a large host list runs in chunks of
+/// this size on the worker thread itself, so passes never overlap and the
+/// thread count stays bounded whatever the host count.
+const MAX_PARALLEL_PROBES: usize = 32;
+
+/// Longest pass interval honoured, whatever `settings.toml` says — a huge value
+/// would overflow `Instant + Duration` and panic the worker.
+const MAX_INTERVAL_SECS: u64 = 86_400;
+
 /// Refresh the shared target list from the current database.
 pub fn sync_health_targets(targets: &HealthTargets, db: &Database) {
     if let Ok(mut t) = targets.lock() {
@@ -65,21 +74,32 @@ pub fn spawn_health_worker(
                 };
                 let probe_timeout =
                     Duration::from_millis(probe_timeout_ms.load(Ordering::Relaxed).max(100));
-                for (name, host, port) in snapshot {
+                for chunk in snapshot.chunks(MAX_PARALLEL_PROBES) {
                     if stop.load(Ordering::Relaxed) {
                         return;
                     }
-                    let tx = result_tx.clone();
-                    let probe_stop = Arc::clone(&stop);
-                    thread::spawn(move || {
-                        if probe_stop.load(Ordering::Relaxed) {
-                            return;
+                    thread::scope(|scope| {
+                        for (name, host, port) in chunk {
+                            let tx = result_tx.clone();
+                            scope.spawn(move || {
+                                // A panicking probe would propagate out of
+                                // `thread::scope` and kill the worker for good;
+                                // count it as unreachable instead.
+                                let status =
+                                    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                                        crate::tui::health::probe_host(host, *port, probe_timeout)
+                                    }))
+                                    .unwrap_or(HostStatus::Unreachable);
+                                let _ = tx.send((name.clone(), status));
+                            });
                         }
-                        let status = crate::tui::health::probe_host(&host, port, probe_timeout);
-                        let _ = tx.send((name, status));
                     });
                 }
-                let interval = Duration::from_secs(interval_secs.load(Ordering::Relaxed).max(1));
+                let interval = Duration::from_secs(
+                    interval_secs
+                        .load(Ordering::Relaxed)
+                        .clamp(1, MAX_INTERVAL_SECS),
+                );
                 next_pass = Instant::now() + interval;
             }
             thread::sleep(Duration::from_millis(250));

@@ -1,3 +1,12 @@
+sshm (2.3.0) stable; urgency=medium
+
+  * Connection history no longer syncs; host ssh_options now override.
+  * Fix several data-loss paths in host.json loading, saving and sync.
+  * Harden host-key pinning, ssh argument handling and file permissions.
+  * Background tunnels fail cleanly; many TUI stability and performance fixes.
+
+ -- Sn0wAlice <snow.alice@pm.me>  Fri, 16 Oct 2026 12:00:00 +0200
+
 sshm (2.2.2) stable; urgency=medium
 
   * NEW: .rpm packages for Linux amd64 and arm64 in releases.

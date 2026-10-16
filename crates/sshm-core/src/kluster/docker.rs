@@ -10,10 +10,11 @@ use super::models::{ContainerDetail, ContainerInfo, DetailSection, LifecycleActi
 /// Build the `ssh://[user@]host[:port]` URI passed to `DOCKER_HOST` for a
 /// remote Docker daemon reached over SSH.
 pub fn host_to_docker_uri(h: &crate::models::Host) -> String {
+    let dest = crate::ssh::client::destination(h);
     if h.port == 22 {
-        format!("ssh://{}@{}", h.username, h.host)
+        format!("ssh://{dest}")
     } else {
-        format!("ssh://{}@{}:{}", h.username, h.host, h.port)
+        format!("ssh://{dest}:{}", h.port)
     }
 }
 
@@ -37,6 +38,13 @@ mod ssh_uri_tests {
         assert_eq!(
             host_to_docker_uri(&h("alice", "1.2.3.4", 22)),
             "ssh://alice@1.2.3.4"
+        );
+    }
+    #[test]
+    fn omits_user_when_empty() {
+        assert_eq!(
+            host_to_docker_uri(&h("", "1.2.3.4", 2222)),
+            "ssh://1.2.3.4:2222"
         );
     }
     #[test]
