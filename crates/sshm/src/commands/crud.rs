@@ -66,7 +66,16 @@ pub fn create_host(hosts: &mut HashMap<String, Host>, current_folder: Option<Str
     let Some(port_raw) = ask("Port:", "22") else {
         return;
     };
-    let port: u16 = port_raw.trim().parse().unwrap_or(22);
+    let port: u16 = match port_raw.trim() {
+        "" => 22,
+        p => match p.parse().ok().filter(|&p: &u16| p != 0) {
+            Some(p) => p,
+            None => {
+                eprintln!("Port '{p}' is not a valid number 1-65535.");
+                return;
+            }
+        },
+    };
 
     let Some(username) = ask("Username:", "root") else {
         return;

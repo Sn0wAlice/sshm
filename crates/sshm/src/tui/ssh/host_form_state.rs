@@ -81,6 +81,8 @@ impl HostFormState {
         13
     }
 
+    /// Field index of the port row.
+    pub const PORT_FIELD: usize = 2;
     /// Field index of the run-on-connect command row.
     pub const REMOTE_CMD_FIELD: usize = 9;
     /// Field index of the raw ssh-options row.
@@ -133,6 +135,10 @@ impl HostFormState {
             if c == ' ' {
                 self.mosh = !self.mosh;
             }
+            return;
+        }
+        // Port row takes digits only, same as the port-forward form.
+        if self.selected_field == Self::PORT_FIELD && !c.is_ascii_digit() {
             return;
         }
         if let Some(field) = self.active_value_mut() {
@@ -234,6 +240,17 @@ mod tests {
         );
         s.pop_char();
         assert_eq!(s.ssh_options, "A=");
+    }
+
+    #[test]
+    fn the_port_field_takes_digits_only() {
+        let mut s = state();
+        s.port.clear();
+        s.selected_field = HostFormState::PORT_FIELD;
+        for c in "22a2 ".chars() {
+            s.push_char(c);
+        }
+        assert_eq!(s.port, "222");
     }
 
     #[test]

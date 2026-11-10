@@ -5,6 +5,23 @@ All notable changes to **sshm** are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.3.1] - 2026-11-10
+
+### Fixed
+
+- **Port forward: an empty local port means "same as the remote port".**
+  Filling only Remote Port (e.g. 4173) no longer fails with "Local port must
+  be a number"; the form shows the port it will use.
+- **Host form port.** A blank port means 22, port 0 is refused, and the field
+  only accepts digits.
+- **`sshm add` no longer guesses the port.** A typo like `2222x` used to become
+  22 without a word; it is now an error. Port 0 is refused.
+- **Settings refuse typos in number fields.** A bad TTL, timeout, refresh or
+  tail value used to be dropped without a word, and a typo in the sync interval
+  switched sync to manual. Saving now stops and names the field. A default
+  port of 0 is refused.
+- **ssh_config import** ignores `Port 0` and uses 22.
+
 ## [2.3.0] - 2026-10-16
 
 ### Changed

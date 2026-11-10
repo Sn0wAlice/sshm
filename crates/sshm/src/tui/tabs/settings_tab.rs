@@ -165,7 +165,46 @@ fn field_label(i: usize) -> &'static str {
     }
 }
 
+/// The form's numeric fields, parsed. Range clamping stays at the call site.
+#[derive(Debug)]
+pub struct SettingsNumbers {
+    pub port: u16,
+    pub health_ttl_secs: u64,
+    pub health_probe_timeout_ms: u64,
+    pub kluster_refresh_secs: u64,
+    pub kluster_log_tail_lines: u32,
+    pub sync_interval_min: u64,
+}
+
 impl SettingsFormState {
+    /// Parse every numeric field, or name the first bad one. A typo must stop
+    /// the save: silently keeping the old value, or turning the sync interval
+    /// into `0` (= manual), hides the mistake.
+    pub fn parse_numbers(&self) -> Result<SettingsNumbers, String> {
+        fn num<T: std::str::FromStr>(v: &str, field: usize) -> Result<T, String> {
+            v.trim()
+                .parse()
+                .map_err(|_| crate::t!("toast.invalid_setting", "field" => field_label(field)))
+        }
+        let port: u16 = num(&self.default_port, 0)?;
+        if port == 0 {
+            return Err(crate::t!("toast.invalid_port"));
+        }
+        // Blank interval keeps its old meaning: manual only.
+        let sync_interval_min = match self.sync_interval_min.trim() {
+            "" => 0,
+            v => num(v, SYNC_INTERVAL_FIELD)?,
+        };
+        Ok(SettingsNumbers {
+            port,
+            health_ttl_secs: num(&self.health_ttl_secs, HEALTH_TTL_FIELD)?,
+            health_probe_timeout_ms: num(&self.health_probe_timeout_ms, HEALTH_TIMEOUT_FIELD)?,
+            kluster_refresh_secs: num(&self.kluster_refresh_secs, KLUSTER_REFRESH_FIELD)?,
+            kluster_log_tail_lines: num(&self.kluster_log_tail_lines, KLUSTER_TAIL_FIELD)?,
+            sync_interval_min,
+        })
+    }
+
     pub fn from_config(config: &AppConfig) -> Self {
         SettingsFormState {
             default_port: config.default_port.to_string(),
@@ -615,6 +654,23 @@ mod tests {
 
     fn state() -> SettingsFormState {
         SettingsFormState::from_config(&AppConfig::default())
+    }
+
+    #[test]
+    fn a_typo_in_a_number_field_stops_the_save() {
+        assert!(state().parse_numbers().is_ok());
+        let mut s = state();
+        s.sync_interval_min = "1O".into();
+        assert!(s
+            .parse_numbers()
+            .unwrap_err()
+            .contains(field_label(SYNC_INTERVAL_FIELD)));
+        let mut s = state();
+        s.default_port = "0".into();
+        assert!(s.parse_numbers().is_err());
+        let mut s = state();
+        s.sync_interval_min = "".into();
+        assert_eq!(s.parse_numbers().unwrap().sync_interval_min, 0);
     }
 
     #[test]

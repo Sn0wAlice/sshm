@@ -1,3 +1,10 @@
+sshm (2.3.1) stable; urgency=medium
+
+  * Port forward: an empty local port defaults to the remote port.
+  * Reject port 0 and typos in port and numeric settings instead of guessing.
+
+ -- Sn0wAlice <snow.alice@pm.me>  Tue, 10 Nov 2026 12:00:00 +0100
+
 sshm (2.3.0) stable; urgency=medium
 
   * Connection history no longer syncs; host ssh_options now override.

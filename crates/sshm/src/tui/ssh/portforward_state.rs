@@ -191,10 +191,20 @@ impl PortForwardForm {
         }
     }
 
+    /// Empty local port on a Local/Remote forward means "same as the remote
+    /// port" — the `-L 4173:localhost:4173` case. SOCKS has no remote port.
+    pub fn effective_local_port(&self) -> &str {
+        let lp = self.local_port.trim();
+        if lp.is_empty() && self.kind != TunnelKind::Dynamic {
+            self.remote_port.trim()
+        } else {
+            lp
+        }
+    }
+
     pub fn validate(&self) -> Result<Tunnel, String> {
         let lp: u16 = self
-            .local_port
-            .trim()
+            .effective_local_port()
             .parse()
             .map_err(|_| crate::t!("error.local_port"))?;
         if lp == 0 {
@@ -426,6 +436,15 @@ mod tests {
         assert_eq!(f.validate().unwrap_err(), crate::t!("error.local_port"));
         f.local_port = "8080".into();
         assert_eq!(f.validate().unwrap_err(), crate::t!("error.remote_port"));
+    }
+
+    #[test]
+    fn an_empty_local_port_defaults_to_the_remote_port() {
+        let mut f = form();
+        f.remote_port = "4173".into();
+        assert_eq!(f.validate().unwrap().local_port, 4173);
+        f.kind = TunnelKind::Dynamic;
+        assert_eq!(f.validate().unwrap_err(), crate::t!("error.local_port"));
     }
 
     #[test]

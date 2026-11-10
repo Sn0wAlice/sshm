@@ -47,6 +47,7 @@ pub fn parse_ssh_config_text(text: &str, existing: &HashMap<String, Host>) -> Ve
             .unwrap_or_else(|| "root".into());
         let port = get("Port")
             .and_then(|p| p.parse::<u16>().ok())
+            .filter(|&p| p != 0)
             .unwrap_or(22);
         let identity_file = get("IdentityFile");
         let proxy_jump = get("ProxyJump");

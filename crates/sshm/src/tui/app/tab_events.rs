@@ -72,9 +72,9 @@ pub fn handle_settings_tab(
         _ => {
             match settings_tab::handle_settings_event(k, settings_state) {
                 SettingsAction::Save => {
-                    match settings_state.default_port.trim().parse::<u16>() {
-                        Ok(port) => {
-                            app_config.default_port = port;
+                    match settings_state.parse_numbers() {
+                        Ok(n) => {
+                            app_config.default_port = n.port;
                             app_config.default_username =
                                 settings_state.default_username.trim().to_string();
                             app_config.default_identity_file =
@@ -85,23 +85,13 @@ pub fn handle_settings_tab(
                                 settings_state.pause_health_on_session;
                             app_config.notifications_enabled = settings_state.notifications_enabled;
                             crate::os::set_notifications_enabled(app_config.notifications_enabled);
-                            if let Ok(v) = settings_state.health_ttl_secs.trim().parse::<u64>() {
-                                app_config.health_ttl_secs = v.clamp(1, 86_400);
-                            }
-                            if let Ok(v) =
-                                settings_state.health_probe_timeout_ms.trim().parse::<u64>()
-                            {
-                                app_config.health_probe_timeout_ms = v.clamp(100, 60_000);
-                            }
-                            if let Ok(v) = settings_state.kluster_refresh_secs.trim().parse::<u64>()
-                            {
-                                app_config.kluster_refresh_secs = v.clamp(2, 86_400);
-                            }
-                            if let Ok(v) =
-                                settings_state.kluster_log_tail_lines.trim().parse::<u32>()
-                            {
-                                app_config.kluster_log_tail_lines = v.clamp(1, 1_000_000);
-                            }
+                            app_config.health_ttl_secs = n.health_ttl_secs.clamp(1, 86_400);
+                            app_config.health_probe_timeout_ms =
+                                n.health_probe_timeout_ms.clamp(100, 60_000);
+                            app_config.kluster_refresh_secs =
+                                n.kluster_refresh_secs.clamp(2, 86_400);
+                            app_config.kluster_log_tail_lines =
+                                n.kluster_log_tail_lines.clamp(1, 1_000_000);
                             // Config sync. An interval of 0 means "manual
                             // only"; anything else is floored by the engine.
                             app_config.sync.enabled = settings_state.sync_enabled;
@@ -115,11 +105,7 @@ pub fn handle_settings_tab(
                             app_config.sync.encrypt = settings_state.sync_encrypt;
                             app_config.sync.age_identity =
                                 settings_state.sync_age_identity.trim().to_string();
-                            let minutes = settings_state
-                                .sync_interval_min
-                                .trim()
-                                .parse::<u64>()
-                                .unwrap_or(0);
+                            let minutes = n.sync_interval_min;
                             if minutes == 0 {
                                 app_config.sync.mode = crate::config::settings::SyncMode::Manual;
                             } else {
@@ -158,8 +144,8 @@ pub fn handle_settings_tab(
                                 *toast = Some(Toast::success(t!("toast.settings_saved")));
                             }
                         }
-                        Err(_) => {
-                            *toast = Some(Toast::error(t!("toast.invalid_port")));
+                        Err(e) => {
+                            *toast = Some(Toast::error(e));
                         }
                     }
                 }

@@ -243,9 +243,17 @@ fn draw_port_form(f: &mut Frame, state: &PortForwardForm, host: &Host) {
         TunnelKind::Local => crate::t!("form.tunnel.local_port"),
         TunnelKind::Remote => crate::t!("form.tunnel.remote_bind_port"),
     };
-    let lp_text = format!("  {}: {}{}", lp_label, state.local_port, cursor);
+    // Empty → show the port it will fall back to, muted, like Remote Host.
+    let lp_value = if lp_sel {
+        state.local_port.as_str()
+    } else {
+        state.effective_local_port()
+    };
+    let lp_text = format!("  {}: {}{}", lp_label, lp_value, cursor);
     let lp_style = if lp_sel {
         Style::default().fg(theme.accent)
+    } else if state.local_port.is_empty() {
+        Style::default().fg(theme.muted)
     } else {
         Style::default().fg(theme.fg)
     };

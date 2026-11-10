@@ -328,11 +328,16 @@ pub fn apply_host_form(db: &mut Database, state: &HostFormState) -> Result<(), S
     }
     state.validate_destination()?;
 
-    let port: u16 = state
-        .port
-        .trim()
+    // Blank means ssh's default, like a blank username means root.
+    let port_raw = match state.port.trim() {
+        "" => "22",
+        p => p,
+    };
+    let port: u16 = port_raw
         .parse()
-        .map_err(|_| format!("Port '{}' is not a valid number 1-65535", state.port.trim()))?;
+        .ok()
+        .filter(|&p| p != 0)
+        .ok_or_else(|| format!("Port '{}' is not a valid number 1-65535", port_raw))?;
 
     if let Some(orig) = &state.original_name {
         if name != orig && db.hosts.contains_key(name) {
